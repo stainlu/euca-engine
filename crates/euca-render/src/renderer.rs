@@ -312,7 +312,7 @@ impl Renderer {
             Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
     }
 
-    /// Draw all commands with PBR lighting.
+    /// Draw all commands with PBR lighting (convenience: gets surface, renders, presents).
     pub fn draw(
         &self,
         gpu: &GpuContext,
@@ -333,6 +333,31 @@ impl Renderer {
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+
+        self.render_to_view(gpu, camera, light, ambient, commands, &view, &mut encoder);
+
+        gpu.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+    }
+
+    /// Render to a given texture view. Does NOT present — caller manages the surface.
+    /// Use this when compositing with egui or other overlays.
+    pub fn render_to_view(
+        &self,
+        gpu: &GpuContext,
+        camera: &Camera,
+        light: &DirectionalLight,
+        ambient: &AmbientLight,
+        commands: &[DrawCommand],
+        color_view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
 
         // Write scene uniforms
@@ -379,17 +404,11 @@ impl Renderer {
             gpu.queue.write_buffer(&self.object_buffer, 0, &obj_data);
         }
 
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("PBR Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -429,9 +448,6 @@ impl Renderer {
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
         }
-
-        gpu.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
     }
 
     fn create_depth_texture(

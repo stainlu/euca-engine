@@ -1,8 +1,9 @@
 use euca_core::Time;
-use euca_ecs::World;
+use euca_ecs::{Query, World};
 use euca_editor::{EditorState, hierarchy_panel, inspector_panel, toolbar_panel};
 use euca_math::{Transform, Vec3};
 use euca_physics::{PhysicsBody, PhysicsCollider, PhysicsWorld, physics_step_system};
+use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
 
 use std::sync::Arc;
@@ -16,10 +17,8 @@ struct EditorApp {
     world: World,
     editor_state: EditorState,
     window: Option<Arc<Window>>,
-    device: Option<wgpu::Device>,
-    queue: Option<wgpu::Queue>,
-    surface: Option<wgpu::Surface<'static>>,
-    surface_config: Option<wgpu::SurfaceConfiguration>,
+    gpu: Option<GpuContext>,
+    renderer: Option<Renderer>,
     egui_ctx: egui::Context,
     egui_winit: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
@@ -30,34 +29,22 @@ impl EditorApp {
     fn new() -> Self {
         let mut world = World::new();
         world.insert_resource(Time::new());
+        world.insert_resource(Camera::new(
+            Vec3::new(8.0, 6.0, 8.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ));
         world.insert_resource(PhysicsWorld::new());
-
-        // Spawn some entities for the editor to inspect
-        let spawn_obj = |w: &mut World, pos: Vec3, _name: &str| {
-            let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
-            w.insert(e, GlobalTransform::default());
-            w.insert(e, PhysicsBody::dynamic());
-            w.insert(e, PhysicsCollider::cuboid(0.5, 0.5, 0.5));
-        };
-
-        spawn_obj(&mut world, Vec3::new(0.0, 5.0, 0.0), "Red Cube");
-        spawn_obj(&mut world, Vec3::new(2.0, 7.0, 1.0), "Blue Cube");
-        spawn_obj(&mut world, Vec3::new(-1.0, 9.0, -0.5), "Gold Cube");
-
-        // Ground
-        let g = world.spawn(LocalTransform(Transform::IDENTITY));
-        world.insert(g, GlobalTransform::default());
-        world.insert(g, PhysicsBody::fixed());
-        world.insert(g, PhysicsCollider::cuboid(10.0, 0.01, 10.0));
+        world.insert_resource(AmbientLight {
+            color: [1.0, 1.0, 1.0],
+            intensity: 0.2,
+        });
 
         Self {
             world,
             editor_state: EditorState::new(),
             window: None,
-            device: None,
-            queue: None,
-            surface: None,
-            surface_config: None,
+            gpu: None,
+            renderer: None,
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
@@ -67,21 +54,114 @@ impl EditorApp {
         }
     }
 
+    fn setup_scene(&mut self) {
+        let gpu = self.gpu.as_ref().unwrap();
+        let renderer = self.renderer.as_mut().unwrap();
+
+        let cube = renderer.upload_mesh(gpu, &Mesh::cube());
+        let sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.5, 16, 32));
+        let plane = renderer.upload_mesh(gpu, &Mesh::plane(20.0));
+
+        let gray = renderer.upload_material(gpu, &Material::gray());
+        let red = renderer.upload_material(gpu, &Material::red_plastic());
+        let blue = renderer.upload_material(gpu, &Material::blue_plastic());
+        let gold = renderer.upload_material(gpu, &Material::gold());
+        let green = renderer.upload_material(gpu, &Material::green());
+
+        // Ground
+        let g = self
+            .world
+            .spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        self.world.insert(g, GlobalTransform::default());
+        self.world.insert(g, MeshRenderer { mesh: plane });
+        self.world.insert(g, MaterialRef { handle: gray });
+        self.world.insert(g, PhysicsBody::fixed());
+        self.world
+            .insert(g, PhysicsCollider::cuboid(10.0, 0.01, 10.0));
+
+        // Cubes
+        let spawn =
+            |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
+                let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
+                w.insert(e, GlobalTransform::default());
+                w.insert(e, MeshRenderer { mesh });
+                w.insert(e, MaterialRef { handle: mat });
+                w.insert(e, PhysicsBody::dynamic());
+                w.insert(
+                    e,
+                    PhysicsCollider::cuboid(half, half, half).with_restitution(0.4),
+                );
+            };
+
+        spawn(
+            &mut self.world,
+            Vec3::new(0.0, 4.0, 0.0),
+            cube,
+            red,
+            0.5,
+        );
+        spawn(
+            &mut self.world,
+            Vec3::new(1.5, 6.0, 0.5),
+            cube,
+            blue,
+            0.5,
+        );
+        spawn(
+            &mut self.world,
+            Vec3::new(-1.0, 8.0, -0.5),
+            cube,
+            gold,
+            0.5,
+        );
+        spawn(
+            &mut self.world,
+            Vec3::new(0.5, 10.0, 1.0),
+            cube,
+            green,
+            0.5,
+        );
+
+        // Sphere
+        let s = self
+            .world
+            .spawn(LocalTransform(Transform::from_translation(Vec3::new(
+                -2.0, 7.0, 1.0,
+            ))));
+        self.world.insert(s, GlobalTransform::default());
+        self.world.insert(s, MeshRenderer { mesh: sphere });
+        self.world.insert(s, MaterialRef { handle: gold });
+        self.world.insert(s, PhysicsBody::dynamic());
+        self.world
+            .insert(s, PhysicsCollider::sphere(0.5).with_restitution(0.6));
+
+        // Light
+        self.world.spawn(DirectionalLight {
+            direction: [0.5, -1.0, 0.3],
+            color: [1.0, 0.98, 0.95],
+            intensity: 2.0,
+        });
+    }
+
     fn render_frame(&mut self) {
         self.world.resource_mut::<Time>().unwrap().update();
+        let elapsed = self.world.resource::<Time>().unwrap().elapsed as f32;
 
+        // Tick simulation when playing
         if self.editor_state.should_tick() {
             physics_step_system(&mut self.world);
         }
         euca_scene::transform_propagation_system(&mut self.world);
 
-        let window = self.window.as_ref().unwrap();
-        let device = self.device.as_ref().unwrap();
-        let queue = self.queue.as_ref().unwrap();
-        let surface = self.surface.as_ref().unwrap();
-        let config = self.surface_config.as_ref().unwrap();
+        // Orbit camera
+        let cam = self.world.resource_mut::<Camera>().unwrap();
+        let angle = elapsed * 0.2;
+        let radius = 12.0;
+        cam.eye = Vec3::new(angle.cos() * radius, 6.0, angle.sin() * radius);
 
-        let output = match surface.get_current_texture() {
+        // Get surface texture
+        let gpu = self.gpu.as_ref().unwrap();
+        let output = match gpu.surface.get_current_texture() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -89,7 +169,52 @@ impl EditorApp {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Run egui
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("editor frame"),
+            });
+
+        // === 1. Render 3D scene ===
+        {
+            let draw_commands: Vec<DrawCommand> = {
+                let query =
+                    Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
+                query
+                    .iter()
+                    .map(|(gt, mr, mat)| DrawCommand {
+                        mesh: mr.mesh,
+                        material: mat.handle,
+                        model_matrix: gt.0.to_matrix(),
+                    })
+                    .collect()
+            };
+
+            let light = {
+                let query = Query::<&DirectionalLight>::new(&self.world);
+                query.iter().next().cloned().unwrap_or_default()
+            };
+            let ambient = self
+                .world
+                .resource::<AmbientLight>()
+                .cloned()
+                .unwrap_or_default();
+            let camera = self.world.resource::<Camera>().unwrap().clone();
+
+            let renderer = self.renderer.as_ref().unwrap();
+            renderer.render_to_view(
+                gpu,
+                &camera,
+                &light,
+                &ambient,
+                &draw_commands,
+                &view,
+                &mut encoder,
+            );
+        }
+
+        // === 2. Render egui on top ===
+        let window = self.window.as_ref().unwrap();
         let egui_winit = self.egui_winit.as_mut().unwrap();
         let raw_input = egui_winit.take_egui_input(window);
 
@@ -97,12 +222,7 @@ impl EditorApp {
             toolbar_panel(ctx, &mut self.editor_state, &self.world);
             hierarchy_panel(ctx, &mut self.editor_state, &self.world);
             inspector_panel(ctx, &mut self.editor_state, &mut self.world);
-
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.heading("3D Viewport (coming soon)");
-                });
-            });
+            // Central panel is transparent — 3D scene shows through
         });
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
@@ -111,36 +231,32 @@ impl EditorApp {
             .egui_ctx
             .tessellate(full_output.shapes, full_output.pixels_per_point);
         let screen_desc = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [config.width, config.height],
+            size_in_pixels: [gpu.surface_config.width, gpu.surface_config.height],
             pixels_per_point: full_output.pixels_per_point,
         };
 
         let egui_renderer = self.egui_renderer.as_mut().unwrap();
         for (id, delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(device, queue, *id, delta);
+            egui_renderer.update_texture(&gpu.device, &gpu.queue, *id, delta);
         }
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("editor"),
-        });
+        let user_bufs = egui_renderer.update_buffers(
+            &gpu.device,
+            &gpu.queue,
+            &mut encoder,
+            &paint_jobs,
+            &screen_desc,
+        );
 
-        let user_bufs =
-            egui_renderer.update_buffers(device, queue, &mut encoder, &paint_jobs, &screen_desc);
-
-        // Clear + egui render in one pass
+        // egui render pass: LoadOp::Load (don't clear — render ON TOP of 3D scene)
         {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("editor pass"),
+                label: Some("egui pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.12,
-                            g: 0.12,
-                            b: 0.15,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -151,9 +267,10 @@ impl EditorApp {
             egui_renderer.render(&mut pass.forget_lifetime(), &paint_jobs, &screen_desc);
         }
 
+        // Submit all commands
         let mut cmds: Vec<wgpu::CommandBuffer> = vec![encoder.finish()];
         cmds.extend(user_bufs);
-        queue.submit(cmds);
+        gpu.queue.submit(cmds);
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
@@ -166,58 +283,33 @@ impl EditorApp {
 impl ApplicationHandler for EditorApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            let window = Arc::new(event_loop.create_window(self.window_attrs.clone()).unwrap());
-
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-            let surface = instance.create_surface(window.clone()).unwrap();
-            let adapter =
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    compatible_surface: Some(&surface),
-                    ..Default::default()
-                }))
+            let window = event_loop
+                .create_window(self.window_attrs.clone())
                 .unwrap();
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                    .unwrap();
-
-            let size = window.inner_size();
-            let caps = surface.get_capabilities(&adapter);
-            let format = caps
-                .formats
-                .iter()
-                .find(|f| f.is_srgb())
-                .copied()
-                .unwrap_or(caps.formats[0]);
-            let config = wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format,
-                width: size.width.max(1),
-                height: size.height.max(1),
-                present_mode: wgpu::PresentMode::AutoVsync,
-                alpha_mode: caps.alpha_modes[0],
-                view_formats: vec![],
-                desired_maximum_frame_latency: 2,
-            };
-            surface.configure(&device, &config);
+            let gpu = GpuContext::new(window);
+            let renderer = Renderer::new(&gpu);
 
             let egui_winit = egui_winit::State::new(
                 self.egui_ctx.clone(),
                 egui::ViewportId::ROOT,
-                &*window,
-                Some(window.scale_factor() as f32),
+                &*gpu.window,
+                Some(gpu.window.scale_factor() as f32),
                 None,
                 None,
             );
-            let egui_renderer =
-                egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
+            let egui_renderer = egui_wgpu::Renderer::new(
+                &gpu.device,
+                gpu.surface_config.format,
+                egui_wgpu::RendererOptions::default(),
+            );
 
-            self.window = Some(window);
-            self.device = Some(device);
-            self.queue = Some(queue);
-            self.surface = Some(surface);
-            self.surface_config = Some(config);
+            self.window = Some(gpu.window.clone());
+            self.gpu = Some(gpu);
+            self.renderer = Some(renderer);
             self.egui_winit = Some(egui_winit);
             self.egui_renderer = Some(egui_renderer);
+
+            self.setup_scene();
         }
     }
 
@@ -241,12 +333,11 @@ impl ApplicationHandler for EditorApp {
                 ..
             } => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let (Some(surface), Some(config), Some(device)) =
-                    (&self.surface, &mut self.surface_config, &self.device)
-                {
-                    config.width = size.width.max(1);
-                    config.height = size.height.max(1);
-                    surface.configure(device, config);
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.resize(size.width, size.height);
+                    if let Some(r) = &mut self.renderer {
+                        r.resize(gpu);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
