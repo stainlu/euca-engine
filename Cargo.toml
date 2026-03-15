@@ -9,6 +9,7 @@ members = [
     "crates/euca-core",
     "crates/euca-render",
     "crates/euca-agent",
+    "crates/euca-physics",
     "tools/euca-cli",
 ]
 

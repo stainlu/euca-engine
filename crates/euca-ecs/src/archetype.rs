@@ -72,11 +72,13 @@ impl Column {
     /// # Safety
     /// `src` must point to a valid value of the component type.
     unsafe fn push(&mut self, src: *const u8) {
-        self.grow_if_needed();
         let size = self.item_layout.size();
-        unsafe {
-            let dst = self.data.add(self.len * size);
-            ptr::copy_nonoverlapping(src, dst, size);
+        if size > 0 {
+            self.grow_if_needed();
+            unsafe {
+                let dst = self.data.add(self.len * size);
+                ptr::copy_nonoverlapping(src, dst, size);
+            }
         }
         self.len += 1;
     }
@@ -132,14 +134,24 @@ impl Column {
     /// `index` must be < `self.len`.
     #[inline]
     unsafe fn get(&self, index: usize) -> *const u8 {
-        unsafe { self.data.add(index * self.item_layout.size()) }
+        let size = self.item_layout.size();
+        if size == 0 {
+            std::ptr::NonNull::<u8>::dangling().as_ptr() as *const u8
+        } else {
+            unsafe { self.data.add(index * size) }
+        }
     }
 
     /// # Safety
     /// `index` must be < `self.len`.
     #[inline]
     unsafe fn get_mut(&self, index: usize) -> *mut u8 {
-        unsafe { self.data.add(index * self.item_layout.size()) }
+        let size = self.item_layout.size();
+        if size == 0 {
+            std::ptr::NonNull::<u8>::dangling().as_ptr()
+        } else {
+            unsafe { self.data.add(index * size) }
+        }
     }
 
     /// Copy raw bytes of element at `index` into `dst`.
@@ -148,9 +160,11 @@ impl Column {
     /// `index` must be valid. `dst` must have room for `item_layout.size()` bytes.
     unsafe fn read_raw(&self, index: usize, dst: *mut u8) {
         let size = self.item_layout.size();
-        unsafe {
-            let src = self.data.add(index * size);
-            ptr::copy_nonoverlapping(src, dst, size);
+        if size > 0 {
+            unsafe {
+                let src = self.data.add(index * size);
+                ptr::copy_nonoverlapping(src, dst, size);
+            }
         }
     }
 }
