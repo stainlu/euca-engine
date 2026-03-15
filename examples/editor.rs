@@ -2,7 +2,7 @@ use euca_core::Time;
 use euca_ecs::{Query, World};
 use euca_editor::{EditorState, hierarchy_panel, inspector_panel, toolbar_panel};
 use euca_math::{Transform, Vec3};
-use euca_physics::{PhysicsBody, PhysicsCollider, PhysicsWorld, physics_step_system};
+use euca_physics::{Collider, PhysicsBody, PhysicsConfig, Velocity, physics_step_system};
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
 
@@ -33,7 +33,7 @@ impl EditorApp {
             Vec3::new(8.0, 6.0, 8.0),
             Vec3::new(0.0, 1.0, 0.0),
         ));
-        world.insert_resource(PhysicsWorld::new());
+        world.insert_resource(PhysicsConfig::new());
         world.insert_resource(AmbientLight {
             color: [1.0, 1.0, 1.0],
             intensity: 0.2,
@@ -76,8 +76,7 @@ impl EditorApp {
         self.world.insert(g, MeshRenderer { mesh: plane });
         self.world.insert(g, MaterialRef { handle: gray });
         self.world.insert(g, PhysicsBody::fixed());
-        self.world
-            .insert(g, PhysicsCollider::cuboid(10.0, 0.01, 10.0));
+        self.world.insert(g, Collider::aabb(10.0, 0.01, 10.0));
 
         // Cubes
         let spawn = |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
@@ -86,10 +85,8 @@ impl EditorApp {
             w.insert(e, MeshRenderer { mesh });
             w.insert(e, MaterialRef { handle: mat });
             w.insert(e, PhysicsBody::dynamic());
-            w.insert(
-                e,
-                PhysicsCollider::cuboid(half, half, half).with_restitution(0.4),
-            );
+            w.insert(e, Velocity::default());
+            w.insert(e, Collider::aabb(half, half, half).with_restitution(0.4));
         };
 
         spawn(&mut self.world, Vec3::new(0.0, 4.0, 0.0), cube, red, 0.5);
@@ -107,8 +104,9 @@ impl EditorApp {
         self.world.insert(s, MeshRenderer { mesh: sphere });
         self.world.insert(s, MaterialRef { handle: gold });
         self.world.insert(s, PhysicsBody::dynamic());
+        self.world.insert(s, Velocity::default());
         self.world
-            .insert(s, PhysicsCollider::sphere(0.5).with_restitution(0.6));
+            .insert(s, Collider::sphere(0.5).with_restitution(0.6));
 
         // Light
         self.world.spawn(DirectionalLight {
@@ -128,7 +126,7 @@ impl EditorApp {
             self.world.despawn(entity);
         }
         // Reset physics world
-        self.world.insert_resource(PhysicsWorld::new());
+        self.world.insert_resource(PhysicsConfig::new());
         // Re-create scene
         self.setup_scene();
         self.editor_state.selected_entity = None;

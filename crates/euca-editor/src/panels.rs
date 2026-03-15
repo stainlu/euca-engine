@@ -1,5 +1,5 @@
 use euca_ecs::{Entity, Query, World};
-use euca_physics::{PhysicsBody, PhysicsCollider};
+use euca_physics::{Collider, PhysicsBody};
 use euca_render::{MaterialRef, MeshRenderer};
 use euca_scene::{GlobalTransform, LocalTransform};
 
@@ -158,8 +158,8 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
                 });
             }
 
-            if let Some(col) = world.get::<PhysicsCollider>(entity) {
-                ui.collapsing("PhysicsCollider", |ui| {
+            if let Some(col) = world.get::<Collider>(entity) {
+                ui.collapsing("Collider", |ui| {
                     ui.label(format!("Shape: {:?}", col.shape));
                     ui.label(format!("Restitution: {:.2}", col.restitution));
                     ui.label(format!("Friction: {:.2}", col.friction));

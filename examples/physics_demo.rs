@@ -29,7 +29,7 @@ impl PhysicsDemoApp {
             Vec3::new(8.0, 6.0, 8.0),
             Vec3::new(0.0, 1.0, 0.0),
         ));
-        world.insert_resource(PhysicsWorld::new());
+        world.insert_resource(PhysicsConfig::new());
         world.insert_resource(AmbientLight {
             color: [1.0, 1.0, 1.0],
             intensity: 0.2,
@@ -77,8 +77,7 @@ impl PhysicsDemoApp {
         self.world.insert(ground, MeshRenderer { mesh: plane_mesh });
         self.world.insert(ground, MaterialRef { handle: gray_mat });
         self.world.insert(ground, PhysicsBody::fixed());
-        self.world
-            .insert(ground, PhysicsCollider::cuboid(10.0, 0.01, 10.0));
+        self.world.insert(ground, Collider::aabb(10.0, 0.01, 10.0));
 
         // Spawn cubes at different heights
         let spawn = |world: &mut World,
@@ -91,9 +90,10 @@ impl PhysicsDemoApp {
             world.insert(e, MeshRenderer { mesh });
             world.insert(e, MaterialRef { handle: mat });
             world.insert(e, PhysicsBody::dynamic());
+            world.insert(e, euca_physics::Velocity::default());
             world.insert(
                 e,
-                PhysicsCollider::cuboid(half_size, half_size, half_size).with_restitution(0.5),
+                Collider::aabb(half_size, half_size, half_size).with_restitution(0.5),
             );
         };
 
@@ -136,8 +136,9 @@ impl PhysicsDemoApp {
         self.world.insert(s, MeshRenderer { mesh: sphere_mesh });
         self.world.insert(s, MaterialRef { handle: gold_mat });
         self.world.insert(s, PhysicsBody::dynamic());
+        self.world.insert(s, euca_physics::Velocity::default());
         self.world
-            .insert(s, PhysicsCollider::sphere(0.5).with_restitution(0.7));
+            .insert(s, Collider::sphere(0.5).with_restitution(0.7));
 
         // Directional light
         let light_entity = self.world.spawn(DirectionalLight {

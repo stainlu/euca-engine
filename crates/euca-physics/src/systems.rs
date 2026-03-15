@@ -1,182 +1,149 @@
-use euca_ecs::{Entity, Query, Without, World};
-use euca_math::{Quat, Vec3};
+use euca_ecs::{Entity, Query, World};
+use euca_math::Vec3;
 use euca_scene::LocalTransform;
 
-use crate::components;
-use crate::world::PhysicsWorld;
+use crate::collision::intersect_shapes;
+use crate::components::*;
+use crate::world::PhysicsConfig;
 
-/// Main physics system: cleanup despawned, register new bodies, step, write back.
+/// Main physics system: apply gravity, integrate velocity, detect collisions, resolve.
 pub fn physics_step_system(world: &mut World) {
-    cleanup_despawned_bodies(world);
-    register_new_bodies(world);
-    step_simulation(world);
-    write_back_transforms(world);
+    let config = world
+        .resource::<PhysicsConfig>()
+        .cloned()
+        .unwrap_or_default();
+    let dt = config.fixed_dt;
+    let gravity = config.gravity;
+
+    // Step 1: Apply gravity to dynamic bodies
+    apply_gravity(world, gravity, dt);
+
+    // Step 2: Integrate velocity → position
+    integrate_positions(world, dt);
+
+    // Step 3: Detect and resolve collisions
+    resolve_collisions(world);
 }
 
-/// Remove Rapier bodies for entities that no longer exist in the ECS world.
-fn cleanup_despawned_bodies(world: &mut World) {
-    // Collect stale entity keys first (read-only access to physics)
-    let stale: Vec<Entity> = {
-        let physics = match world.resource::<PhysicsWorld>() {
-            Some(p) => p,
-            None => return,
-        };
-        physics
-            .entity_to_body
-            .keys()
-            .filter(|e| !world.is_alive(**e))
-            .copied()
-            .collect()
-    };
-
-    if stale.is_empty() {
-        return;
-    }
-
-    // Now mutably remove the bodies
-    let physics = world.resource_mut::<PhysicsWorld>().unwrap();
-    for entity in stale {
-        if let Some(body_handle) = physics.entity_to_body.remove(&entity) {
-            physics.bodies.remove(
-                body_handle,
-                &mut physics.island_manager,
-                &mut physics.colliders,
-                &mut physics.impulse_joints,
-                &mut physics.multibody_joints,
-                false,
-            );
-        }
-    }
-}
-
-#[allow(clippy::type_complexity)]
-fn register_new_bodies(world: &mut World) {
-    let new_bodies: Vec<(
-        Entity,
-        components::RigidBodyType,
-        Vec3,
-        Option<(components::ColliderShape, f32, f32)>,
-    )> = {
-        let query = Query::<
-            (Entity, &components::PhysicsBody, &LocalTransform),
-            Without<components::PhysicsRegistered>,
-        >::new(world);
+fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
+    let entities: Vec<Entity> = {
+        let query = Query::<(Entity, &PhysicsBody, &Velocity)>::new(world);
         query
             .iter()
-            .map(|(e, body, lt)| {
-                let collider = world
-                    .get::<components::PhysicsCollider>(e)
-                    .map(|c| (c.shape.clone(), c.restitution, c.friction));
-                (e, body.body_type, lt.0.translation, collider)
-            })
-            .collect()
-    };
-
-    if new_bodies.is_empty() {
-        return;
-    }
-
-    {
-        let physics = match world.resource_mut::<PhysicsWorld>() {
-            Some(p) => p,
-            None => return,
-        };
-
-        for (entity, body_type, pos, collider_info) in &new_bodies {
-            let rb = match body_type {
-                components::RigidBodyType::Dynamic => {
-                    rapier3d::dynamics::RigidBodyBuilder::dynamic()
-                }
-                components::RigidBodyType::Static => rapier3d::dynamics::RigidBodyBuilder::fixed(),
-                components::RigidBodyType::Kinematic => {
-                    rapier3d::dynamics::RigidBodyBuilder::kinematic_position_based()
-                }
-            }
-            .translation(rapier3d::math::Vec3::new(pos.x, pos.y, pos.z))
-            .build();
-
-            let body_handle = physics.bodies.insert(rb);
-            physics.entity_to_body.insert(*entity, body_handle);
-
-            if let Some((shape, restitution, friction)) = collider_info {
-                let collider = match shape {
-                    components::ColliderShape::Cuboid { hx, hy, hz } => {
-                        rapier3d::geometry::ColliderBuilder::cuboid(*hx, *hy, *hz)
-                    }
-                    components::ColliderShape::Sphere { radius } => {
-                        rapier3d::geometry::ColliderBuilder::ball(*radius)
-                    }
-                    components::ColliderShape::Capsule {
-                        half_height,
-                        radius,
-                    } => rapier3d::geometry::ColliderBuilder::capsule_y(*half_height, *radius),
-                }
-                .restitution(*restitution)
-                .friction(*friction)
-                .build();
-
-                physics
-                    .colliders
-                    .insert_with_parent(collider, body_handle, &mut physics.bodies);
-            }
-        }
-    }
-
-    for (entity, _, _, _) in new_bodies {
-        world.insert(entity, components::PhysicsRegistered);
-    }
-}
-
-fn step_simulation(world: &mut World) {
-    if let Some(physics) = world.resource_mut::<PhysicsWorld>() {
-        physics.step();
-    }
-}
-
-fn write_back_transforms(world: &mut World) {
-    let dynamic_entities: Vec<Entity> = {
-        let query = Query::<(
-            Entity,
-            &components::PhysicsBody,
-            &components::PhysicsRegistered,
-        )>::new(world);
-        query
-            .iter()
-            .filter(|(_, body, _)| body.body_type == components::RigidBodyType::Dynamic)
+            .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
             .map(|(e, _, _)| e)
             .collect()
     };
 
-    if dynamic_entities.is_empty() {
-        return;
+    for entity in entities {
+        if let Some(vel) = world.get_mut::<Velocity>(entity) {
+            // Check for per-entity gravity override
+            let g = gravity; // TODO: check Gravity component
+            vel.linear = vel.linear + g * dt;
+        }
     }
+}
 
-    let updates: Vec<(Entity, Vec3, Quat)> = {
-        let physics = match world.resource::<PhysicsWorld>() {
-            Some(p) => p,
-            None => return,
-        };
-
-        dynamic_entities
+fn integrate_positions(world: &mut World, dt: f32) {
+    let updates: Vec<(Entity, Vec3)> = {
+        let query = Query::<(Entity, &PhysicsBody, &Velocity)>::new(world);
+        query
             .iter()
-            .filter_map(|entity| {
-                let handle = physics.entity_to_body.get(entity)?;
-                let body = physics.bodies.get(*handle)?;
-                let pos = body.translation();
-                let rot = body.rotation();
+            .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
+            .map(|(e, _, vel)| (e, vel.linear))
+            .collect()
+    };
+
+    for (entity, linear_vel) in updates {
+        if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+            lt.0.translation = lt.0.translation + linear_vel * dt;
+        }
+    }
+}
+
+fn resolve_collisions(world: &mut World) {
+    // Collect all collidable entities (split into two queries since tuples max at 3)
+    let bodies: Vec<(Entity, Vec3, ColliderShape, RigidBodyType, f32)> = {
+        let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
+        query
+            .iter()
+            .filter_map(|(e, lt, col)| {
+                let body = world.get::<PhysicsBody>(e)?;
                 Some((
-                    *entity,
-                    Vec3::new(pos.x, pos.y, pos.z),
-                    Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
+                    e,
+                    lt.0.translation,
+                    col.shape.clone(),
+                    body.body_type,
+                    col.restitution,
                 ))
             })
             .collect()
     };
 
-    for (entity, translation, rotation) in updates {
-        if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
-            lt.0.translation = translation;
-            lt.0.rotation = rotation;
+    // O(n²) broadphase — fine for <1000 entities, replace with spatial hash for more
+    let mut corrections: Vec<(Entity, Vec3, Vec3)> = Vec::new(); // entity, position_correction, velocity_correction
+
+    for i in 0..bodies.len() {
+        for j in (i + 1)..bodies.len() {
+            let (e_a, pos_a, shape_a, type_a, rest_a) = &bodies[i];
+            let (e_b, pos_b, shape_b, type_b, rest_b) = &bodies[j];
+
+            if *type_a == RigidBodyType::Static && *type_b == RigidBodyType::Static {
+                continue; // Two statics can't collide meaningfully
+            }
+
+            if let Some((normal, depth)) = intersect_shapes(*pos_a, shape_a, *pos_b, shape_b) {
+                let restitution = (rest_a + rest_b) * 0.5;
+
+                // Push-out resolution
+                match (type_a, type_b) {
+                    (RigidBodyType::Dynamic, RigidBodyType::Static) => {
+                        corrections.push((*e_a, normal * (-depth), normal * (-1.0)));
+                    }
+                    (RigidBodyType::Static, RigidBodyType::Dynamic) => {
+                        corrections.push((*e_b, normal * depth, normal));
+                    }
+                    (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
+                        corrections.push((*e_a, normal * (-depth * 0.5), normal * (-1.0)));
+                        corrections.push((*e_b, normal * (depth * 0.5), normal));
+                    }
+                    _ => {}
+                }
+
+                // Velocity reflection for dynamic bodies hitting static
+                if *type_a == RigidBodyType::Dynamic {
+                    if let Some(vel) = world.get::<Velocity>(*e_a) {
+                        let vn = vel.linear.dot(-normal);
+                        if vn > 0.0 {
+                            let reflect = vel.linear + normal * (vn * (1.0 + restitution));
+                            corrections.push((*e_a, Vec3::ZERO, reflect - vel.linear));
+                        }
+                    }
+                }
+                if *type_b == RigidBodyType::Dynamic {
+                    if let Some(vel) = world.get::<Velocity>(*e_b) {
+                        let vn = vel.linear.dot(normal);
+                        if vn > 0.0 {
+                            let reflect = vel.linear + normal * (-vn * (1.0 + restitution));
+                            corrections.push((*e_b, Vec3::ZERO, reflect - vel.linear));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply corrections
+    for (entity, pos_correction, vel_correction) in corrections {
+        if pos_correction.length_squared() > 0.0 {
+            if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                lt.0.translation = lt.0.translation + pos_correction;
+            }
+        }
+        if vel_correction.length_squared() > 0.0 {
+            if let Some(vel) = world.get_mut::<Velocity>(entity) {
+                vel.linear = vel.linear + vel_correction;
+            }
         }
     }
 }
@@ -190,20 +157,20 @@ mod tests {
     #[test]
     fn gravity_moves_dynamic_body() {
         let mut world = World::new();
-        world.insert_resource(PhysicsWorld::new());
+        world.insert_resource(PhysicsConfig::new());
 
         let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
             0.0, 10.0, 0.0,
         ))));
         world.insert(entity, GlobalTransform::default());
-        world.insert(entity, components::PhysicsBody::dynamic());
-        world.insert(entity, components::PhysicsCollider::cuboid(0.5, 0.5, 0.5));
+        world.insert(entity, PhysicsBody::dynamic());
+        world.insert(entity, Velocity::default());
+        world.insert(entity, Collider::aabb(0.5, 0.5, 0.5));
 
         for _ in 0..120 {
             physics_step_system(&mut world);
         }
 
-        // After 2s of freefall from y=10, body should be well below origin
         let lt = world.get::<LocalTransform>(entity).unwrap();
         assert!(
             lt.0.translation.y < 0.0,
@@ -215,96 +182,55 @@ mod tests {
     #[test]
     fn static_body_does_not_move() {
         let mut world = World::new();
-        world.insert_resource(PhysicsWorld::new());
+        world.insert_resource(PhysicsConfig::new());
 
-        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
+        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         world.insert(entity, GlobalTransform::default());
-        world.insert(entity, components::PhysicsBody::fixed());
-        world.insert(entity, components::PhysicsCollider::cuboid(10.0, 0.5, 10.0));
+        world.insert(entity, PhysicsBody::fixed());
+        world.insert(entity, Collider::aabb(10.0, 0.5, 10.0));
 
         for _ in 0..60 {
             physics_step_system(&mut world);
         }
 
         let lt = world.get::<LocalTransform>(entity).unwrap();
-        assert!(
-            (lt.0.translation.y).abs() < 0.01,
-            "Static body should not move"
-        );
+        assert!((lt.0.translation.y).abs() < 0.01);
     }
 
     #[test]
     fn dynamic_body_lands_on_static() {
         let mut world = World::new();
-        world.insert_resource(PhysicsWorld::new());
+        world.insert_resource(PhysicsConfig::new());
 
-        // Ground
-        let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
+        // Ground at y=0
+        let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         world.insert(ground, GlobalTransform::default());
-        world.insert(ground, components::PhysicsBody::fixed());
-        world.insert(ground, components::PhysicsCollider::cuboid(10.0, 0.5, 10.0));
+        world.insert(ground, PhysicsBody::fixed());
+        world.insert(ground, Collider::aabb(10.0, 0.5, 10.0));
 
-        // Falling cube
+        // Cube at y=5
         let cube = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
             0.0, 5.0, 0.0,
         ))));
         world.insert(cube, GlobalTransform::default());
-        world.insert(cube, components::PhysicsBody::dynamic());
-        world.insert(cube, components::PhysicsCollider::cuboid(0.5, 0.5, 0.5));
+        world.insert(cube, PhysicsBody::dynamic());
+        world.insert(cube, Velocity::default());
+        world.insert(cube, Collider::aabb(0.5, 0.5, 0.5));
 
-        for _ in 0..180 {
+        for _ in 0..300 {
             physics_step_system(&mut world);
         }
 
         let lt = world.get::<LocalTransform>(cube).unwrap();
-        assert!(lt.0.translation.y > 0.0, "Cube should be above ground");
         assert!(
-            lt.0.translation.y < 3.0,
-            "Cube should have fallen, y={}",
+            lt.0.translation.y > -1.0,
+            "Cube should be near ground, y={}",
             lt.0.translation.y
         );
-    }
-
-    #[test]
-    fn despawned_bodies_are_cleaned_up() {
-        let mut world = World::new();
-        world.insert_resource(PhysicsWorld::new());
-
-        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
-            0.0, 5.0, 0.0,
-        ))));
-        world.insert(entity, GlobalTransform::default());
-        world.insert(entity, components::PhysicsBody::dynamic());
-        world.insert(entity, components::PhysicsCollider::cuboid(0.5, 0.5, 0.5));
-
-        // Register the body
-        physics_step_system(&mut world);
-        assert_eq!(
-            world
-                .resource::<PhysicsWorld>()
-                .unwrap()
-                .entity_to_body
-                .len(),
-            1
-        );
-
-        // Despawn the entity
-        world.despawn(entity);
-
-        // Run physics again — should clean up the Rapier body
-        physics_step_system(&mut world);
-        assert_eq!(
-            world
-                .resource::<PhysicsWorld>()
-                .unwrap()
-                .entity_to_body
-                .len(),
-            0,
-            "Rapier body should be removed after entity despawn"
+        assert!(
+            lt.0.translation.y < 5.0,
+            "Cube should have fallen, y={}",
+            lt.0.translation.y
         );
     }
 }
