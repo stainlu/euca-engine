@@ -42,19 +42,19 @@ External AI Agents (Claude Code, RL agents, etc.)
 
 | Crate | Purpose | Status | Tests |
 |-------|---------|--------|-------|
+| `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query, Resource, Event, Command, System, Schedule | Done | 43 |
 | `euca-math` | Vec2/3/4, Quat, Mat4, Transform, AABB (wraps glam) | Done | 23 |
 | `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info | Done | 1 |
-| `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query, Resource, Event, Command, System, Schedule | Done | 43 |
-| `euca-scene` | Transform hierarchy, Parent/Children, spatial index | In Progress | — |
-| `euca-core` | App builder, Plugin trait, Time resource, winit event loop | In Progress | — |
-| `euca-render` | wgpu renderer, Camera, Mesh, basic Forward+ pipeline | In Progress | — |
-| `euca-agent` | HTTP/WebSocket/CLI interface for external AI agents | Planned | — |
-| `euca-editor` | egui-based visual editor (scene viewport, inspector) | Planned | — |
-| `euca-physics` | Rapier integration as ECS systems | Planned | — |
+| `euca-scene` | Transform hierarchy, Parent/Children propagation | Done | 3 |
+| `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
+| `euca-render` | wgpu PBR renderer (Cook-Torrance BRDF, materials, lights) | Done | 8 |
+| `euca-physics` | Rapier3D integration (RigidBody, Collider, step system) | Done | 3 |
+| `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
+| `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 0 |
+| `euca-editor` | egui-based visual editor (hierarchy, inspector, play/pause) | Done | 4 |
+| `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) | Done | 0 |
 | `euca-audio` | Spatial audio via cpal | Planned | — |
-| `euca-asset` | Async asset loading, hot-reload, format conversion | Planned | — |
 | `euca-net` | Multiplayer state replication via QUIC (quinn) | Planned | — |
-| `euca-cli` | CLI tool for AI agents (`euca observe`, `euca act`, etc.) | Planned | — |
 
 ## Dependency DAG
 
@@ -188,7 +188,16 @@ POST /reset                        → reset to initial state
 | Date | Phase | What |
 |------|-------|------|
 | 2026-03-15 | 1 | euca-math: Vec/Quat/Mat4/Transform/AABB (23 tests) |
-| 2026-03-15 | 1 | euca-ecs: Entity/Component/Archetype/World/Query (24 tests) |
-| 2026-03-15 | 1 | euca-ecs: Resource/Event/Command/System/Schedule (19 tests) |
+| 2026-03-15 | 1 | euca-ecs: Entity/Component/Archetype/World/Query/Resource/Event/Command/System/Schedule (43 tests) |
 | 2026-03-15 | 1 | euca-reflect: Reflect trait + derive macro |
-| 2026-03-15 | 2 | Started: euca-scene, euca-core, euca-render |
+| 2026-03-15 | 2 | euca-scene: Transform hierarchy + propagation (3 tests) |
+| 2026-03-15 | 2 | euca-core: App builder, Plugin, Time, winit event loop |
+| 2026-03-15 | 2 | euca-render: wgpu Forward+ with vertex colors, then PBR upgrade |
+| 2026-03-15 | 3 | euca-agent: HTTP API server (axum), headless mode |
+| 2026-03-15 | 3 | euca-cli: CLI tool for AI agents |
+| 2026-03-15 | 4 | euca-physics: Rapier3D integration (3 tests) |
+| 2026-03-15 | 4 | euca-render: PBR Cook-Torrance BRDF, materials, lights |
+| 2026-03-15 | 4 | euca-asset: glTF 2.0 model loading |
+| 2026-03-15 | 5 | euca-editor: egui panels (hierarchy, inspector, play/pause) |
+| 2026-03-15 | CI | GitHub Actions: check, test, clippy, fmt |
+| 2026-03-15 | CI | Added 9 new tests, fixed all clippy warnings, README.md |

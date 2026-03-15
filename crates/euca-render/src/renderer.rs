@@ -81,9 +81,9 @@ impl Renderer {
 
         let min_align = gpu.device.limits().min_uniform_buffer_offset_alignment as u64;
         let object_size = std::mem::size_of::<ObjectUniforms>() as u64;
-        let object_aligned = (object_size + min_align - 1) / min_align * min_align;
+        let object_aligned = object_size.div_ceil(min_align) * min_align;
         let material_size = std::mem::size_of::<MaterialUniforms>() as u64;
-        let material_aligned = (material_size + min_align - 1) / min_align * min_align;
+        let material_aligned = material_size.div_ceil(min_align) * min_align;
 
         // Object transform buffer (dynamic)
         let object_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {

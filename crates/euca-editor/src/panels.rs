@@ -1,4 +1,3 @@
-use egui;
 use euca_ecs::{Entity, Query, World};
 use euca_scene::{LocalTransform, GlobalTransform};
 use euca_render::{MeshRenderer, MaterialRef};
@@ -14,10 +13,8 @@ pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World
                 if ui.button("⏸ Pause").clicked() {
                     state.playing = false;
                 }
-            } else {
-                if ui.button("▶ Play").clicked() {
-                    state.playing = true;
-                }
+            } else if ui.button("▶ Play").clicked() {
+                state.playing = true;
             }
 
             if ui.button("⏭ Step").clicked() {

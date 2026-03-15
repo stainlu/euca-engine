@@ -39,3 +39,37 @@ impl Default for EditorState {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paused_by_default() {
+        let state = EditorState::new();
+        assert!(!state.playing);
+        assert!(state.selected_entity.is_none());
+    }
+
+    #[test]
+    fn should_tick_when_playing() {
+        let mut state = EditorState::new();
+        state.playing = true;
+        assert!(state.should_tick());
+        assert!(state.should_tick()); // continues ticking
+    }
+
+    #[test]
+    fn should_tick_once_on_step() {
+        let mut state = EditorState::new();
+        state.step_once = true;
+        assert!(state.should_tick()); // first call returns true
+        assert!(!state.should_tick()); // second call returns false (step consumed)
+    }
+
+    #[test]
+    fn paused_does_not_tick() {
+        let mut state = EditorState::new();
+        assert!(!state.should_tick());
+    }
+}

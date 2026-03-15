@@ -57,3 +57,26 @@ pub struct MaterialHandle(pub u32);
 pub struct MaterialRef {
     pub handle: MaterialHandle,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn material_defaults() {
+        let m = Material::default();
+        assert_eq!(m.metallic, 0.0);
+        assert!(m.roughness > 0.0);
+        assert_eq!(m.albedo[3], 1.0); // alpha = 1
+    }
+
+    #[test]
+    fn material_presets() {
+        let gold = Material::gold();
+        assert_eq!(gold.metallic, 1.0); // metal
+
+        let plastic = Material::red_plastic();
+        assert_eq!(plastic.metallic, 0.0); // dielectric
+        assert!(plastic.albedo[0] > 0.5); // red channel high
+    }
+}

@@ -53,3 +53,23 @@ impl Default for Camera {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn view_projection_not_identity() {
+        let cam = Camera::default();
+        let vp = cam.view_projection_matrix(16.0 / 9.0);
+        assert_ne!(vp, Mat4::IDENTITY);
+    }
+
+    #[test]
+    fn aspect_ratio_affects_projection() {
+        let cam = Camera::default();
+        let wide = cam.projection_matrix(2.0);
+        let narrow = cam.projection_matrix(0.5);
+        assert_ne!(wide, narrow);
+    }
+}

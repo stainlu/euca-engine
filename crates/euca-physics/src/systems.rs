@@ -12,6 +12,7 @@ pub fn physics_step_system(world: &mut World) {
     write_back_transforms(world);
 }
 
+#[allow(clippy::type_complexity)]
 fn register_new_bodies(world: &mut World) {
     let new_bodies: Vec<(Entity, components::RigidBodyType, Vec3, Option<(components::ColliderShape, f32, f32)>)> = {
         let query = Query::<(Entity, &components::PhysicsBody, &LocalTransform), Without<components::PhysicsRegistered>>::new(world);

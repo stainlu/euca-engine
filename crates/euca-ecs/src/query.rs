@@ -33,9 +33,9 @@ impl<T: Component> QueryFilter for With<T> {
 
 impl<T: Component> QueryFilter for Without<T> {
     fn matches(world: &World, archetype: &Archetype) -> bool {
-        world
+        !world
             .component_id::<T>()
-            .map_or(true, |id| !archetype.has_component(id))
+            .is_some_and(|id| archetype.has_component(id))
     }
 }
 

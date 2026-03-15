@@ -81,6 +81,7 @@ impl Transform {
     /// Compose two transforms: `self` applied after `other`.
     /// Equivalent to `self.to_matrix() * other.to_matrix()`, but avoids full matrix multiply.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: Self) -> Self {
         Self {
             translation: self.transform_point(other.translation),

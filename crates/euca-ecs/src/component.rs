@@ -38,6 +38,7 @@ unsafe fn drop_in_place<T>(ptr: *mut u8) {
 }
 
 /// Registry mapping Rust types to ComponentIds and metadata.
+#[derive(Default)]
 pub struct ComponentStorage {
     /// Map from TypeId to ComponentId for fast lookup.
     type_to_id: HashMap<TypeId, ComponentId>,
@@ -47,10 +48,7 @@ pub struct ComponentStorage {
 
 impl ComponentStorage {
     pub fn new() -> Self {
-        Self {
-            type_to_id: HashMap::new(),
-            infos: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Get or register a component type, returning its ID.

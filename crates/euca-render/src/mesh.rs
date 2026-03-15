@@ -131,3 +131,38 @@ impl Mesh {
         Self { vertices, indices }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cube_has_24_vertices_and_36_indices() {
+        let cube = Mesh::cube();
+        assert_eq!(cube.vertices.len(), 24); // 6 faces * 4 vertices
+        assert_eq!(cube.indices.len(), 36);  // 6 faces * 2 triangles * 3
+    }
+
+    #[test]
+    fn cube_normals_are_unit_length() {
+        let cube = Mesh::cube();
+        for v in &cube.vertices {
+            let len = (v.normal[0].powi(2) + v.normal[1].powi(2) + v.normal[2].powi(2)).sqrt();
+            assert!((len - 1.0).abs() < 1e-5, "Normal should be unit length, got {len}");
+        }
+    }
+
+    #[test]
+    fn sphere_vertex_count() {
+        let sphere = Mesh::sphere(1.0, 8, 16);
+        assert!(!sphere.vertices.is_empty());
+        assert!(!sphere.indices.is_empty());
+    }
+
+    #[test]
+    fn plane_has_4_vertices() {
+        let plane = Mesh::plane(10.0);
+        assert_eq!(plane.vertices.len(), 4);
+        assert_eq!(plane.indices.len(), 6);
+    }
+}

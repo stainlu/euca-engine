@@ -193,6 +193,7 @@ impl Drop for Column {
 /// An archetype stores all entities that have the exact same set of component types.
 /// Components are stored in struct-of-arrays (SoA) layout for cache-friendly iteration.
 pub struct Archetype {
+    #[allow(dead_code)] // Used for debugging/logging
     pub(crate) id: ArchetypeId,
     pub(crate) component_ids: Vec<ComponentId>,
     pub(crate) entities: Vec<Entity>,
@@ -312,7 +313,9 @@ impl Archetype {
 
     /// # Safety
     /// `T` must match the component type for `component_id`.
+    /// Interior mutability via raw pointers — caller must ensure exclusive access.
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub(crate) unsafe fn get_mut<T: 'static>(
         &self,
         component_id: ComponentId,

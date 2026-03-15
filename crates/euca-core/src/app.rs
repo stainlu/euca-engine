@@ -3,11 +3,14 @@ use crate::plugin::Plugin;
 use crate::time::Time;
 
 /// The application — owns the ECS world, schedule, and runs the main loop.
+#[allow(clippy::type_complexity)]
 pub struct App {
     pub world: World,
     pub schedule: Schedule,
+    #[allow(dead_code)]
     plugins: Vec<Box<dyn Plugin>>,
     /// Callback invoked each frame after schedule runs (for rendering, etc.)
+    #[allow(dead_code)]
     render_fn: Option<Box<dyn FnMut(&mut World)>>,
 }
 
@@ -70,6 +73,7 @@ impl App {
         use winit::event_loop::{ActiveEventLoop, EventLoop};
         use winit::window::{Window, WindowId, WindowAttributes};
 
+        #[allow(clippy::type_complexity)]
         struct NovaApp {
             world: World,
             schedule: Schedule,
