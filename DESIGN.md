@@ -48,7 +48,7 @@ External AI Agents (Claude Code, RL agents, etc.)
 | `euca-scene` | Transform hierarchy, Parent/Children propagation | Done | 3 |
 | `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
 | `euca-render` | wgpu PBR renderer (Cook-Torrance BRDF, materials, lights) | Done | 8 |
-| `euca-physics` | Rapier3D integration (RigidBody, Collider, step system) | Done | 3 |
+| `euca-physics` | Rapier3D integration (RigidBody, Collider, step system, despawn cleanup) | Done | 4 |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
 | `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 0 |
 | `euca-editor` | egui-based visual editor (hierarchy, inspector, play/pause) | Done | 4 |
@@ -201,3 +201,7 @@ POST /reset                        → reset to initial state
 | 2026-03-15 | 5 | euca-editor: egui panels (hierarchy, inspector, play/pause) |
 | 2026-03-15 | CI | GitHub Actions: check, test, clippy, fmt |
 | 2026-03-15 | CI | Added 9 new tests, fixed all clippy warnings, README.md |
+| 2026-03-15 | 5 | Editor: 3D viewport with PBR scene + egui overlay, Stop/Reset button |
+| 2026-03-15 | — | Open-sourced under MIT license |
+| 2026-03-15 | — | REVIEW.md: first-principles assessment, roadmap |
+| 2026-03-15 | 7 | Fix: physics body leak on despawn, transform BFS propagation |
