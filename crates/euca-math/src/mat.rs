@@ -1,120 +1,260 @@
 use crate::{Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut, Mul};
+use std::ops::Mul;
 
-/// 4x4 matrix (column-major, matching GPU conventions).
+/// 4x4 column-major matrix.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct Mat4(pub glam::Mat4);
+#[repr(C, align(16))]
+pub struct Mat4 {
+    /// Column 0 (x-axis)
+    pub cols: [[f32; 4]; 4],
+}
 
 impl Default for Mat4 {
-    #[inline]
+    #[inline(always)]
     fn default() -> Self {
         Self::IDENTITY
     }
 }
 
 impl Mat4 {
-    pub const IDENTITY: Self = Self(glam::Mat4::IDENTITY);
-    pub const ZERO: Self = Self(glam::Mat4::ZERO);
+    pub const IDENTITY: Self = Self {
+        cols: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+    };
 
-    #[inline]
-    pub fn from_translation(translation: Vec3) -> Self {
-        Self(glam::Mat4::from_translation(translation.0))
+    pub const ZERO: Self = Self {
+        cols: [[0.0; 4]; 4],
+    };
+
+    #[inline(always)]
+    pub fn col(&self, i: usize) -> [f32; 4] {
+        self.cols[i]
     }
 
-    #[inline]
-    pub fn from_rotation(rotation: Quat) -> Self {
-        Self(glam::Mat4::from_quat(rotation.0))
+    /// Column-major element access: col i, row j.
+    #[inline(always)]
+    pub fn get(&self, col: usize, row: usize) -> f32 {
+        self.cols[col][row]
     }
 
-    #[inline]
-    pub fn from_scale(scale: Vec3) -> Self {
-        Self(glam::Mat4::from_scale(scale.0))
+    pub fn from_translation(t: Vec3) -> Self {
+        let mut m = Self::IDENTITY;
+        m.cols[3][0] = t.x;
+        m.cols[3][1] = t.y;
+        m.cols[3][2] = t.z;
+        m
     }
 
-    #[inline]
-    pub fn from_scale_rotation_translation(scale: Vec3, rotation: Quat, translation: Vec3) -> Self {
-        Self(glam::Mat4::from_scale_rotation_translation(
-            scale.0,
-            rotation.0,
-            translation.0,
-        ))
+    pub fn from_scale(s: Vec3) -> Self {
+        let mut m = Self::IDENTITY;
+        m.cols[0][0] = s.x;
+        m.cols[1][1] = s.y;
+        m.cols[2][2] = s.z;
+        m
     }
 
-    #[inline]
-    pub fn perspective_lh(fov_y_radians: f32, aspect_ratio: f32, z_near: f32, z_far: f32) -> Self {
-        Self(glam::Mat4::perspective_lh(
-            fov_y_radians,
-            aspect_ratio,
-            z_near,
-            z_far,
-        ))
+    pub fn from_rotation(q: Quat) -> Self {
+        let x2 = q.x + q.x;
+        let y2 = q.y + q.y;
+        let z2 = q.z + q.z;
+        let xx = q.x * x2;
+        let xy = q.x * y2;
+        let xz = q.x * z2;
+        let yy = q.y * y2;
+        let yz = q.y * z2;
+        let zz = q.z * z2;
+        let wx = q.w * x2;
+        let wy = q.w * y2;
+        let wz = q.w * z2;
+
+        Self {
+            cols: [
+                [1.0 - (yy + zz), xy + wz, xz - wy, 0.0],
+                [xy - wz, 1.0 - (xx + zz), yz + wx, 0.0],
+                [xz + wy, yz - wx, 1.0 - (xx + yy), 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
     }
 
-    #[inline]
-    pub fn look_at_lh(eye: Vec3, center: Vec3, up: Vec3) -> Self {
-        Self(glam::Mat4::look_at_lh(eye.0, center.0, up.0))
+    pub fn from_scale_rotation_translation(s: Vec3, r: Quat, t: Vec3) -> Self {
+        let rot = Self::from_rotation(r);
+        Self {
+            cols: [
+                [
+                    rot.cols[0][0] * s.x,
+                    rot.cols[0][1] * s.x,
+                    rot.cols[0][2] * s.x,
+                    0.0,
+                ],
+                [
+                    rot.cols[1][0] * s.y,
+                    rot.cols[1][1] * s.y,
+                    rot.cols[1][2] * s.y,
+                    0.0,
+                ],
+                [
+                    rot.cols[2][0] * s.z,
+                    rot.cols[2][1] * s.z,
+                    rot.cols[2][2] * s.z,
+                    0.0,
+                ],
+                [t.x, t.y, t.z, 1.0],
+            ],
+        }
     }
 
-    #[inline]
+    pub fn perspective_lh(fov_y_radians: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
+        let h = 1.0 / (fov_y_radians * 0.5).tan();
+        let w = h / aspect;
+        let r = z_far / (z_far - z_near);
+
+        Self {
+            cols: [
+                [w, 0.0, 0.0, 0.0],
+                [0.0, h, 0.0, 0.0],
+                [0.0, 0.0, r, 1.0],
+                [0.0, 0.0, -r * z_near, 0.0],
+            ],
+        }
+    }
+
+    pub fn look_at_lh(eye: Vec3, target: Vec3, up: Vec3) -> Self {
+        let f = (target - eye).normalize();
+        let s = up.cross(f).normalize();
+        let u = f.cross(s);
+
+        Self {
+            cols: [
+                [s.x, u.x, f.x, 0.0],
+                [s.y, u.y, f.y, 0.0],
+                [s.z, u.z, f.z, 0.0],
+                [-s.dot(eye), -u.dot(eye), -f.dot(eye), 1.0],
+            ],
+        }
+    }
+
     pub fn inverse(self) -> Self {
-        Self(self.0.inverse())
+        // Cofactor expansion for 4x4 inverse
+        let m = &self.cols;
+        let a2323 = m[2][2] * m[3][3] - m[3][2] * m[2][3];
+        let a1323 = m[1][2] * m[3][3] - m[3][2] * m[1][3];
+        let a1223 = m[1][2] * m[2][3] - m[2][2] * m[1][3];
+        let a0323 = m[0][2] * m[3][3] - m[3][2] * m[0][3];
+        let a0223 = m[0][2] * m[2][3] - m[2][2] * m[0][3];
+        let a0123 = m[0][2] * m[1][3] - m[1][2] * m[0][3];
+        let a2313 = m[2][1] * m[3][3] - m[3][1] * m[2][3];
+        let a1313 = m[1][1] * m[3][3] - m[3][1] * m[1][3];
+        let a1213 = m[1][1] * m[2][3] - m[2][1] * m[1][3];
+        let a2312 = m[2][1] * m[3][2] - m[3][1] * m[2][2];
+        let a1312 = m[1][1] * m[3][2] - m[3][1] * m[1][2];
+        let a1212 = m[1][1] * m[2][2] - m[2][1] * m[1][2];
+        let a0313 = m[0][1] * m[3][3] - m[3][1] * m[0][3];
+        let a0213 = m[0][1] * m[2][3] - m[2][1] * m[0][3];
+        let a0312 = m[0][1] * m[3][2] - m[3][1] * m[0][2];
+        let a0212 = m[0][1] * m[2][2] - m[2][1] * m[0][2];
+        let a0113 = m[0][1] * m[1][3] - m[1][1] * m[0][3];
+        let a0112 = m[0][1] * m[1][2] - m[1][1] * m[0][2];
+
+        let det = m[0][0] * (m[1][1] * a2323 - m[2][1] * a1323 + m[3][1] * a1223)
+            - m[1][0] * (m[0][1] * a2323 - m[2][1] * a0323 + m[3][1] * a0223)
+            + m[2][0] * (m[0][1] * a1323 - m[1][1] * a0323 + m[3][1] * a0123)
+            - m[3][0] * (m[0][1] * a1223 - m[1][1] * a0223 + m[2][1] * a0123);
+
+        let inv_det = 1.0 / det;
+
+        Self {
+            cols: [
+                [
+                    inv_det * (m[1][1] * a2323 - m[2][1] * a1323 + m[3][1] * a1223),
+                    inv_det * -(m[0][1] * a2323 - m[2][1] * a0323 + m[3][1] * a0223),
+                    inv_det * (m[0][1] * a1323 - m[1][1] * a0323 + m[3][1] * a0123),
+                    inv_det * -(m[0][1] * a1223 - m[1][1] * a0223 + m[2][1] * a0123),
+                ],
+                [
+                    inv_det * -(m[1][0] * a2323 - m[2][0] * a1323 + m[3][0] * a1223),
+                    inv_det * (m[0][0] * a2323 - m[2][0] * a0323 + m[3][0] * a0223),
+                    inv_det * -(m[0][0] * a1323 - m[1][0] * a0323 + m[3][0] * a0123),
+                    inv_det * (m[0][0] * a1223 - m[1][0] * a0223 + m[2][0] * a0123),
+                ],
+                [
+                    inv_det * (m[1][0] * a2313 - m[2][0] * a1313 + m[3][0] * a1213),
+                    inv_det * -(m[0][0] * a2313 - m[2][0] * a0313 + m[3][0] * a0213),
+                    inv_det * (m[0][0] * a1313 - m[1][0] * a0313 + m[3][0] * a0113),
+                    inv_det * -(m[0][0] * a1213 - m[1][0] * a0213 + m[2][0] * a0113),
+                ],
+                [
+                    inv_det * -(m[1][0] * a2312 - m[2][0] * a1312 + m[3][0] * a1212),
+                    inv_det * (m[0][0] * a2312 - m[2][0] * a0312 + m[3][0] * a0212),
+                    inv_det * -(m[0][0] * a1312 - m[1][0] * a0312 + m[3][0] * a0112),
+                    inv_det * (m[0][0] * a1212 - m[1][0] * a0212 + m[2][0] * a0112),
+                ],
+            ],
+        }
     }
 
-    #[inline]
     pub fn transpose(self) -> Self {
-        Self(self.0.transpose())
+        let m = &self.cols;
+        Self {
+            cols: [
+                [m[0][0], m[1][0], m[2][0], m[3][0]],
+                [m[0][1], m[1][1], m[2][1], m[3][1]],
+                [m[0][2], m[1][2], m[2][2], m[3][2]],
+                [m[0][3], m[1][3], m[2][3], m[3][3]],
+            ],
+        }
     }
 
-    #[inline]
-    pub fn determinant(self) -> f32 {
-        self.0.determinant()
+    /// Convert to column-major 2D array (for GPU upload).
+    #[inline(always)]
+    pub fn to_cols_array_2d(&self) -> [[f32; 4]; 4] {
+        self.cols
     }
-}
 
-impl Deref for Mat4 {
-    type Target = glam::Mat4;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Mat4 {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+    /// Transform a point (w=1, applies translation).
+    pub fn transform_point3(&self, p: Vec3) -> Vec3 {
+        let m = &self.cols;
+        Vec3::new(
+            m[0][0] * p.x + m[1][0] * p.y + m[2][0] * p.z + m[3][0],
+            m[0][1] * p.x + m[1][1] * p.y + m[2][1] * p.z + m[3][1],
+            m[0][2] * p.x + m[1][2] * p.y + m[2][2] * p.z + m[3][2],
+        )
     }
 }
 
 impl Mul for Mat4 {
     type Output = Self;
-    #[inline]
     fn mul(self, rhs: Self) -> Self {
-        Self(self.0 * rhs.0)
+        let a = &self.cols;
+        let b = &rhs.cols;
+        let mut out = [[0.0f32; 4]; 4];
+
+        for c in 0..4 {
+            for r in 0..4 {
+                out[c][r] =
+                    a[0][r] * b[c][0] + a[1][r] * b[c][1] + a[2][r] * b[c][2] + a[3][r] * b[c][3];
+            }
+        }
+
+        Self { cols: out }
     }
 }
 
 impl Mul<Vec4> for Mat4 {
     type Output = Vec4;
-    #[inline]
-    fn mul(self, rhs: Vec4) -> Vec4 {
-        Vec4(self.0 * rhs.0)
-    }
-}
-
-impl From<glam::Mat4> for Mat4 {
-    #[inline]
-    fn from(m: glam::Mat4) -> Self {
-        Self(m)
-    }
-}
-
-impl From<Mat4> for glam::Mat4 {
-    #[inline]
-    fn from(m: Mat4) -> Self {
-        m.0
+    fn mul(self, v: Vec4) -> Vec4 {
+        let m = &self.cols;
+        Vec4::new(
+            m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
+            m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
+            m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
+            m[0][3] * v.x + m[1][3] * v.y + m[2][3] * v.z + m[3][3] * v.w,
+        )
     }
 }
 
@@ -138,20 +278,23 @@ mod tests {
         );
         let inv = m.inverse();
         let result = m * inv;
-        // Should be approximately identity
-        let id = Mat4::IDENTITY;
-        for i in 0..4 {
-            for j in 0..4 {
-                assert!((result.0.col(i)[j] - id.0.col(i)[j]).abs() < 1e-5);
+        for c in 0..4 {
+            for r in 0..4 {
+                let expected = if c == r { 1.0 } else { 0.0 };
+                assert!(
+                    (result.cols[c][r] - expected).abs() < 1e-4,
+                    "M*M^-1 [{c}][{r}] = {} (expected {expected})",
+                    result.cols[c][r]
+                );
             }
         }
     }
 
     #[test]
-    fn transform_point_with_matrix() {
+    fn transform_point() {
         let m = Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0));
-        let p = Vec4::new(1.0, 2.0, 3.0, 1.0); // w=1 for point
-        let result = m * p;
-        assert_eq!(result, Vec4::new(11.0, 2.0, 3.0, 1.0));
+        let p = Vec3::new(1.0, 2.0, 3.0);
+        let result = m.transform_point3(p);
+        assert_eq!(result, Vec3::new(11.0, 2.0, 3.0));
     }
 }

@@ -391,10 +391,10 @@ impl Renderer {
         for (i, cmd) in commands.iter().enumerate() {
             let model = cmd.model_matrix;
             let mvp = vp * model;
-            let normal_mat = model.0.inverse().transpose();
+            let normal_mat = model.inverse().transpose();
             let obj = ObjectUniforms {
-                mvp: mvp.0.to_cols_array_2d(),
-                model: model.0.to_cols_array_2d(),
+                mvp: mvp.to_cols_array_2d(),
+                model: model.to_cols_array_2d(),
                 normal_matrix: normal_mat.to_cols_array_2d(),
             };
             let offset = i * aligned;

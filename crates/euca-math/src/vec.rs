@@ -1,305 +1,365 @@
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, Deref, DerefMut, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 /// 2D vector.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct Vec2(pub glam::Vec2);
+#[repr(C)]
+pub struct Vec2 {
+    pub x: f32,
+    pub y: f32,
+}
 
 /// 3D vector.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct Vec3(pub glam::Vec3);
+#[repr(C, align(16))]
+pub struct Vec3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
 
 /// 4D vector.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct Vec4(pub glam::Vec4);
+#[repr(C, align(16))]
+pub struct Vec4 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub w: f32,
+}
 
 // ── Vec2 ──
 
 impl Vec2 {
-    pub const ZERO: Self = Self(glam::Vec2::ZERO);
-    pub const ONE: Self = Self(glam::Vec2::ONE);
-    pub const X: Self = Self(glam::Vec2::X);
-    pub const Y: Self = Self(glam::Vec2::Y);
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
+    pub const ONE: Self = Self { x: 1.0, y: 1.0 };
+    pub const X: Self = Self { x: 1.0, y: 0.0 };
+    pub const Y: Self = Self { x: 0.0, y: 1.0 };
 
-    #[inline]
+    #[inline(always)]
     pub const fn new(x: f32, y: f32) -> Self {
-        Self(glam::Vec2::new(x, y))
+        Self { x, y }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn dot(self, rhs: Self) -> f32 {
-        self.0.dot(rhs.0)
+        self.x * rhs.x + self.y * rhs.y
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn length(self) -> f32 {
-        self.0.length()
+        self.dot(self).sqrt()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn normalize(self) -> Self {
-        Self(self.0.normalize())
+        let inv = 1.0 / self.length();
+        Self {
+            x: self.x * inv,
+            y: self.y * inv,
+        }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn distance(self, rhs: Self) -> f32 {
-        self.0.distance(rhs.0)
-    }
-}
-
-impl Deref for Vec2 {
-    type Target = glam::Vec2;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Vec2 {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        (self - rhs).length()
     }
 }
 
 impl Add for Vec2 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
-        Self(self.0 + rhs.0)
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
     }
 }
 
 impl Sub for Vec2 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
-        Self(self.0 - rhs.0)
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
     }
 }
 
 impl Mul<f32> for Vec2 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: f32) -> Self {
-        Self(self.0 * rhs)
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+        }
     }
 }
 
 impl Neg for Vec2 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn neg(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl From<glam::Vec2> for Vec2 {
-    #[inline]
-    fn from(v: glam::Vec2) -> Self {
-        Self(v)
-    }
-}
-
-impl From<Vec2> for glam::Vec2 {
-    #[inline]
-    fn from(v: Vec2) -> Self {
-        v.0
+        Self {
+            x: -self.x,
+            y: -self.y,
+        }
     }
 }
 
 // ── Vec3 ──
 
 impl Vec3 {
-    pub const ZERO: Self = Self(glam::Vec3::ZERO);
-    pub const ONE: Self = Self(glam::Vec3::ONE);
-    pub const X: Self = Self(glam::Vec3::X);
-    pub const Y: Self = Self(glam::Vec3::Y);
-    pub const Z: Self = Self(glam::Vec3::Z);
-    pub const UP: Self = Self(glam::Vec3::Z); // Z-up like UE
-    pub const FORWARD: Self = Self(glam::Vec3::X);
-    pub const RIGHT: Self = Self(glam::Vec3::Y);
+    pub const ZERO: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    pub const ONE: Self = Self {
+        x: 1.0,
+        y: 1.0,
+        z: 1.0,
+    };
+    pub const X: Self = Self {
+        x: 1.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    pub const Y: Self = Self {
+        x: 0.0,
+        y: 1.0,
+        z: 0.0,
+    };
+    pub const Z: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
+    };
 
-    #[inline]
+    #[inline(always)]
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self(glam::Vec3::new(x, y, z))
+        Self { x, y, z }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn dot(self, rhs: Self) -> f32 {
-        self.0.dot(rhs.0)
+        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn cross(self, rhs: Self) -> Self {
-        Self(self.0.cross(rhs.0))
+        Self {
+            x: self.y * rhs.z - self.z * rhs.y,
+            y: self.z * rhs.x - self.x * rhs.z,
+            z: self.x * rhs.y - self.y * rhs.x,
+        }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn length(self) -> f32 {
-        self.0.length()
+        self.dot(self).sqrt()
     }
 
-    #[inline]
+    #[inline(always)]
+    pub fn length_squared(self) -> f32 {
+        self.dot(self)
+    }
+
+    #[inline(always)]
     pub fn normalize(self) -> Self {
-        Self(self.0.normalize())
+        let inv = 1.0 / self.length();
+        Self {
+            x: self.x * inv,
+            y: self.y * inv,
+            z: self.z * inv,
+        }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn distance(self, rhs: Self) -> f32 {
-        self.0.distance(rhs.0)
+        (self - rhs).length()
     }
-}
 
-impl Deref for Vec3 {
-    type Target = glam::Vec3;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    #[inline(always)]
+    pub fn lerp(self, rhs: Self, t: f32) -> Self {
+        self + (rhs - self) * t
     }
-}
 
-impl DerefMut for Vec3 {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+    #[inline(always)]
+    pub fn min(self, rhs: Self) -> Self {
+        Self {
+            x: self.x.min(rhs.x),
+            y: self.y.min(rhs.y),
+            z: self.z.min(rhs.z),
+        }
+    }
+
+    #[inline(always)]
+    pub fn max(self, rhs: Self) -> Self {
+        Self {
+            x: self.x.max(rhs.x),
+            y: self.y.max(rhs.y),
+            z: self.z.max(rhs.z),
+        }
     }
 }
 
 impl Add for Vec3 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
-        Self(self.0 + rhs.0)
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+            z: self.z + rhs.z,
+        }
     }
 }
 
 impl Sub for Vec3 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
-        Self(self.0 - rhs.0)
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+            z: self.z - rhs.z,
+        }
     }
 }
 
 impl Mul<f32> for Vec3 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: f32) -> Self {
-        Self(self.0 * rhs)
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+        }
+    }
+}
+
+impl Div<f32> for Vec3 {
+    type Output = Self;
+    #[inline(always)]
+    fn div(self, rhs: f32) -> Self {
+        let inv = 1.0 / rhs;
+        Self {
+            x: self.x * inv,
+            y: self.y * inv,
+            z: self.z * inv,
+        }
     }
 }
 
 impl Neg for Vec3 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn neg(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl From<glam::Vec3> for Vec3 {
-    #[inline]
-    fn from(v: glam::Vec3) -> Self {
-        Self(v)
-    }
-}
-
-impl From<Vec3> for glam::Vec3 {
-    #[inline]
-    fn from(v: Vec3) -> Self {
-        v.0
+        Self {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+        }
     }
 }
 
 // ── Vec4 ──
 
 impl Vec4 {
-    pub const ZERO: Self = Self(glam::Vec4::ZERO);
-    pub const ONE: Self = Self(glam::Vec4::ONE);
+    pub const ZERO: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+        w: 0.0,
+    };
+    pub const ONE: Self = Self {
+        x: 1.0,
+        y: 1.0,
+        z: 1.0,
+        w: 1.0,
+    };
 
-    #[inline]
+    #[inline(always)]
     pub const fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
-        Self(glam::Vec4::new(x, y, z, w))
+        Self { x, y, z, w }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn dot(self, rhs: Self) -> f32 {
-        self.0.dot(rhs.0)
+        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z + self.w * rhs.w
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn length(self) -> f32 {
-        self.0.length()
+        self.dot(self).sqrt()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn normalize(self) -> Self {
-        Self(self.0.normalize())
-    }
-}
-
-impl Deref for Vec4 {
-    type Target = glam::Vec4;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Vec4 {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        let inv = 1.0 / self.length();
+        Self {
+            x: self.x * inv,
+            y: self.y * inv,
+            z: self.z * inv,
+            w: self.w * inv,
+        }
     }
 }
 
 impl Add for Vec4 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
-        Self(self.0 + rhs.0)
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+            z: self.z + rhs.z,
+            w: self.w + rhs.w,
+        }
     }
 }
 
 impl Sub for Vec4 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
-        Self(self.0 - rhs.0)
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+            z: self.z - rhs.z,
+            w: self.w - rhs.w,
+        }
     }
 }
 
 impl Mul<f32> for Vec4 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: f32) -> Self {
-        Self(self.0 * rhs)
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+            w: self.w * rhs,
+        }
     }
 }
 
 impl Neg for Vec4 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn neg(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl From<glam::Vec4> for Vec4 {
-    #[inline]
-    fn from(v: glam::Vec4) -> Self {
-        Self(v)
-    }
-}
-
-impl From<Vec4> for glam::Vec4 {
-    #[inline]
-    fn from(v: Vec4) -> Self {
-        v.0
+        Self {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+            w: -self.w,
+        }
     }
 }
 
@@ -311,33 +371,24 @@ mod tests {
     fn vec3_basic_ops() {
         let a = Vec3::new(1.0, 2.0, 3.0);
         let b = Vec3::new(4.0, 5.0, 6.0);
-
-        let sum = a + b;
-        assert_eq!(sum, Vec3::new(5.0, 7.0, 9.0));
-
-        let diff = b - a;
-        assert_eq!(diff, Vec3::new(3.0, 3.0, 3.0));
-
-        let scaled = a * 2.0;
-        assert_eq!(scaled, Vec3::new(2.0, 4.0, 6.0));
-
+        assert_eq!(a + b, Vec3::new(5.0, 7.0, 9.0));
+        assert_eq!(b - a, Vec3::new(3.0, 3.0, 3.0));
+        assert_eq!(a * 2.0, Vec3::new(2.0, 4.0, 6.0));
         assert_eq!(-a, Vec3::new(-1.0, -2.0, -3.0));
     }
 
     #[test]
     fn vec3_dot_cross() {
-        let a = Vec3::new(1.0, 0.0, 0.0);
-        let b = Vec3::new(0.0, 1.0, 0.0);
-
+        let a = Vec3::X;
+        let b = Vec3::Y;
         assert_eq!(a.dot(b), 0.0);
-        assert_eq!(a.cross(b), Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(a.cross(b), Vec3::Z);
     }
 
     #[test]
     fn vec3_length_normalize() {
         let v = Vec3::new(3.0, 4.0, 0.0);
         assert!((v.length() - 5.0).abs() < 1e-6);
-
         let n = v.normalize();
         assert!((n.length() - 1.0).abs() < 1e-6);
     }
@@ -347,5 +398,27 @@ mod tests {
         let a = Vec2::new(0.0, 0.0);
         let b = Vec2::new(3.0, 4.0);
         assert!((a.distance(b) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vec3_lerp() {
+        let a = Vec3::ZERO;
+        let b = Vec3::new(10.0, 20.0, 30.0);
+        let mid = a.lerp(b, 0.5);
+        assert_eq!(mid, Vec3::new(5.0, 10.0, 15.0));
+    }
+
+    #[test]
+    fn vec3_div() {
+        let v = Vec3::new(10.0, 20.0, 30.0);
+        let result = v / 10.0;
+        assert!((result.x - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vec4_dot() {
+        let a = Vec4::new(1.0, 2.0, 3.0, 4.0);
+        let b = Vec4::new(5.0, 6.0, 7.0, 8.0);
+        assert_eq!(a.dot(b), 70.0);
     }
 }

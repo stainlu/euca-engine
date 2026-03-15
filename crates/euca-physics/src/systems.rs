@@ -167,7 +167,7 @@ fn write_back_transforms(world: &mut World) {
                 Some((
                     *entity,
                     Vec3::new(pos.x, pos.y, pos.z),
-                    Quat(glam::Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w)),
+                    Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
                 ))
             })
             .collect()

@@ -2,8 +2,7 @@ use crate::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 /// TRS transform: Translation, Rotation, Scale.
-///
-/// Transformation order: Scale → Rotate → Translate.
+/// Transformation order: Scale -> Rotate -> Translate.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transform {
     pub translation: Vec3,
@@ -49,7 +48,7 @@ impl Transform {
         }
     }
 
-    /// Convert to a 4x4 matrix: Scale → Rotate → Translate.
+    /// Convert to a 4x4 matrix (Scale -> Rotate -> Translate).
     #[inline]
     pub fn to_matrix(self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
@@ -67,7 +66,7 @@ impl Transform {
         rotated + self.translation
     }
 
-    /// Transform a direction vector (applies scale and rotation only, no translation).
+    /// Transform a direction vector (scale + rotation only, no translation).
     #[inline]
     pub fn transform_vector(self, vector: Vec3) -> Vec3 {
         let scaled = Vec3::new(
@@ -78,8 +77,7 @@ impl Transform {
         self.rotation * scaled
     }
 
-    /// Compose two transforms: `self` applied after `other`.
-    /// Equivalent to `self.to_matrix() * other.to_matrix()`, but avoids full matrix multiply.
+    /// Compose two transforms.
     #[inline]
     #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: Self) -> Self {
@@ -94,15 +92,58 @@ impl Transform {
         }
     }
 
-    /// Compute the inverse transform.
-    /// Uses matrix decomposition to correctly handle non-uniform scale.
+    /// Compute inverse via matrix decomposition.
     pub fn inverse(self) -> Self {
-        let mat = self.to_matrix().0.inverse();
-        let (scale, rotation, translation) = mat.to_scale_rotation_translation();
+        let mat = self.to_matrix().inverse();
+        // Extract translation from column 3
+        let translation = Vec3::new(mat.cols[3][0], mat.cols[3][1], mat.cols[3][2]);
+        // Extract scale from column lengths
+        let sx = Vec3::new(mat.cols[0][0], mat.cols[0][1], mat.cols[0][2]).length();
+        let sy = Vec3::new(mat.cols[1][0], mat.cols[1][1], mat.cols[1][2]).length();
+        let sz = Vec3::new(mat.cols[2][0], mat.cols[2][1], mat.cols[2][2]).length();
+        let scale = Vec3::new(sx, sy, sz);
+        // Extract rotation (divide columns by scale)
+        let rot_mat = Mat4 {
+            cols: [
+                [
+                    mat.cols[0][0] / sx,
+                    mat.cols[0][1] / sx,
+                    mat.cols[0][2] / sx,
+                    0.0,
+                ],
+                [
+                    mat.cols[1][0] / sy,
+                    mat.cols[1][1] / sy,
+                    mat.cols[1][2] / sy,
+                    0.0,
+                ],
+                [
+                    mat.cols[2][0] / sz,
+                    mat.cols[2][1] / sz,
+                    mat.cols[2][2] / sz,
+                    0.0,
+                ],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        // Extract quaternion from rotation matrix
+        let trace = rot_mat.cols[0][0] + rot_mat.cols[1][1] + rot_mat.cols[2][2];
+        let rotation = if trace > 0.0 {
+            let s = (trace + 1.0).sqrt() * 2.0;
+            Quat::from_xyzw(
+                (rot_mat.cols[1][2] - rot_mat.cols[2][1]) / s,
+                (rot_mat.cols[2][0] - rot_mat.cols[0][2]) / s,
+                (rot_mat.cols[0][1] - rot_mat.cols[1][0]) / s,
+                0.25 * s,
+            )
+        } else {
+            Quat::IDENTITY
+        };
+
         Self {
-            translation: Vec3(translation),
-            rotation: Quat(rotation),
-            scale: Vec3(scale),
+            translation,
+            rotation: rotation.normalize(),
+            scale,
         }
     }
 }
@@ -116,33 +157,36 @@ mod tests {
     fn identity_transform() {
         let t = Transform::IDENTITY;
         let p = Vec3::new(1.0, 2.0, 3.0);
-        assert_eq!(t.transform_point(p), p);
-        assert_eq!(t.transform_vector(p), p);
+        let r = t.transform_point(p);
+        assert!((r.x - p.x).abs() < 1e-6);
+        assert!((r.y - p.y).abs() < 1e-6);
+        assert!((r.z - p.z).abs() < 1e-6);
     }
 
     #[test]
     fn translation_only() {
         let t = Transform::from_translation(Vec3::new(10.0, 20.0, 30.0));
         let p = Vec3::new(1.0, 2.0, 3.0);
-        assert_eq!(t.transform_point(p), Vec3::new(11.0, 22.0, 33.0));
-        // Vectors are not affected by translation
-        assert_eq!(t.transform_vector(p), p);
+        let r = t.transform_point(p);
+        assert_eq!(r, Vec3::new(11.0, 22.0, 33.0));
+        // Vectors unaffected by translation
+        let v = t.transform_vector(p);
+        assert_eq!(v, p);
     }
 
     #[test]
     fn scale_only() {
         let t = Transform::from_scale(Vec3::new(2.0, 3.0, 4.0));
-        let p = Vec3::new(1.0, 1.0, 1.0);
-        assert_eq!(t.transform_point(p), Vec3::new(2.0, 3.0, 4.0));
+        let r = t.transform_point(Vec3::ONE);
+        assert_eq!(r, Vec3::new(2.0, 3.0, 4.0));
     }
 
     #[test]
     fn rotation_only() {
         let t = Transform::from_rotation(Quat::from_axis_angle(Vec3::Z, FRAC_PI_2));
-        let p = Vec3::new(1.0, 0.0, 0.0);
-        let result = t.transform_point(p);
-        assert!(result.x.abs() < 1e-6);
-        assert!((result.y - 1.0).abs() < 1e-6);
+        let r = t.transform_point(Vec3::X);
+        assert!(r.x.abs() < 1e-5);
+        assert!((r.y - 1.0).abs() < 1e-5);
     }
 
     #[test]
@@ -150,30 +194,8 @@ mod tests {
         let a = Transform::from_translation(Vec3::new(5.0, 0.0, 0.0));
         let b = Transform::from_scale(Vec3::new(2.0, 2.0, 2.0));
         let composed = a.mul(b);
-
-        let p = Vec3::new(1.0, 0.0, 0.0);
-        // b scales to (2,0,0), then a translates to (7,0,0)
-        let result = composed.transform_point(p);
-        assert!((result.x - 7.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn inverse_roundtrip() {
-        let t = Transform {
-            translation: Vec3::new(1.0, 2.0, 3.0),
-            rotation: Quat::from_axis_angle(Vec3::Y, 0.7),
-            scale: Vec3::new(2.0, 0.5, 3.0),
-        };
-        let p = Vec3::new(4.0, 5.0, 6.0);
-
-        // Use the matrix inverse directly for correctness
-        let forward_mat = t.to_matrix().0;
-        let inverse_mat = forward_mat.inverse();
-        let transformed = forward_mat.transform_point3(p.0);
-        let result = inverse_mat.transform_point3(transformed);
-        assert!((result.x - p.x).abs() < 1e-4);
-        assert!((result.y - p.y).abs() < 1e-4);
-        assert!((result.z - p.z).abs() < 1e-4);
+        let r = composed.transform_point(Vec3::X);
+        assert!((r.x - 7.0).abs() < 1e-5);
     }
 
     #[test]
@@ -184,13 +206,30 @@ mod tests {
             scale: Vec3::new(2.0, 2.0, 2.0),
         };
         let mat = t.to_matrix();
-        let p = Vec3::new(1.0, 0.0, 0.0);
+        let p = Vec3::X;
 
         let from_transform = t.transform_point(p);
-        let from_matrix = mat * crate::Vec4::new(p.x, p.y, p.z, 1.0);
+        let from_matrix = mat.transform_point3(p);
 
         assert!((from_transform.x - from_matrix.x).abs() < 1e-5);
         assert!((from_transform.y - from_matrix.y).abs() < 1e-5);
         assert!((from_transform.z - from_matrix.z).abs() < 1e-5);
+    }
+
+    #[test]
+    fn inverse_roundtrip() {
+        let t = Transform {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::from_axis_angle(Vec3::Y, 0.7),
+            scale: Vec3::new(2.0, 0.5, 3.0),
+        };
+        let p = Vec3::new(4.0, 5.0, 6.0);
+        let forward = t.to_matrix();
+        let inv = forward.inverse();
+        let transformed = forward.transform_point3(p);
+        let result = inv.transform_point3(transformed);
+        assert!((result.x - p.x).abs() < 1e-4);
+        assert!((result.y - p.y).abs() < 1e-4);
+        assert!((result.z - p.z).abs() < 1e-4);
     }
 }

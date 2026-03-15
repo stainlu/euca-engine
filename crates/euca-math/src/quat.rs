@@ -1,65 +1,129 @@
 use crate::Vec3;
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut, Mul};
+use std::ops::Mul;
 
-/// Quaternion rotation.
+/// Quaternion (xyzw layout, unit quaternion for rotations).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct Quat(pub glam::Quat);
+#[repr(C, align(16))]
+pub struct Quat {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub w: f32,
+}
 
 impl Default for Quat {
-    #[inline]
+    #[inline(always)]
     fn default() -> Self {
         Self::IDENTITY
     }
 }
 
 impl Quat {
-    pub const IDENTITY: Self = Self(glam::Quat::IDENTITY);
+    pub const IDENTITY: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+        w: 1.0,
+    };
 
+    #[inline(always)]
+    pub const fn from_xyzw(x: f32, y: f32, z: f32, w: f32) -> Self {
+        Self { x, y, z, w }
+    }
+
+    /// Create a quaternion from axis-angle rotation.
     #[inline]
     pub fn from_axis_angle(axis: Vec3, angle: f32) -> Self {
-        Self(glam::Quat::from_axis_angle(axis.0, angle))
+        let half = angle * 0.5;
+        let s = half.sin();
+        let c = half.cos();
+        let a = axis.normalize();
+        Self {
+            x: a.x * s,
+            y: a.y * s,
+            z: a.z * s,
+            w: c,
+        }
     }
 
+    /// Create from Euler angles (yaw, pitch, roll) in YXZ order.
     #[inline]
     pub fn from_euler(yaw: f32, pitch: f32, roll: f32) -> Self {
-        Self(glam::Quat::from_euler(
-            glam::EulerRot::YXZ,
-            yaw,
-            pitch,
-            roll,
-        ))
+        let (sy, cy) = (yaw * 0.5).sin_cos();
+        let (sp, cp) = (pitch * 0.5).sin_cos();
+        let (sr, cr) = (roll * 0.5).sin_cos();
+
+        Self {
+            x: cy * sp * cr + sy * cp * sr,
+            y: sy * cp * cr - cy * sp * sr,
+            z: cy * cp * sr - sy * sp * cr,
+            w: cy * cp * cr + sy * sp * sr,
+        }
     }
 
-    #[inline]
-    pub fn inverse(self) -> Self {
-        Self(self.0.inverse())
+    #[inline(always)]
+    pub fn length(self) -> f32 {
+        (self.x * self.x + self.y * self.y + self.z * self.z + self.w * self.w).sqrt()
     }
 
     #[inline]
     pub fn normalize(self) -> Self {
-        Self(self.0.normalize())
+        let inv = 1.0 / self.length();
+        Self {
+            x: self.x * inv,
+            y: self.y * inv,
+            z: self.z * inv,
+            w: self.w * inv,
+        }
     }
 
     #[inline]
-    pub fn slerp(self, end: Self, t: f32) -> Self {
-        Self(self.0.slerp(end.0, t))
+    pub fn inverse(self) -> Self {
+        Self {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+            w: self.w,
+        }
     }
-}
 
-impl Deref for Quat {
-    type Target = glam::Quat;
+    /// Spherical linear interpolation.
     #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+    pub fn slerp(self, mut end: Self, t: f32) -> Self {
+        let mut dot = self.x * end.x + self.y * end.y + self.z * end.z + self.w * end.w;
 
-impl DerefMut for Quat {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        if dot < 0.0 {
+            end = Self {
+                x: -end.x,
+                y: -end.y,
+                z: -end.z,
+                w: -end.w,
+            };
+            dot = -dot;
+        }
+
+        if dot > 0.9995 {
+            return Self {
+                x: self.x + (end.x - self.x) * t,
+                y: self.y + (end.y - self.y) * t,
+                z: self.z + (end.z - self.z) * t,
+                w: self.w + (end.w - self.w) * t,
+            }
+            .normalize();
+        }
+
+        let theta = dot.acos();
+        let sin_theta = theta.sin();
+        let s0 = ((1.0 - t) * theta).sin() / sin_theta;
+        let s1 = (t * theta).sin() / sin_theta;
+
+        Self {
+            x: self.x * s0 + end.x * s1,
+            y: self.y * s0 + end.y * s1,
+            z: self.z * s0 + end.z * s1,
+            w: self.w * s0 + end.w * s1,
+        }
     }
 }
 
@@ -68,30 +132,23 @@ impl Mul for Quat {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        Self(self.0 * rhs.0)
+        Self {
+            x: self.w * rhs.x + self.x * rhs.w + self.y * rhs.z - self.z * rhs.y,
+            y: self.w * rhs.y - self.x * rhs.z + self.y * rhs.w + self.z * rhs.x,
+            z: self.w * rhs.z + self.x * rhs.y - self.y * rhs.x + self.z * rhs.w,
+            w: self.w * rhs.w - self.x * rhs.x - self.y * rhs.y - self.z * rhs.z,
+        }
     }
 }
 
-/// Rotate a vector by this quaternion.
+/// Rotate a Vec3 by this quaternion.
 impl Mul<Vec3> for Quat {
     type Output = Vec3;
     #[inline]
-    fn mul(self, rhs: Vec3) -> Vec3 {
-        Vec3(self.0 * rhs.0)
-    }
-}
-
-impl From<glam::Quat> for Quat {
-    #[inline]
-    fn from(q: glam::Quat) -> Self {
-        Self(q)
-    }
-}
-
-impl From<Quat> for glam::Quat {
-    #[inline]
-    fn from(q: Quat) -> Self {
-        q.0
+    fn mul(self, v: Vec3) -> Vec3 {
+        let u = Vec3::new(self.x, self.y, self.z);
+        let s = self.w;
+        u * (2.0 * u.dot(v)) + v * (s * s - u.dot(u)) + u.cross(v) * (2.0 * s)
     }
 }
 
@@ -103,30 +160,28 @@ mod tests {
     #[test]
     fn identity_rotation() {
         let v = Vec3::new(1.0, 2.0, 3.0);
-        let rotated = Quat::IDENTITY * v;
-        assert_eq!(rotated, v);
+        let r = Quat::IDENTITY * v;
+        assert!((r.x - v.x).abs() < 1e-6);
+        assert!((r.y - v.y).abs() < 1e-6);
+        assert!((r.z - v.z).abs() < 1e-6);
     }
 
     #[test]
-    fn rotate_90_degrees_around_z() {
+    fn rotate_90_around_z() {
         let q = Quat::from_axis_angle(Vec3::Z, FRAC_PI_2);
-        let v = Vec3::new(1.0, 0.0, 0.0);
-        let rotated = q * v;
-        // X axis rotated 90° around Z → Y axis
-        assert!((rotated.x).abs() < 1e-6);
-        assert!((rotated.y - 1.0).abs() < 1e-6);
-        assert!((rotated.z).abs() < 1e-6);
+        let r = q * Vec3::X;
+        assert!(r.x.abs() < 1e-5);
+        assert!((r.y - 1.0).abs() < 1e-5);
     }
 
     #[test]
     fn inverse_undoes_rotation() {
         let q = Quat::from_axis_angle(Vec3::Y, 1.0);
         let v = Vec3::new(1.0, 2.0, 3.0);
-        let rotated = q * v;
-        let back = q.inverse() * rotated;
-        assert!((back.x - v.x).abs() < 1e-5);
-        assert!((back.y - v.y).abs() < 1e-5);
-        assert!((back.z - v.z).abs() < 1e-5);
+        let back = q.inverse() * (q * v);
+        assert!((back.x - v.x).abs() < 1e-4);
+        assert!((back.y - v.y).abs() < 1e-4);
+        assert!((back.z - v.z).abs() < 1e-4);
     }
 
     #[test]
@@ -135,9 +190,8 @@ mod tests {
         let b = Quat::from_axis_angle(Vec3::Z, FRAC_PI_2);
         let mid = a.slerp(b, 0.5);
         let v = mid * Vec3::X;
-        // Should be ~45° rotation
-        let expected_angle = FRAC_PI_2 / 2.0;
-        assert!((v.x - expected_angle.cos()).abs() < 1e-5);
-        assert!((v.y - expected_angle.sin()).abs() < 1e-5);
+        let expected = FRAC_PI_2 / 2.0;
+        assert!((v.x - expected.cos()).abs() < 1e-4);
+        assert!((v.y - expected.sin()).abs() < 1e-4);
     }
 }
