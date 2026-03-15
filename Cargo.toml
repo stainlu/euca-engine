@@ -12,6 +12,7 @@ members = [
     "crates/euca-physics",
     "crates/euca-asset",
     "crates/euca-editor",
+    "crates/euca-input",
     "tools/euca-cli",
 ]
 
