@@ -10,6 +10,8 @@ pub struct EditorState {
     pub playing: bool,
     /// Whether to advance a single tick (when paused).
     pub step_once: bool,
+    /// Whether a reset was requested (stop + restore initial scene).
+    pub reset_requested: bool,
 }
 
 impl EditorState {
@@ -18,6 +20,7 @@ impl EditorState {
             selected_entity: None,
             playing: false,
             step_once: false,
+            reset_requested: false,
         }
     }
 

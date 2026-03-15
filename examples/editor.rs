@@ -118,7 +118,29 @@ impl EditorApp {
         });
     }
 
+    fn reset_scene(&mut self) {
+        // Despawn all entities
+        let entities: Vec<euca_ecs::Entity> = {
+            let query = euca_ecs::Query::<euca_ecs::Entity>::new(&self.world);
+            query.iter().collect()
+        };
+        for entity in entities {
+            self.world.despawn(entity);
+        }
+        // Reset physics world
+        self.world.insert_resource(PhysicsWorld::new());
+        // Re-create scene
+        self.setup_scene();
+        self.editor_state.selected_entity = None;
+    }
+
     fn render_frame(&mut self) {
+        // Handle reset
+        if self.editor_state.reset_requested {
+            self.editor_state.reset_requested = false;
+            self.reset_scene();
+        }
+
         self.world.resource_mut::<Time>().unwrap().update();
         let elapsed = self.world.resource::<Time>().unwrap().elapsed as f32;
 

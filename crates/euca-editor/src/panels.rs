@@ -21,6 +21,11 @@ pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World
                 state.step_once = true;
             }
 
+            if ui.button("⏹ Stop").clicked() {
+                state.playing = false;
+                state.reset_requested = true;
+            }
+
             ui.separator();
             ui.label(format!(
                 "Entities: {} | Tick: {} | Archetypes: {}",
