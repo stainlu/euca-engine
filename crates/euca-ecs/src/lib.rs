@@ -6,6 +6,7 @@ mod event;
 mod query;
 mod resource;
 mod schedule;
+mod snapshot;
 mod system;
 mod world;
 
@@ -17,5 +18,6 @@ pub use event::Events;
 pub use query::{Query, QueryFilter, With, Without};
 pub use resource::Resources;
 pub use schedule::Schedule;
+pub use snapshot::{EntitySnapshot, WorldSnapshot};
 pub use system::{IntoSystem, System};
 pub use world::World;

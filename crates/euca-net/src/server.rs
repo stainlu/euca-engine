@@ -1,6 +1,6 @@
+use crate::protocol::*;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use crate::protocol::*;
 
 /// A connected player on the server.
 #[derive(Debug)]
