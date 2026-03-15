@@ -16,6 +16,8 @@ struct Column {
     len: usize,
     capacity: usize,
     drop_fn: Option<unsafe fn(*mut u8)>,
+    /// Tick when each component was last modified (parallel to data).
+    change_ticks: Vec<u32>,
 }
 
 unsafe impl Send for Column {}
@@ -29,6 +31,7 @@ impl Column {
             len: 0,
             capacity: 0,
             drop_fn: info.drop_fn,
+            change_ticks: Vec::new(),
         }
     }
 
@@ -75,7 +78,7 @@ impl Column {
 
     /// # Safety
     /// `src` must point to a valid value of the component type.
-    unsafe fn push(&mut self, src: *const u8) {
+    unsafe fn push(&mut self, src: *const u8, tick: u32) {
         let size = self.item_layout.size();
         if size > 0 {
             self.grow_if_needed();
@@ -84,6 +87,7 @@ impl Column {
                 ptr::copy_nonoverlapping(src, dst, size);
             }
         }
+        self.change_ticks.push(tick);
         self.len += 1;
     }
 
@@ -95,6 +99,7 @@ impl Column {
     unsafe fn swap_remove(&mut self, index: usize) -> bool {
         let size = self.item_layout.size();
         self.len -= 1;
+        self.change_ticks.swap_remove(index);
         let swapped = index != self.len;
         unsafe {
             if size > 0 {
@@ -107,7 +112,6 @@ impl Column {
                     ptr::copy_nonoverlapping(last, removed, size);
                 }
             } else if let Some(drop_fn) = self.drop_fn {
-                // ZST with Drop impl: call drop on a dangling but aligned pointer
                 let ptr = std::ptr::NonNull::<u8>::dangling().as_ptr();
                 (drop_fn)(ptr);
             }
@@ -123,6 +127,7 @@ impl Column {
     unsafe fn swap_remove_no_drop(&mut self, index: usize) -> bool {
         let size = self.item_layout.size();
         self.len -= 1;
+        self.change_ticks.swap_remove(index);
         let swapped = index != self.len;
         unsafe {
             if swapped && size > 0 {
@@ -244,11 +249,12 @@ impl Archetype {
         &mut self,
         entity: Entity,
         component_data: &[(ComponentId, *const u8)],
+        tick: u32,
     ) -> usize {
         let row = self.entities.len();
         self.entities.push(entity);
         for (id, data) in component_data {
-            unsafe { self.columns.get_mut(id).unwrap().push(*data) };
+            unsafe { self.columns.get_mut(id).unwrap().push(*data, tick) };
         }
         row
     }
@@ -321,6 +327,18 @@ impl Archetype {
         let column = self.columns.get(&component_id).unwrap();
         unsafe { &mut *(column.get_mut(row) as *mut T) }
     }
+
+    /// Get the change tick for a component at the given row.
+    #[inline]
+    pub(crate) fn get_change_tick(&self, component_id: ComponentId, row: usize) -> u32 {
+        self.columns.get(&component_id).unwrap().change_ticks[row]
+    }
+
+    /// Set the change tick for a component at the given row.
+    #[inline]
+    pub(crate) fn set_change_tick(&mut self, component_id: ComponentId, row: usize, tick: u32) {
+        self.columns.get_mut(&component_id).unwrap().change_ticks[row] = tick;
+    }
 }
 
 #[cfg(test)]
@@ -363,6 +381,7 @@ mod tests {
                     (pid, &pos as *const Pos as *const u8),
                     (vid, &vel as *const Vel as *const u8),
                 ],
+                0,
             );
             assert_eq!(arch.get::<Pos>(pid, 0), &Pos { x: 1.0, y: 2.0 });
             assert_eq!(arch.get::<Vel>(vid, 0), &Vel { dx: 3.0, dy: 4.0 });
@@ -383,9 +402,9 @@ mod tests {
             let p0 = Pos { x: 0.0, y: 0.0 };
             let p1 = Pos { x: 1.0, y: 1.0 };
             let p2 = Pos { x: 2.0, y: 2.0 };
-            arch.push(e0, &[(pid, &p0 as *const _ as *const u8)]);
-            arch.push(e1, &[(pid, &p1 as *const _ as *const u8)]);
-            arch.push(e2, &[(pid, &p2 as *const _ as *const u8)]);
+            arch.push(e0, &[(pid, &p0 as *const _ as *const u8)], 0);
+            arch.push(e1, &[(pid, &p1 as *const _ as *const u8)], 0);
+            arch.push(e2, &[(pid, &p2 as *const _ as *const u8)], 0);
         }
 
         let swapped = arch.swap_remove(1);

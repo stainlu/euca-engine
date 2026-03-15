@@ -49,7 +49,8 @@ impl World {
     pub fn spawn_empty(&mut self) -> Entity {
         let entity = self.entities.allocate();
         let arch_id = self.get_or_create_archetype(&[]);
-        let row = unsafe { self.archetypes[arch_id.0 as usize].push(entity, &[]) };
+        let row =
+            unsafe { self.archetypes[arch_id.0 as usize].push(entity, &[], self.tick as u32) };
         self.set_location(entity, arch_id, row);
         entity
     }
@@ -60,8 +61,11 @@ impl World {
         let arch_id = self.get_or_create_archetype(&[comp_id]);
 
         let row = unsafe {
-            self.archetypes[arch_id.0 as usize]
-                .push(entity, &[(comp_id, &component as *const T as *const u8)])
+            self.archetypes[arch_id.0 as usize].push(
+                entity,
+                &[(comp_id, &component as *const T as *const u8)],
+                self.tick as u32,
+            )
         };
         std::mem::forget(component);
         self.set_location(entity, arch_id, row);
@@ -108,10 +112,12 @@ impl World {
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
         let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
-        let arch = &self.archetypes[loc.archetype_id.0 as usize];
+        let arch = &mut self.archetypes[loc.archetype_id.0 as usize];
         if !arch.has_component(comp_id) {
             return None;
         }
+        // Mark as changed at current tick
+        arch.set_change_tick(comp_id, loc.row, self.tick as u32);
         Some(unsafe { arch.get_mut::<T>(comp_id, loc.row) })
     }
 
@@ -181,6 +187,39 @@ impl World {
 
     pub fn tick(&mut self) {
         self.tick += 1;
+    }
+
+    /// Get entities whose component T was modified since `since_tick`.
+    /// Essential for networking delta sync.
+    pub fn changed_entities<T: Component>(&self, since_tick: u32) -> Vec<Entity> {
+        let comp_id = match self.components.id_of::<T>() {
+            Some(id) => id,
+            None => return Vec::new(),
+        };
+
+        let mut result = Vec::new();
+        for arch in &self.archetypes {
+            if !arch.has_component(comp_id) {
+                continue;
+            }
+            for row in 0..arch.len() {
+                if arch.get_change_tick(comp_id, row) > since_tick {
+                    result.push(arch.entities[row]);
+                }
+            }
+        }
+        result
+    }
+
+    /// Get the change tick for a specific component on an entity.
+    pub fn get_change_tick<T: Component>(&self, entity: Entity) -> Option<u32> {
+        let loc = self.locate(entity)?;
+        let comp_id = self.components.id_of::<T>()?;
+        let arch = &self.archetypes[loc.archetype_id.0 as usize];
+        if !arch.has_component(comp_id) {
+            return None;
+        }
+        Some(arch.get_change_tick(comp_id, loc.row))
     }
 
     #[inline]
@@ -307,7 +346,8 @@ impl World {
 
         // Push to new archetype
         let new_arch_idx = new_arch_id.0 as usize;
-        let new_row = unsafe { self.archetypes[new_arch_idx].push(entity, &new_data) };
+        let new_row =
+            unsafe { self.archetypes[new_arch_idx].push(entity, &new_data, self.tick as u32) };
         self.entity_locations[entity.index as usize] = Some(EntityLocation {
             archetype_id: new_arch_id,
             row: new_row,
@@ -357,7 +397,8 @@ impl World {
             .map(|(id, buf)| (*id, buf.as_ptr()))
             .collect();
         let new_arch_idx = new_arch_id.0 as usize;
-        let new_row = unsafe { self.archetypes[new_arch_idx].push(entity, &new_data) };
+        let new_row =
+            unsafe { self.archetypes[new_arch_idx].push(entity, &new_data, self.tick as u32) };
         self.entity_locations[entity.index as usize] = Some(EntityLocation {
             archetype_id: new_arch_id,
             row: new_row,
@@ -502,5 +543,51 @@ mod tests {
         let e = world.spawn(Name("hello".into()));
         assert_eq!(world.get::<Name>(e).unwrap().0, "hello");
         world.despawn(e);
+    }
+
+    #[test]
+    fn change_detection_tracks_mutations() {
+        let mut world = World::new();
+        let e1 = world.spawn(Position { x: 1.0, y: 1.0 });
+        let e2 = world.spawn(Position { x: 2.0, y: 2.0 });
+
+        // Both spawned at tick 0
+        assert_eq!(world.get_change_tick::<Position>(e1), Some(0));
+        assert_eq!(world.get_change_tick::<Position>(e2), Some(0));
+
+        // Advance tick and modify only e1
+        world.tick();
+        world.get_mut::<Position>(e1).unwrap().x = 99.0;
+
+        // e1 should be at tick 1, e2 still at tick 0
+        assert_eq!(world.get_change_tick::<Position>(e1), Some(1));
+        assert_eq!(world.get_change_tick::<Position>(e2), Some(0));
+
+        // changed_entities should return only e1
+        let changed = world.changed_entities::<Position>(0);
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0], e1);
+    }
+
+    #[test]
+    fn changed_entities_returns_all_when_since_zero() {
+        let mut world = World::new();
+        world.tick(); // tick = 1
+        let _e1 = world.spawn(Position { x: 1.0, y: 1.0 });
+        let _e2 = world.spawn(Position { x: 2.0, y: 2.0 });
+
+        // Both spawned at tick 1, query since tick 0 → both returned
+        let changed = world.changed_entities::<Position>(0);
+        assert_eq!(changed.len(), 2);
+    }
+
+    #[test]
+    fn changed_entities_empty_when_nothing_changed() {
+        let mut world = World::new();
+        let _e1 = world.spawn(Position { x: 1.0, y: 1.0 });
+
+        // Spawned at tick 0, query since tick 0 → nothing changed (tick must be > since)
+        let changed = world.changed_entities::<Position>(0);
+        assert_eq!(changed.len(), 0);
     }
 }
