@@ -1,5 +1,5 @@
 [package]
-name = "euca-render"
+name = "euca-editor"
 version.workspace = true
 edition.workspace = true
 
@@ -8,20 +8,19 @@ euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
 euca-scene = { path = "../euca-scene" }
 euca-core = { path = "../euca-core" }
-wgpu = "27"
+euca-render = { path = "../euca-render" }
+euca-physics = { path = "../euca-physics" }
+egui = "0.33"
+egui-wgpu = "0.33"
+egui-winit = "0.33"
 winit = "0.30"
-bytemuck = { version = "1", features = ["derive"] }
 log = "0.4"
+wgpu = "27"
 pollster = "0.4"
 
 [dev-dependencies]
 env_logger = "0.11"
-euca-physics = { path = "../euca-physics" }
 
 [[example]]
-name = "hello_cubes"
-path = "../../examples/hello_cubes.rs"
-
-[[example]]
-name = "physics_demo"
-path = "../../examples/physics_demo.rs"
+name = "editor"
+path = "../../examples/editor.rs"
