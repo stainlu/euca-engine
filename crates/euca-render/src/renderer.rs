@@ -348,6 +348,7 @@ impl Renderer {
 
     /// Render to a given texture view. Does NOT present — caller manages the surface.
     /// Use this when compositing with egui or other overlays.
+    #[allow(clippy::too_many_arguments)]
     pub fn render_to_view(
         &self,
         gpu: &GpuContext,

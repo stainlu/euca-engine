@@ -80,47 +80,22 @@ impl EditorApp {
             .insert(g, PhysicsCollider::cuboid(10.0, 0.01, 10.0));
 
         // Cubes
-        let spawn =
-            |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
-                let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
-                w.insert(e, GlobalTransform::default());
-                w.insert(e, MeshRenderer { mesh });
-                w.insert(e, MaterialRef { handle: mat });
-                w.insert(e, PhysicsBody::dynamic());
-                w.insert(
-                    e,
-                    PhysicsCollider::cuboid(half, half, half).with_restitution(0.4),
-                );
-            };
+        let spawn = |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
+            let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
+            w.insert(e, GlobalTransform::default());
+            w.insert(e, MeshRenderer { mesh });
+            w.insert(e, MaterialRef { handle: mat });
+            w.insert(e, PhysicsBody::dynamic());
+            w.insert(
+                e,
+                PhysicsCollider::cuboid(half, half, half).with_restitution(0.4),
+            );
+        };
 
-        spawn(
-            &mut self.world,
-            Vec3::new(0.0, 4.0, 0.0),
-            cube,
-            red,
-            0.5,
-        );
-        spawn(
-            &mut self.world,
-            Vec3::new(1.5, 6.0, 0.5),
-            cube,
-            blue,
-            0.5,
-        );
-        spawn(
-            &mut self.world,
-            Vec3::new(-1.0, 8.0, -0.5),
-            cube,
-            gold,
-            0.5,
-        );
-        spawn(
-            &mut self.world,
-            Vec3::new(0.5, 10.0, 1.0),
-            cube,
-            green,
-            0.5,
-        );
+        spawn(&mut self.world, Vec3::new(0.0, 4.0, 0.0), cube, red, 0.5);
+        spawn(&mut self.world, Vec3::new(1.5, 6.0, 0.5), cube, blue, 0.5);
+        spawn(&mut self.world, Vec3::new(-1.0, 8.0, -0.5), cube, gold, 0.5);
+        spawn(&mut self.world, Vec3::new(0.5, 10.0, 1.0), cube, green, 0.5);
 
         // Sphere
         let s = self
@@ -283,9 +258,7 @@ impl EditorApp {
 impl ApplicationHandler for EditorApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            let window = event_loop
-                .create_window(self.window_attrs.clone())
-                .unwrap();
+            let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
             let gpu = GpuContext::new(window);
             let renderer = Renderer::new(&gpu);
 
