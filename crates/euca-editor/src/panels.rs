@@ -1,7 +1,7 @@
 use euca_ecs::{Entity, Query, World};
-use euca_scene::{LocalTransform, GlobalTransform};
-use euca_render::{MeshRenderer, MaterialRef};
 use euca_physics::{PhysicsBody, PhysicsCollider};
+use euca_render::{MaterialRef, MeshRenderer};
+use euca_scene::{GlobalTransform, LocalTransform};
 
 use crate::EditorState;
 
@@ -59,9 +59,15 @@ pub fn hierarchy_panel(ctx: &egui::Context, state: &mut EditorState, world: &Wor
                     let selected = state.selected_entity == Some(entity.index());
 
                     let mut label = format!("Entity {}", entity);
-                    if has_mesh { label.push_str(" 🎨"); }
-                    if has_physics { label.push_str(" ⚡"); }
-                    if !has_transform { label.push_str(" (no transform)"); }
+                    if has_mesh {
+                        label.push_str(" 🎨");
+                    }
+                    if has_physics {
+                        label.push_str(" ⚡");
+                    }
+                    if !has_transform {
+                        label.push_str(" (no transform)");
+                    }
 
                     if ui.selectable_label(selected, &label).clicked() {
                         state.selected_entity = Some(entity.index());
@@ -105,15 +111,24 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
             if let Some(lt) = world.get::<LocalTransform>(entity) {
                 let t = lt.0;
                 ui.collapsing("LocalTransform", |ui| {
-                    ui.label(format!("Position: ({:.2}, {:.2}, {:.2})", t.translation.x, t.translation.y, t.translation.z));
-                    ui.label(format!("Scale: ({:.2}, {:.2}, {:.2})", t.scale.x, t.scale.y, t.scale.z));
+                    ui.label(format!(
+                        "Position: ({:.2}, {:.2}, {:.2})",
+                        t.translation.x, t.translation.y, t.translation.z
+                    ));
+                    ui.label(format!(
+                        "Scale: ({:.2}, {:.2}, {:.2})",
+                        t.scale.x, t.scale.y, t.scale.z
+                    ));
                 });
             }
 
             if let Some(gt) = world.get::<GlobalTransform>(entity) {
                 let t = gt.0;
                 ui.collapsing("GlobalTransform", |ui| {
-                    ui.label(format!("Position: ({:.2}, {:.2}, {:.2})", t.translation.x, t.translation.y, t.translation.z));
+                    ui.label(format!(
+                        "Position: ({:.2}, {:.2}, {:.2})",
+                        t.translation.x, t.translation.y, t.translation.z
+                    ));
                 });
             }
 

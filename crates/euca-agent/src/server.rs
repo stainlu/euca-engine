@@ -1,7 +1,10 @@
-use axum::{Router, routing::{get, post}};
-use euca_ecs::{World, Schedule};
-use crate::state::SharedWorld;
 use crate::routes;
+use crate::state::SharedWorld;
+use axum::{
+    Router,
+    routing::{get, post},
+};
+use euca_ecs::{Schedule, World};
 
 /// HTTP server that exposes the ECS world to external AI agents.
 pub struct AgentServer {
@@ -48,8 +51,6 @@ impl AgentServer {
             .await
             .expect("Failed to bind server address");
 
-        axum::serve(listener, router)
-            .await
-            .expect("Server error");
+        axum::serve(listener, router).await.expect("Server error");
     }
 }

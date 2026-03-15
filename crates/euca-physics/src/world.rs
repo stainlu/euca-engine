@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use euca_ecs::Entity;
 use rapier3d::prelude::*;
+use std::collections::HashMap;
 
 /// Holds all Rapier3D simulation state as an ECS resource.
 pub struct PhysicsWorld {

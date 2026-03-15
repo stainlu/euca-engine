@@ -179,7 +179,12 @@ unsafe impl<A: WorldQuery, B: WorldQuery> WorldQuery for (A, B) {
     }
 
     unsafe fn fetch<'w>(world: &'w World, archetype: &'w Archetype, row: usize) -> Self::Item<'w> {
-        unsafe { (A::fetch(world, archetype, row), B::fetch(world, archetype, row)) }
+        unsafe {
+            (
+                A::fetch(world, archetype, row),
+                B::fetch(world, archetype, row),
+            )
+        }
     }
 }
 
@@ -224,10 +229,16 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Position { x: f32, y: f32 }
+    struct Position {
+        x: f32,
+        y: f32,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Velocity { dx: f32, dy: f32 }
+    struct Velocity {
+        dx: f32,
+        dy: f32,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
     struct Static;

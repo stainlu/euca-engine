@@ -70,7 +70,10 @@ mod tests {
     #[test]
     fn insert_and_get() {
         let mut res = Resources::new();
-        res.insert(Time { elapsed: 1.0, delta: 0.016 });
+        res.insert(Time {
+            elapsed: 1.0,
+            delta: 0.016,
+        });
         res.insert(Score(42));
 
         assert_eq!(res.get::<Time>().unwrap().elapsed, 1.0);

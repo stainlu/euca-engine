@@ -1,5 +1,5 @@
 use euca_math::Transform;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Local transform relative to the entity's parent (or world origin if no parent).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

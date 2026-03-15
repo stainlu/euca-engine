@@ -1,10 +1,10 @@
-mod transform;
 mod hierarchy;
+mod transform;
 
-pub use transform::{LocalTransform, GlobalTransform};
-pub use hierarchy::{Parent, Children};
+pub use hierarchy::{Children, Parent};
+pub use transform::{GlobalTransform, LocalTransform};
 
-use euca_ecs::{World, Entity, Query};
+use euca_ecs::{Entity, Query, World};
 
 /// Propagate transforms through the parent/child hierarchy.
 ///
@@ -59,7 +59,7 @@ pub fn transform_propagation_system(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use euca_math::{Transform, Vec3, Quat};
+    use euca_math::{Quat, Transform, Vec3};
 
     fn spawn_with_transform(world: &mut World, translation: Vec3) -> Entity {
         let entity = world.spawn(LocalTransform(Transform::from_translation(translation)));

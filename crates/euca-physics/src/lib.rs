@@ -1,7 +1,9 @@
 mod components;
-mod world;
 mod systems;
+mod world;
 
-pub use components::{RigidBodyType, PhysicsBody, PhysicsCollider, ColliderShape, PhysicsRegistered};
-pub use world::PhysicsWorld;
+pub use components::{
+    ColliderShape, PhysicsBody, PhysicsCollider, PhysicsRegistered, RigidBodyType,
+};
 pub use systems::physics_step_system;
+pub use world::PhysicsWorld;

@@ -1,6 +1,6 @@
-use std::ops::{Mul, Deref, DerefMut};
-use serde::{Serialize, Deserialize};
-use crate::{Vec3, Vec4, Quat};
+use crate::{Quat, Vec3, Vec4};
+use serde::{Deserialize, Serialize};
+use std::ops::{Deref, DerefMut, Mul};
 
 /// 4x4 matrix (column-major, matching GPU conventions).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -35,12 +35,21 @@ impl Mat4 {
 
     #[inline]
     pub fn from_scale_rotation_translation(scale: Vec3, rotation: Quat, translation: Vec3) -> Self {
-        Self(glam::Mat4::from_scale_rotation_translation(scale.0, rotation.0, translation.0))
+        Self(glam::Mat4::from_scale_rotation_translation(
+            scale.0,
+            rotation.0,
+            translation.0,
+        ))
     }
 
     #[inline]
     pub fn perspective_lh(fov_y_radians: f32, aspect_ratio: f32, z_near: f32, z_far: f32) -> Self {
-        Self(glam::Mat4::perspective_lh(fov_y_radians, aspect_ratio, z_near, z_far))
+        Self(glam::Mat4::perspective_lh(
+            fov_y_radians,
+            aspect_ratio,
+            z_near,
+            z_far,
+        ))
     }
 
     #[inline]

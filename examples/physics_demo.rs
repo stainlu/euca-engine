@@ -1,15 +1,15 @@
-use euca_ecs::{Entity, Query, World};
-use euca_math::{Vec3, Quat, Transform};
-use euca_scene::{LocalTransform, GlobalTransform};
-use euca_render::*;
-use euca_physics::*;
 use euca_core::Time;
+use euca_ecs::{Entity, Query, World};
+use euca_math::{Quat, Transform, Vec3};
+use euca_physics::*;
+use euca_render::*;
+use euca_scene::{GlobalTransform, LocalTransform};
 
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, ElementState, KeyEvent};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{WindowId, WindowAttributes};
+use winit::window::{WindowAttributes, WindowId};
 
 struct PhysicsDemoApp {
     world: World,
@@ -25,9 +25,15 @@ impl PhysicsDemoApp {
     fn new() -> Self {
         let mut world = World::new();
         world.insert_resource(Time::new());
-        world.insert_resource(Camera::new(Vec3::new(8.0, 6.0, 8.0), Vec3::new(0.0, 1.0, 0.0)));
+        world.insert_resource(Camera::new(
+            Vec3::new(8.0, 6.0, 8.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ));
         world.insert_resource(PhysicsWorld::new());
-        world.insert_resource(AmbientLight { color: [1.0, 1.0, 1.0], intensity: 0.2 });
+        world.insert_resource(AmbientLight {
+            color: [1.0, 1.0, 1.0],
+            intensity: 0.2,
+        });
 
         Self {
             world,
@@ -62,35 +68,76 @@ impl PhysicsDemoApp {
         let green_mat = renderer.upload_material(gpu, &Material::green());
 
         // Ground plane (static)
-        let ground = self.world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))));
+        let ground = self
+            .world
+            .spawn(LocalTransform(Transform::from_translation(Vec3::new(
+                0.0, 0.0, 0.0,
+            ))));
         self.world.insert(ground, GlobalTransform::default());
         self.world.insert(ground, MeshRenderer { mesh: plane_mesh });
         self.world.insert(ground, MaterialRef { handle: gray_mat });
         self.world.insert(ground, PhysicsBody::fixed());
-        self.world.insert(ground, PhysicsCollider::cuboid(10.0, 0.01, 10.0));
+        self.world
+            .insert(ground, PhysicsCollider::cuboid(10.0, 0.01, 10.0));
 
         // Spawn cubes at different heights
-        let spawn = |world: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half_size: f32| {
+        let spawn = |world: &mut World,
+                     pos: Vec3,
+                     mesh: MeshHandle,
+                     mat: MaterialHandle,
+                     half_size: f32| {
             let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
             world.insert(e, GlobalTransform::default());
             world.insert(e, MeshRenderer { mesh });
             world.insert(e, MaterialRef { handle: mat });
             world.insert(e, PhysicsBody::dynamic());
-            world.insert(e, PhysicsCollider::cuboid(half_size, half_size, half_size).with_restitution(0.5));
+            world.insert(
+                e,
+                PhysicsCollider::cuboid(half_size, half_size, half_size).with_restitution(0.5),
+            );
         };
 
-        spawn(&mut self.world, Vec3::new(0.0, 5.0, 0.0), cube_mesh, red_mat, 0.5);
-        spawn(&mut self.world, Vec3::new(1.5, 7.0, 0.5), cube_mesh, blue_mat, 0.5);
-        spawn(&mut self.world, Vec3::new(-1.0, 9.0, -0.5), cube_mesh, gold_mat, 0.5);
-        spawn(&mut self.world, Vec3::new(0.5, 11.0, 1.0), cube_mesh, green_mat, 0.5);
+        spawn(
+            &mut self.world,
+            Vec3::new(0.0, 5.0, 0.0),
+            cube_mesh,
+            red_mat,
+            0.5,
+        );
+        spawn(
+            &mut self.world,
+            Vec3::new(1.5, 7.0, 0.5),
+            cube_mesh,
+            blue_mat,
+            0.5,
+        );
+        spawn(
+            &mut self.world,
+            Vec3::new(-1.0, 9.0, -0.5),
+            cube_mesh,
+            gold_mat,
+            0.5,
+        );
+        spawn(
+            &mut self.world,
+            Vec3::new(0.5, 11.0, 1.0),
+            cube_mesh,
+            green_mat,
+            0.5,
+        );
 
         // Spawn a sphere
-        let s = self.world.spawn(LocalTransform(Transform::from_translation(Vec3::new(-2.0, 8.0, 1.0))));
+        let s = self
+            .world
+            .spawn(LocalTransform(Transform::from_translation(Vec3::new(
+                -2.0, 8.0, 1.0,
+            ))));
         self.world.insert(s, GlobalTransform::default());
         self.world.insert(s, MeshRenderer { mesh: sphere_mesh });
         self.world.insert(s, MaterialRef { handle: gold_mat });
         self.world.insert(s, PhysicsBody::dynamic());
-        self.world.insert(s, PhysicsCollider::sphere(0.5).with_restitution(0.7));
+        self.world
+            .insert(s, PhysicsCollider::sphere(0.5).with_restitution(0.7));
 
         // Directional light
         let light_entity = self.world.spawn(DirectionalLight {
@@ -120,11 +167,14 @@ impl PhysicsDemoApp {
         // Collect draw commands
         let draw_commands: Vec<DrawCommand> = {
             let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
-            query.iter().map(|(gt, mr, mat)| DrawCommand {
-                mesh: mr.mesh,
-                material: mat.handle,
-                model_matrix: gt.0.to_matrix(),
-            }).collect()
+            query
+                .iter()
+                .map(|(gt, mr, mat)| DrawCommand {
+                    mesh: mr.mesh,
+                    material: mat.handle,
+                    model_matrix: gt.0.to_matrix(),
+                })
+                .collect()
         };
 
         // Get light
@@ -132,7 +182,11 @@ impl PhysicsDemoApp {
             let query = Query::<&DirectionalLight>::new(&self.world);
             query.iter().next().cloned().unwrap_or_default()
         };
-        let ambient = self.world.resource::<AmbientLight>().cloned().unwrap_or_default();
+        let ambient = self
+            .world
+            .resource::<AmbientLight>()
+            .cloned()
+            .unwrap_or_default();
         let camera = self.world.resource::<Camera>().unwrap().clone();
 
         // Render
@@ -158,17 +212,27 @@ impl ApplicationHandler for PhysicsDemoApp {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput {
-                event: KeyEvent { logical_key: Key::Named(NamedKey::Escape), state: ElementState::Pressed, .. }, ..
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::Escape),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
             } => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
-                    if let Some(r) = &mut self.renderer { r.resize(gpu); }
+                    if let Some(r) = &mut self.renderer {
+                        r.resize(gpu);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
                 self.update_and_render();
-                if let Some(gpu) = &self.gpu { gpu.window.request_redraw(); }
+                if let Some(gpu) = &self.gpu {
+                    gpu.window.request_redraw();
+                }
             }
             _ => {}
         }

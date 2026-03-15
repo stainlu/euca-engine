@@ -1,5 +1,5 @@
-use std::ops::{Add, Sub, Mul, Neg, Deref, DerefMut};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::ops::{Add, Deref, DerefMut, Mul, Neg, Sub};
 
 /// 2D vector.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

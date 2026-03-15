@@ -1,17 +1,19 @@
-use euca_ecs::{Entity, Query, World};
-use euca_math::{Vec3, Quat, Transform};
-use euca_scene::{LocalTransform, GlobalTransform};
-use euca_render::*;
 use euca_core::Time;
+use euca_ecs::{Entity, Query, World};
+use euca_math::{Quat, Transform, Vec3};
+use euca_render::*;
+use euca_scene::{GlobalTransform, LocalTransform};
 
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, ElementState, KeyEvent};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{WindowId, WindowAttributes};
+use winit::window::{WindowAttributes, WindowId};
 
 #[derive(Clone, Copy, Debug)]
-struct Spin { speed: f32 }
+struct Spin {
+    speed: f32,
+}
 
 struct HelloCubesApp {
     world: World,
@@ -84,18 +86,25 @@ impl HelloCubesApp {
 
         let draw_commands: Vec<DrawCommand> = {
             let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
-            query.iter().map(|(gt, mr, mat)| DrawCommand {
-                mesh: mr.mesh,
-                material: mat.handle,
-                model_matrix: gt.0.to_matrix(),
-            }).collect()
+            query
+                .iter()
+                .map(|(gt, mr, mat)| DrawCommand {
+                    mesh: mr.mesh,
+                    material: mat.handle,
+                    model_matrix: gt.0.to_matrix(),
+                })
+                .collect()
         };
 
         let light = {
             let query = Query::<&DirectionalLight>::new(&self.world);
             query.iter().next().cloned().unwrap_or_default()
         };
-        let ambient = self.world.resource::<AmbientLight>().cloned().unwrap_or_default();
+        let ambient = self
+            .world
+            .resource::<AmbientLight>()
+            .cloned()
+            .unwrap_or_default();
         let camera = self.world.resource::<Camera>().unwrap().clone();
 
         let gpu = self.gpu.as_ref().unwrap();
@@ -120,17 +129,27 @@ impl ApplicationHandler for HelloCubesApp {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput {
-                event: KeyEvent { logical_key: Key::Named(NamedKey::Escape), state: ElementState::Pressed, .. }, ..
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::Escape),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
             } => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
-                    if let Some(r) = &mut self.renderer { r.resize(gpu); }
+                    if let Some(r) = &mut self.renderer {
+                        r.resize(gpu);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
                 self.update_and_render();
-                if let Some(gpu) = &self.gpu { gpu.window.request_redraw(); }
+                if let Some(gpu) = &self.gpu {
+                    gpu.window.request_redraw();
+                }
             }
             _ => {}
         }

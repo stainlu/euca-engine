@@ -36,7 +36,11 @@ impl Column {
         if self.len < self.capacity {
             return;
         }
-        let new_cap = if self.capacity == 0 { 8 } else { self.capacity * 2 };
+        let new_cap = if self.capacity == 0 {
+            8
+        } else {
+            self.capacity * 2
+        };
         self.realloc(new_cap);
     }
 
@@ -292,21 +296,14 @@ impl Archetype {
         dst: *mut u8,
     ) {
         unsafe {
-            self.columns
-                .get(&component_id)
-                .unwrap()
-                .read_raw(row, dst);
+            self.columns.get(&component_id).unwrap().read_raw(row, dst);
         }
     }
 
     /// # Safety
     /// `T` must match the component type for `component_id`.
     #[inline]
-    pub(crate) unsafe fn get<T: 'static>(
-        &self,
-        component_id: ComponentId,
-        row: usize,
-    ) -> &T {
+    pub(crate) unsafe fn get<T: 'static>(&self, component_id: ComponentId, row: usize) -> &T {
         let column = self.columns.get(&component_id).unwrap();
         unsafe { &*(column.get(row) as *const T) }
     }
@@ -332,10 +329,16 @@ mod tests {
     use crate::component::ComponentStorage;
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Pos { x: f32, y: f32 }
+    struct Pos {
+        x: f32,
+        y: f32,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Vel { dx: f32, dy: f32 }
+    struct Vel {
+        dx: f32,
+        dy: f32,
+    }
 
     fn setup() -> (ComponentStorage, ComponentId, ComponentId) {
         let mut cs = ComponentStorage::new();
@@ -354,10 +357,13 @@ mod tests {
         let vel = Vel { dx: 3.0, dy: 4.0 };
 
         unsafe {
-            arch.push(entity, &[
-                (pid, &pos as *const Pos as *const u8),
-                (vid, &vel as *const Vel as *const u8),
-            ]);
+            arch.push(
+                entity,
+                &[
+                    (pid, &pos as *const Pos as *const u8),
+                    (vid, &vel as *const Vel as *const u8),
+                ],
+            );
             assert_eq!(arch.get::<Pos>(pid, 0), &Pos { x: 1.0, y: 2.0 });
             assert_eq!(arch.get::<Vel>(vid, 0), &Vel { dx: 3.0, dy: 4.0 });
         }

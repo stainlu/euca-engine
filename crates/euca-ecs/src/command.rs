@@ -80,7 +80,8 @@ impl Commands {
 
     /// Queue inserting a component on an entity.
     pub fn insert<T: Component>(&mut self, entity: Entity, component: T) {
-        self.queue.push(Box::new(InsertCommand { entity, component }));
+        self.queue
+            .push(Box::new(InsertCommand { entity, component }));
     }
 
     /// Queue removing a component from an entity.
@@ -120,10 +121,16 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Position { x: f32, y: f32 }
+    struct Position {
+        x: f32,
+        y: f32,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Velocity { dx: f32, dy: f32 }
+    struct Velocity {
+        dx: f32,
+        dy: f32,
+    }
 
     #[test]
     fn deferred_spawn() {
@@ -159,7 +166,10 @@ mod tests {
         commands.insert(entity, Velocity { dx: 5.0, dy: 6.0 });
         assert!(world.get::<Velocity>(entity).is_none());
         commands.apply(&mut world);
-        assert_eq!(world.get::<Velocity>(entity).unwrap(), &Velocity { dx: 5.0, dy: 6.0 });
+        assert_eq!(
+            world.get::<Velocity>(entity).unwrap(),
+            &Velocity { dx: 5.0, dy: 6.0 }
+        );
     }
 
     #[test]

@@ -1,9 +1,9 @@
-use crate::gpu::GpuContext;
-use crate::vertex::Vertex;
-use crate::mesh::{Mesh, MeshHandle};
-use crate::material::{Material, MaterialHandle};
 use crate::camera::Camera;
-use crate::light::{DirectionalLight, AmbientLight};
+use crate::gpu::GpuContext;
+use crate::light::{AmbientLight, DirectionalLight};
+use crate::material::{Material, MaterialHandle};
+use crate::mesh::{Mesh, MeshHandle};
+use crate::vertex::Vertex;
 use euca_math::Mat4;
 
 struct GpuMesh {
@@ -42,10 +42,10 @@ struct ObjectUniforms {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct SceneUniforms {
-    camera_pos: [f32; 4],       // xyz + pad
-    light_direction: [f32; 4],  // xyz + pad
-    light_color: [f32; 4],      // rgb + intensity
-    ambient_color: [f32; 4],    // rgb + intensity
+    camera_pos: [f32; 4],      // xyz + pad
+    light_direction: [f32; 4], // xyz + pad
+    light_color: [f32; 4],     // rgb + intensity
+    ambient_color: [f32; 4],   // rgb + intensity
 }
 
 const MAX_DRAW_CALLS: usize = 1024;
@@ -74,10 +74,12 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("PBR Shader"),
-            source: wgpu::ShaderSource::Wgsl(PBR_SHADER.into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("PBR Shader"),
+                source: wgpu::ShaderSource::Wgsl(PBR_SHADER.into()),
+            });
 
         let min_align = gpu.device.limits().min_uniform_buffer_offset_alignment as u64;
         let object_size = std::mem::size_of::<ObjectUniforms>() as u64;
@@ -110,47 +112,55 @@ impl Renderer {
         });
 
         // Bind group layouts
-        let object_bgl = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Object BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(object_size),
-                },
-                count: None,
-            }],
-        });
+        let object_bgl = gpu
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Object BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(object_size),
+                    },
+                    count: None,
+                }],
+            });
 
-        let scene_bgl = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Scene BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<SceneUniforms>() as u64),
-                },
-                count: None,
-            }],
-        });
+        let scene_bgl = gpu
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Scene BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<SceneUniforms>() as u64,
+                        ),
+                    },
+                    count: None,
+                }],
+            });
 
-        let material_bgl = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Material BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(material_size),
-                },
-                count: None,
-            }],
-        });
+        let material_bgl = gpu
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Material BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(material_size),
+                    },
+                    count: None,
+                }],
+            });
 
         // Bind groups
         let object_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -188,51 +198,56 @@ impl Renderer {
             }],
         });
 
-        let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("PBR Pipeline Layout"),
-            bind_group_layouts: &[&object_bgl, &scene_bgl, &material_bgl],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("PBR Pipeline Layout"),
+                bind_group_layouts: &[&object_bgl, &scene_bgl, &material_bgl],
+                push_constant_ranges: &[],
+            });
 
         let depth_format = wgpu::TextureFormat::Depth32Float;
-        let depth_texture = Self::create_depth_texture(&gpu.device, &gpu.surface_config, depth_format);
+        let depth_texture =
+            Self::create_depth_texture(&gpu.device, &gpu.surface_config, depth_format);
 
-        let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("PBR Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::LAYOUT],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: gpu.surface_config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            multiview: None,
-            cache: None,
-        });
+        let pipeline = gpu
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("PBR Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::LAYOUT],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: gpu.surface_config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            });
 
         Self {
             pipeline,
@@ -253,16 +268,20 @@ impl Renderer {
 
     pub fn upload_mesh(&mut self, gpu: &GpuContext, mesh: &Mesh) -> MeshHandle {
         use wgpu::util::DeviceExt;
-        let vb = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let ib = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let vb = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let ib = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
         let handle = MeshHandle(self.meshes.len() as u32);
         self.meshes.push(GpuMesh {
             vertex_buffer: vb,
@@ -282,13 +301,15 @@ impl Renderer {
             _pad: [0.0; 2],
         };
         let offset = handle.0 as u64 * self.material_aligned_size;
-        gpu.queue.write_buffer(&self.material_buffer, offset, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&self.material_buffer, offset, bytemuck::bytes_of(&uniforms));
         self.material_count += 1;
         handle
     }
 
     pub fn resize(&mut self, gpu: &GpuContext) {
-        self.depth_texture = Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
+        self.depth_texture =
+            Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
     }
 
     /// Draw all commands with PBR lighting.
@@ -309,19 +330,34 @@ impl Renderer {
             }
         };
 
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
 
         // Write scene uniforms
         let dir = light.direction;
-        let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt().max(0.001);
+        let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
+            .sqrt()
+            .max(0.001);
         let scene = SceneUniforms {
             camera_pos: [camera.eye.x, camera.eye.y, camera.eye.z, 0.0],
             light_direction: [dir[0] / len, dir[1] / len, dir[2] / len, 0.0],
-            light_color: [light.color[0], light.color[1], light.color[2], light.intensity],
-            ambient_color: [ambient.color[0], ambient.color[1], ambient.color[2], ambient.intensity],
+            light_color: [
+                light.color[0],
+                light.color[1],
+                light.color[2],
+                light.intensity,
+            ],
+            ambient_color: [
+                ambient.color[0],
+                ambient.color[1],
+                ambient.color[2],
+                ambient.intensity,
+            ],
         };
-        gpu.queue.write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
+        gpu.queue
+            .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
 
         // Write object transforms
         let aligned = self.object_aligned_size as usize;
@@ -343,9 +379,11 @@ impl Renderer {
             gpu.queue.write_buffer(&self.object_buffer, 0, &obj_data);
         }
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -354,7 +392,12 @@ impl Renderer {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.05, b: 0.08, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -391,7 +434,11 @@ impl Renderer {
         output.present();
     }
 
-    fn create_depth_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, format: wgpu::TextureFormat) -> wgpu::TextureView {
+    fn create_depth_texture(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::TextureView {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size: wgpu::Extent3d {

@@ -17,15 +17,21 @@ pub struct PhysicsBody {
 
 impl PhysicsBody {
     pub fn dynamic() -> Self {
-        Self { body_type: RigidBodyType::Dynamic }
+        Self {
+            body_type: RigidBodyType::Dynamic,
+        }
     }
 
     pub fn fixed() -> Self {
-        Self { body_type: RigidBodyType::Static }
+        Self {
+            body_type: RigidBodyType::Static,
+        }
     }
 
     pub fn kinematic() -> Self {
-        Self { body_type: RigidBodyType::Kinematic }
+        Self {
+            body_type: RigidBodyType::Kinematic,
+        }
     }
 }
 

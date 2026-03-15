@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::Vec3;
+use serde::{Deserialize, Serialize};
 
 /// Axis-aligned bounding box.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

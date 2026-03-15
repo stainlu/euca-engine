@@ -1,10 +1,10 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use euca_ecs::{Entity, Query};
-use euca_scene::{LocalTransform, GlobalTransform};
+use euca_scene::{GlobalTransform, LocalTransform};
 
 use crate::state::SharedWorld;
 
@@ -150,7 +150,8 @@ pub async fn spawn(
 ) -> (StatusCode, Json<SpawnResponse>) {
     let resp = world.with(|w, _| {
         let pos = req.position.unwrap_or([0.0, 0.0, 0.0]);
-        let transform = euca_math::Transform::from_translation(euca_math::Vec3::new(pos[0], pos[1], pos[2]));
+        let transform =
+            euca_math::Transform::from_translation(euca_math::Vec3::new(pos[0], pos[1], pos[2]));
         let entity = w.spawn(LocalTransform(transform));
         w.insert(entity, GlobalTransform::default());
         SpawnResponse {

@@ -1,5 +1,5 @@
+use euca_ecs::{Schedule, World};
 use std::sync::{Arc, Mutex};
-use euca_ecs::{World, Schedule};
 
 /// Thread-safe wrapper around the ECS world and schedule.
 ///
@@ -28,7 +28,10 @@ impl SharedWorld {
         F: FnOnce(&mut World, &mut Schedule) -> R,
     {
         let mut state = self.inner.lock().unwrap();
-        let WorldState { ref mut world, ref mut schedule } = *state;
+        let WorldState {
+            ref mut world,
+            ref mut schedule,
+        } = *state;
         f(world, schedule)
     }
 

@@ -1,6 +1,6 @@
-use std::ops::{Mul, Deref, DerefMut};
-use serde::{Serialize, Deserialize};
 use crate::Vec3;
+use serde::{Deserialize, Serialize};
+use std::ops::{Deref, DerefMut, Mul};
 
 /// Quaternion rotation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -24,7 +24,12 @@ impl Quat {
 
     #[inline]
     pub fn from_euler(yaw: f32, pitch: f32, roll: f32) -> Self {
-        Self(glam::Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, roll))
+        Self(glam::Quat::from_euler(
+            glam::EulerRot::YXZ,
+            yaw,
+            pitch,
+            roll,
+        ))
     }
 
     #[inline]

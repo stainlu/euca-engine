@@ -1,17 +1,17 @@
-use euca_ecs::{Query, World};
-use euca_math::{Vec3, Transform};
-use euca_scene::{LocalTransform, GlobalTransform};
-use euca_render::*;
-use euca_physics::*;
 use euca_core::Time;
+use euca_ecs::{Query, World};
 use euca_editor::{EditorState, hierarchy_panel, inspector_panel, toolbar_panel};
+use euca_math::{Transform, Vec3};
+use euca_physics::*;
+use euca_render::*;
+use euca_scene::{GlobalTransform, LocalTransform};
 
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, ElementState, KeyEvent};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowId, WindowAttributes};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 struct EditorApp {
     world: World,
@@ -86,7 +86,9 @@ impl EditorApp {
             Ok(t) => t,
             Err(_) => return,
         };
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Run egui
         let egui_winit = self.egui_winit.as_mut().unwrap();
@@ -106,7 +108,9 @@ impl EditorApp {
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
-        let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        let paint_jobs = self
+            .egui_ctx
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
         let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [config.width, config.height],
             pixels_per_point: full_output.pixels_per_point,
@@ -121,7 +125,8 @@ impl EditorApp {
             label: Some("editor"),
         });
 
-        let user_bufs = egui_renderer.update_buffers(device, queue, &mut encoder, &paint_jobs, &screen_desc);
+        let user_bufs =
+            egui_renderer.update_buffers(device, queue, &mut encoder, &paint_jobs, &screen_desc);
 
         // Clear + egui render in one pass
         {
@@ -131,7 +136,12 @@ impl EditorApp {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.12, g: 0.12, b: 0.15, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.12,
+                            g: 0.12,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -161,17 +171,24 @@ impl ApplicationHandler for EditorApp {
 
             let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
             let surface = instance.create_surface(window.clone()).unwrap();
-            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            })).unwrap();
-            let (device, queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor::default(),
-            )).unwrap();
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    compatible_surface: Some(&surface),
+                    ..Default::default()
+                }))
+                .unwrap();
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                    .unwrap();
 
             let size = window.inner_size();
             let caps = surface.get_capabilities(&adapter);
-            let format = caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
+            let format = caps
+                .formats
+                .iter()
+                .find(|f| f.is_srgb())
+                .copied()
+                .unwrap_or(caps.formats[0]);
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format,
@@ -192,11 +209,8 @@ impl ApplicationHandler for EditorApp {
                 None,
                 None,
             );
-            let egui_renderer = egui_wgpu::Renderer::new(
-                &device,
-                format,
-                egui_wgpu::RendererOptions::default(),
-            );
+            let egui_renderer =
+                egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
 
             self.window = Some(window);
             self.device = Some(device);
@@ -219,7 +233,13 @@ impl ApplicationHandler for EditorApp {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput {
-                event: KeyEvent { logical_key: Key::Named(NamedKey::Escape), state: ElementState::Pressed, .. }, ..
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::Escape),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
             } => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let (Some(surface), Some(config), Some(device)) =
@@ -232,7 +252,9 @@ impl ApplicationHandler for EditorApp {
             }
             WindowEvent::RedrawRequested => {
                 self.render_frame();
-                if let Some(w) = &self.window { w.request_redraw(); }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
             }
             _ => {}
         }

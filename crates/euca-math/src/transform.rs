@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
-use crate::{Vec3, Quat, Mat4};
+use crate::{Mat4, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// TRS transform: Translation, Rotation, Scale.
 ///

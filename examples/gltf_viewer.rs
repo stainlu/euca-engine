@@ -1,15 +1,15 @@
-use euca_ecs::{Query, World};
-use euca_math::{Vec3, Transform};
-use euca_scene::{LocalTransform, GlobalTransform};
-use euca_render::*;
 use euca_asset::load_gltf;
 use euca_core::Time;
+use euca_ecs::{Query, World};
+use euca_math::{Transform, Vec3};
+use euca_render::*;
+use euca_scene::{GlobalTransform, LocalTransform};
 
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, ElementState, KeyEvent};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{WindowId, WindowAttributes};
+use winit::window::{WindowAttributes, WindowId};
 
 struct GltfViewerApp {
     world: World,
@@ -24,7 +24,10 @@ impl GltfViewerApp {
         let mut world = World::new();
         world.insert_resource(Time::new());
         world.insert_resource(Camera::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO));
-        world.insert_resource(AmbientLight { color: [1.0, 1.0, 1.0], intensity: 0.25 });
+        world.insert_resource(AmbientLight {
+            color: [1.0, 1.0, 1.0],
+            intensity: 0.25,
+        });
 
         Self {
             world,
@@ -50,7 +53,11 @@ impl GltfViewerApp {
             }
         };
 
-        println!("Loaded {} mesh(es) from {}", scene.meshes.len(), self.gltf_path);
+        println!(
+            "Loaded {} mesh(es) from {}",
+            scene.meshes.len(),
+            self.gltf_path
+        );
 
         // Upload and spawn each mesh
         for gltf_mesh in &scene.meshes {
@@ -59,14 +66,20 @@ impl GltfViewerApp {
 
             let entity = self.world.spawn(LocalTransform(Transform::IDENTITY));
             self.world.insert(entity, GlobalTransform::default());
-            self.world.insert(entity, MeshRenderer { mesh: mesh_handle });
-            self.world.insert(entity, MaterialRef { handle: mat_handle });
+            self.world
+                .insert(entity, MeshRenderer { mesh: mesh_handle });
+            self.world
+                .insert(entity, MaterialRef { handle: mat_handle });
         }
 
         // Add a ground plane
         let plane_mesh = renderer.upload_mesh(gpu, &Mesh::plane(10.0));
         let gray = renderer.upload_material(gpu, &Material::new([0.3, 0.3, 0.3, 1.0], 0.0, 0.9));
-        let ground = self.world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, -0.01, 0.0))));
+        let ground = self
+            .world
+            .spawn(LocalTransform(Transform::from_translation(Vec3::new(
+                0.0, -0.01, 0.0,
+            ))));
         self.world.insert(ground, GlobalTransform::default());
         self.world.insert(ground, MeshRenderer { mesh: plane_mesh });
         self.world.insert(ground, MaterialRef { handle: gray });
@@ -93,18 +106,25 @@ impl GltfViewerApp {
 
         let draw_commands: Vec<DrawCommand> = {
             let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
-            query.iter().map(|(gt, mr, mat)| DrawCommand {
-                mesh: mr.mesh,
-                material: mat.handle,
-                model_matrix: gt.0.to_matrix(),
-            }).collect()
+            query
+                .iter()
+                .map(|(gt, mr, mat)| DrawCommand {
+                    mesh: mr.mesh,
+                    material: mat.handle,
+                    model_matrix: gt.0.to_matrix(),
+                })
+                .collect()
         };
 
         let light = {
             let query = Query::<&DirectionalLight>::new(&self.world);
             query.iter().next().cloned().unwrap_or_default()
         };
-        let ambient = self.world.resource::<AmbientLight>().cloned().unwrap_or_default();
+        let ambient = self
+            .world
+            .resource::<AmbientLight>()
+            .cloned()
+            .unwrap_or_default();
         let camera = self.world.resource::<Camera>().unwrap().clone();
 
         let gpu = self.gpu.as_ref().unwrap();
@@ -129,17 +149,27 @@ impl ApplicationHandler for GltfViewerApp {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput {
-                event: KeyEvent { logical_key: Key::Named(NamedKey::Escape), state: ElementState::Pressed, .. }, ..
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::Escape),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
             } => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
-                    if let Some(r) = &mut self.renderer { r.resize(gpu); }
+                    if let Some(r) = &mut self.renderer {
+                        r.resize(gpu);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
                 self.update_and_render();
-                if let Some(gpu) = &self.gpu { gpu.window.request_redraw(); }
+                if let Some(gpu) = &self.gpu {
+                    gpu.window.request_redraw();
+                }
             }
             _ => {}
         }

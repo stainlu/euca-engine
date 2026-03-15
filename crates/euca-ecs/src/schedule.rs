@@ -57,10 +57,16 @@ mod tests {
     use crate::query::Query;
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Position { x: f32, y: f32 }
+    struct Position {
+        x: f32,
+        y: f32,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Velocity { dx: f32, dy: f32 }
+    struct Velocity {
+        dx: f32,
+        dy: f32,
+    }
 
     #[derive(Debug, PartialEq)]
     struct FrameCount(u64);
@@ -89,7 +95,10 @@ mod tests {
         schedule.run(&mut world);
 
         let log = world.resource::<Vec<String>>().unwrap();
-        assert_eq!(log, &vec!["A".to_string(), "B".to_string(), "C".to_string()]);
+        assert_eq!(
+            log,
+            &vec!["A".to_string(), "B".to_string(), "C".to_string()]
+        );
     }
 
     #[test]
@@ -137,8 +146,14 @@ mod tests {
             schedule.run(&mut world);
         }
 
-        assert_eq!(world.get::<Position>(e1).unwrap(), &Position { x: 3.0, y: 6.0 });
-        assert_eq!(world.get::<Position>(e2).unwrap(), &Position { x: 7.0, y: 10.0 });
+        assert_eq!(
+            world.get::<Position>(e1).unwrap(),
+            &Position { x: 3.0, y: 6.0 }
+        );
+        assert_eq!(
+            world.get::<Position>(e2).unwrap(),
+            &Position { x: 7.0, y: 10.0 }
+        );
         assert_eq!(world.current_tick(), 3);
     }
 }

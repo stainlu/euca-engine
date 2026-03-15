@@ -2,7 +2,10 @@ use clap::{Parser, Subcommand};
 use serde_json::Value;
 
 #[derive(Parser)]
-#[command(name = "euca", about = "Euca Engine CLI — control the simulation from the terminal")]
+#[command(
+    name = "euca",
+    about = "Euca Engine CLI — control the simulation from the terminal"
+)]
 struct Cli {
     /// Server URL (default: http://localhost:8080)
     #[arg(short, long, default_value = "http://localhost:8080")]
@@ -119,12 +122,16 @@ fn main() {
 
     if let Err(e) = result {
         eprintln!("Error: {e}");
-        eprintln!("Is the Euca Engine server running? Try: cargo run -p euca-agent --example headless_server");
+        eprintln!(
+            "Is the Euca Engine server running? Try: cargo run -p euca-agent --example headless_server"
+        );
         std::process::exit(1);
     }
 }
 
-fn handle_response(resp: Result<reqwest::blocking::Response, reqwest::Error>) -> Result<(), String> {
+fn handle_response(
+    resp: Result<reqwest::blocking::Response, reqwest::Error>,
+) -> Result<(), String> {
     let resp = resp.map_err(|e| e.to_string())?;
     let status = resp.status();
     let text = resp.text().map_err(|e| e.to_string())?;

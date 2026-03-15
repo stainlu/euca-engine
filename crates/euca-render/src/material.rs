@@ -1,14 +1,18 @@
 /// PBR material properties.
 #[derive(Clone, Debug)]
 pub struct Material {
-    pub albedo: [f32; 4],    // Base color RGBA
-    pub metallic: f32,       // 0.0 = dielectric, 1.0 = metal
-    pub roughness: f32,      // 0.0 = mirror smooth, 1.0 = fully rough
+    pub albedo: [f32; 4], // Base color RGBA
+    pub metallic: f32,    // 0.0 = dielectric, 1.0 = metal
+    pub roughness: f32,   // 0.0 = mirror smooth, 1.0 = fully rough
 }
 
 impl Material {
     pub fn new(albedo: [f32; 4], metallic: f32, roughness: f32) -> Self {
-        Self { albedo, metallic, roughness }
+        Self {
+            albedo,
+            metallic,
+            roughness,
+        }
     }
 
     /// Matte red plastic.

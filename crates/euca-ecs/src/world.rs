@@ -60,10 +60,8 @@ impl World {
         let arch_id = self.get_or_create_archetype(&[comp_id]);
 
         let row = unsafe {
-            self.archetypes[arch_id.0 as usize].push(
-                entity,
-                &[(comp_id, &component as *const T as *const u8)],
-            )
+            self.archetypes[arch_id.0 as usize]
+                .push(entity, &[(comp_id, &component as *const T as *const u8)])
         };
         std::mem::forget(component);
         self.set_location(entity, arch_id, row);
@@ -139,7 +137,12 @@ impl World {
         new_comp_ids.sort();
         let new_arch_id = self.get_or_create_archetype(&new_comp_ids);
 
-        self.move_entity(entity, loc, new_arch_id, Some((comp_id, &component as *const T as *const u8)));
+        self.move_entity(
+            entity,
+            loc,
+            new_arch_id,
+            Some((comp_id, &component as *const T as *const u8)),
+        );
         std::mem::forget(component);
         true
     }
@@ -223,7 +226,10 @@ impl World {
         if !self.entities.is_alive(entity) {
             return None;
         }
-        self.entity_locations.get(entity.index as usize).copied().flatten()
+        self.entity_locations
+            .get(entity.index as usize)
+            .copied()
+            .flatten()
     }
 
     fn set_location(&mut self, entity: Entity, arch_id: ArchetypeId, row: usize) {
@@ -246,7 +252,10 @@ impl World {
         }
 
         let id = ArchetypeId(self.archetypes.len() as u32);
-        let infos: Vec<_> = sorted.iter().map(|&cid| (cid, self.components.info(cid))).collect();
+        let infos: Vec<_> = sorted
+            .iter()
+            .map(|&cid| (cid, self.components.info(cid)))
+            .collect();
         let archetype = Archetype::new(id, &infos);
         self.archetypes.push(archetype);
         self.archetype_index.insert(sorted, id);
@@ -269,7 +278,11 @@ impl World {
             let size = self.components.info(cid).layout.size();
             let mut buf = vec![0u8; size];
             unsafe {
-                self.archetypes[old_arch_idx].read_component_raw(cid, old_loc.row, buf.as_mut_ptr());
+                self.archetypes[old_arch_idx].read_component_raw(
+                    cid,
+                    old_loc.row,
+                    buf.as_mut_ptr(),
+                );
             }
             buffers.push((cid, buf));
         }
@@ -320,7 +333,11 @@ impl World {
             let size = self.components.info(cid).layout.size();
             let mut buf = vec![0u8; size];
             unsafe {
-                self.archetypes[old_arch_idx].read_component_raw(cid, old_loc.row, buf.as_mut_ptr());
+                self.archetypes[old_arch_idx].read_component_raw(
+                    cid,
+                    old_loc.row,
+                    buf.as_mut_ptr(),
+                );
             }
             buffers.push((cid, buf));
         }
@@ -359,10 +376,16 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Position { x: f32, y: f32 }
+    struct Position {
+        x: f32,
+        y: f32,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Velocity { dx: f32, dy: f32 }
+    struct Velocity {
+        dx: f32,
+        dy: f32,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
     struct Name(String);
@@ -373,7 +396,10 @@ mod tests {
         let entity = world.spawn(Position { x: 1.0, y: 2.0 });
         assert!(world.is_alive(entity));
         assert_eq!(world.entity_count(), 1);
-        assert_eq!(world.get::<Position>(entity).unwrap(), &Position { x: 1.0, y: 2.0 });
+        assert_eq!(
+            world.get::<Position>(entity).unwrap(),
+            &Position { x: 1.0, y: 2.0 }
+        );
     }
 
     #[test]
@@ -398,8 +424,14 @@ mod tests {
         let mut world = World::new();
         let entity = world.spawn(Position { x: 1.0, y: 2.0 });
         world.insert(entity, Velocity { dx: 3.0, dy: 4.0 });
-        assert_eq!(world.get::<Position>(entity).unwrap(), &Position { x: 1.0, y: 2.0 });
-        assert_eq!(world.get::<Velocity>(entity).unwrap(), &Velocity { dx: 3.0, dy: 4.0 });
+        assert_eq!(
+            world.get::<Position>(entity).unwrap(),
+            &Position { x: 1.0, y: 2.0 }
+        );
+        assert_eq!(
+            world.get::<Velocity>(entity).unwrap(),
+            &Velocity { dx: 3.0, dy: 4.0 }
+        );
     }
 
     #[test]
@@ -410,7 +442,10 @@ mod tests {
         let removed = world.remove::<Velocity>(entity);
         assert_eq!(removed, Some(Velocity { dx: 3.0, dy: 4.0 }));
         assert!(world.get::<Velocity>(entity).is_none());
-        assert_eq!(world.get::<Position>(entity).unwrap(), &Position { x: 1.0, y: 2.0 });
+        assert_eq!(
+            world.get::<Position>(entity).unwrap(),
+            &Position { x: 1.0, y: 2.0 }
+        );
     }
 
     #[test]
@@ -418,7 +453,10 @@ mod tests {
         let mut world = World::new();
         let entity = world.spawn(Position { x: 1.0, y: 2.0 });
         world.insert(entity, Position { x: 99.0, y: 99.0 });
-        assert_eq!(world.get::<Position>(entity).unwrap(), &Position { x: 99.0, y: 99.0 });
+        assert_eq!(
+            world.get::<Position>(entity).unwrap(),
+            &Position { x: 99.0, y: 99.0 }
+        );
     }
 
     #[test]

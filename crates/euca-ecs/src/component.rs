@@ -100,8 +100,14 @@ impl ComponentStorage {
 mod tests {
     use super::*;
 
-    struct Position { x: f32, y: f32 }
-    struct Velocity { dx: f32, dy: f32 }
+    struct Position {
+        x: f32,
+        y: f32,
+    }
+    struct Velocity {
+        dx: f32,
+        dy: f32,
+    }
 
     #[test]
     fn register_and_lookup() {

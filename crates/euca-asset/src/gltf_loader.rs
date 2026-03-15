@@ -1,4 +1,4 @@
-use euca_render::{Mesh, Material, Vertex};
+use euca_render::{Material, Mesh, Vertex};
 use std::path::Path;
 
 /// A loaded glTF mesh with its associated material.
@@ -93,7 +93,9 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
         return Err("No meshes found in glTF file".into());
     }
 
-    Ok(GltfScene { meshes: scene_meshes })
+    Ok(GltfScene {
+        meshes: scene_meshes,
+    })
 }
 
 #[cfg(test)]

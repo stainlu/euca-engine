@@ -1,7 +1,7 @@
-use euca_ecs::{World, Schedule, Entity, Query};
-use euca_math::{Vec3, Transform};
-use euca_scene::{LocalTransform, GlobalTransform};
 use euca_agent::AgentServer;
+use euca_ecs::{Entity, Query, Schedule, World};
+use euca_math::{Transform, Vec3};
+use euca_scene::{GlobalTransform, LocalTransform};
 
 /// Simple movement system: entities with Velocity move each tick.
 #[derive(Clone, Copy, Debug)]
@@ -32,16 +32,36 @@ async fn main() {
     let mut world = World::new();
 
     // Spawn some entities
-    let e1 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))));
+    let e1 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+        0.0, 0.0, 0.0,
+    ))));
     world.insert(e1, GlobalTransform::default());
-    world.insert(e1, Velocity { dx: 1.0, dy: 0.0, dz: 0.0 });
+    world.insert(
+        e1,
+        Velocity {
+            dx: 1.0,
+            dy: 0.0,
+            dz: 0.0,
+        },
+    );
 
-    let e2 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(10.0, 0.0, 0.0))));
+    let e2 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+        10.0, 0.0, 0.0,
+    ))));
     world.insert(e2, GlobalTransform::default());
 
-    let e3 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, 5.0, 0.0))));
+    let e3 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+        0.0, 5.0, 0.0,
+    ))));
     world.insert(e3, GlobalTransform::default());
-    world.insert(e3, Velocity { dx: 0.0, dy: -0.5, dz: 0.0 });
+    world.insert(
+        e3,
+        Velocity {
+            dx: 0.0,
+            dy: -0.5,
+            dz: 0.0,
+        },
+    );
 
     log::info!("Spawned {} entities", world.entity_count());
 
@@ -60,7 +80,9 @@ async fn main() {
     log::info!("Euca Engine running in headless mode");
     log::info!("Try: curl http://localhost:{port}/");
     log::info!("Try: curl -X POST http://localhost:{port}/observe");
-    log::info!("Try: curl -X POST http://localhost:{port}/step -H 'Content-Type: application/json' -d '{{\"ticks\": 10}}'");
+    log::info!(
+        "Try: curl -X POST http://localhost:{port}/step -H 'Content-Type: application/json' -d '{{\"ticks\": 10}}'"
+    );
 
     server.run().await;
 }

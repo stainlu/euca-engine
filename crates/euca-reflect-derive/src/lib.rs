@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Data, Fields};
+use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 /// Derive macro for the `Reflect` trait.
 ///
@@ -22,13 +22,17 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let fields_impl = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => {
-                let field_entries: Vec<_> = fields.named.iter().map(|f| {
-                    let field_name = f.ident.as_ref().unwrap();
-                    let field_name_str = field_name.to_string();
-                    quote! {
-                        (#field_name_str, format!("{:?}", self.#field_name))
-                    }
-                }).collect();
+                let field_entries: Vec<_> = fields
+                    .named
+                    .iter()
+                    .map(|f| {
+                        let field_name = f.ident.as_ref().unwrap();
+                        let field_name_str = field_name.to_string();
+                        quote! {
+                            (#field_name_str, format!("{:?}", self.#field_name))
+                        }
+                    })
+                    .collect();
                 quote! {
                     vec![#(#field_entries),*]
                 }

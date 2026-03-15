@@ -1,6 +1,6 @@
-use euca_ecs::{Entity, Query, World, Without};
+use euca_ecs::{Entity, Query, Without, World};
+use euca_math::{Quat, Vec3};
 use euca_scene::LocalTransform;
-use euca_math::{Vec3, Quat};
 
 use crate::components;
 use crate::world::PhysicsWorld;
@@ -14,14 +14,25 @@ pub fn physics_step_system(world: &mut World) {
 
 #[allow(clippy::type_complexity)]
 fn register_new_bodies(world: &mut World) {
-    let new_bodies: Vec<(Entity, components::RigidBodyType, Vec3, Option<(components::ColliderShape, f32, f32)>)> = {
-        let query = Query::<(Entity, &components::PhysicsBody, &LocalTransform), Without<components::PhysicsRegistered>>::new(world);
-        query.iter().map(|(e, body, lt)| {
-            let collider = world.get::<components::PhysicsCollider>(e).map(|c| {
-                (c.shape.clone(), c.restitution, c.friction)
-            });
-            (e, body.body_type, lt.0.translation, collider)
-        }).collect()
+    let new_bodies: Vec<(
+        Entity,
+        components::RigidBodyType,
+        Vec3,
+        Option<(components::ColliderShape, f32, f32)>,
+    )> = {
+        let query = Query::<
+            (Entity, &components::PhysicsBody, &LocalTransform),
+            Without<components::PhysicsRegistered>,
+        >::new(world);
+        query
+            .iter()
+            .map(|(e, body, lt)| {
+                let collider = world
+                    .get::<components::PhysicsCollider>(e)
+                    .map(|c| (c.shape.clone(), c.restitution, c.friction));
+                (e, body.body_type, lt.0.translation, collider)
+            })
+            .collect()
     };
 
     if new_bodies.is_empty() {
@@ -39,9 +50,7 @@ fn register_new_bodies(world: &mut World) {
                 components::RigidBodyType::Dynamic => {
                     rapier3d::dynamics::RigidBodyBuilder::dynamic()
                 }
-                components::RigidBodyType::Static => {
-                    rapier3d::dynamics::RigidBodyBuilder::fixed()
-                }
+                components::RigidBodyType::Static => rapier3d::dynamics::RigidBodyBuilder::fixed(),
                 components::RigidBodyType::Kinematic => {
                     rapier3d::dynamics::RigidBodyBuilder::kinematic_position_based()
                 }
@@ -60,15 +69,18 @@ fn register_new_bodies(world: &mut World) {
                     components::ColliderShape::Sphere { radius } => {
                         rapier3d::geometry::ColliderBuilder::ball(*radius)
                     }
-                    components::ColliderShape::Capsule { half_height, radius } => {
-                        rapier3d::geometry::ColliderBuilder::capsule_y(*half_height, *radius)
-                    }
+                    components::ColliderShape::Capsule {
+                        half_height,
+                        radius,
+                    } => rapier3d::geometry::ColliderBuilder::capsule_y(*half_height, *radius),
                 }
                 .restitution(*restitution)
                 .friction(*friction)
                 .build();
 
-                physics.colliders.insert_with_parent(collider, body_handle, &mut physics.bodies);
+                physics
+                    .colliders
+                    .insert_with_parent(collider, body_handle, &mut physics.bodies);
             }
         }
     }
@@ -86,8 +98,13 @@ fn step_simulation(world: &mut World) {
 
 fn write_back_transforms(world: &mut World) {
     let dynamic_entities: Vec<Entity> = {
-        let query = Query::<(Entity, &components::PhysicsBody, &components::PhysicsRegistered)>::new(world);
-        query.iter()
+        let query = Query::<(
+            Entity,
+            &components::PhysicsBody,
+            &components::PhysicsRegistered,
+        )>::new(world);
+        query
+            .iter()
             .filter(|(_, body, _)| body.body_type == components::RigidBodyType::Dynamic)
             .map(|(e, _, _)| e)
             .collect()
@@ -103,17 +120,20 @@ fn write_back_transforms(world: &mut World) {
             None => return,
         };
 
-        dynamic_entities.iter().filter_map(|entity| {
-            let handle = physics.entity_to_body.get(entity)?;
-            let body = physics.bodies.get(*handle)?;
-            let pos = body.translation();
-            let rot = body.rotation();
-            Some((
-                *entity,
-                Vec3::new(pos.x, pos.y, pos.z),
-                Quat(glam::Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w)),
-            ))
-        }).collect()
+        dynamic_entities
+            .iter()
+            .filter_map(|entity| {
+                let handle = physics.entity_to_body.get(entity)?;
+                let body = physics.bodies.get(*handle)?;
+                let pos = body.translation();
+                let rot = body.rotation();
+                Some((
+                    *entity,
+                    Vec3::new(pos.x, pos.y, pos.z),
+                    Quat(glam::Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w)),
+                ))
+            })
+            .collect()
     };
 
     for (entity, translation, rotation) in updates {
@@ -135,7 +155,9 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(PhysicsWorld::new());
 
-        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, 10.0, 0.0))));
+        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 10.0, 0.0,
+        ))));
         world.insert(entity, GlobalTransform::default());
         world.insert(entity, components::PhysicsBody::dynamic());
         world.insert(entity, components::PhysicsCollider::cuboid(0.5, 0.5, 0.5));
@@ -146,7 +168,11 @@ mod tests {
 
         // After 2s of freefall from y=10, body should be well below origin
         let lt = world.get::<LocalTransform>(entity).unwrap();
-        assert!(lt.0.translation.y < 0.0, "Body should have fallen past origin, y={}", lt.0.translation.y);
+        assert!(
+            lt.0.translation.y < 0.0,
+            "Body should have fallen past origin, y={}",
+            lt.0.translation.y
+        );
     }
 
     #[test]
@@ -154,7 +180,9 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(PhysicsWorld::new());
 
-        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))));
+        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 0.0, 0.0,
+        ))));
         world.insert(entity, GlobalTransform::default());
         world.insert(entity, components::PhysicsBody::fixed());
         world.insert(entity, components::PhysicsCollider::cuboid(10.0, 0.5, 10.0));
@@ -164,7 +192,10 @@ mod tests {
         }
 
         let lt = world.get::<LocalTransform>(entity).unwrap();
-        assert!((lt.0.translation.y).abs() < 0.01, "Static body should not move");
+        assert!(
+            (lt.0.translation.y).abs() < 0.01,
+            "Static body should not move"
+        );
     }
 
     #[test]
@@ -173,13 +204,17 @@ mod tests {
         world.insert_resource(PhysicsWorld::new());
 
         // Ground
-        let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))));
+        let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 0.0, 0.0,
+        ))));
         world.insert(ground, GlobalTransform::default());
         world.insert(ground, components::PhysicsBody::fixed());
         world.insert(ground, components::PhysicsCollider::cuboid(10.0, 0.5, 10.0));
 
         // Falling cube
-        let cube = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(0.0, 5.0, 0.0))));
+        let cube = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 5.0, 0.0,
+        ))));
         world.insert(cube, GlobalTransform::default());
         world.insert(cube, components::PhysicsBody::dynamic());
         world.insert(cube, components::PhysicsCollider::cuboid(0.5, 0.5, 0.5));
@@ -190,6 +225,10 @@ mod tests {
 
         let lt = world.get::<LocalTransform>(cube).unwrap();
         assert!(lt.0.translation.y > 0.0, "Cube should be above ground");
-        assert!(lt.0.translation.y < 3.0, "Cube should have fallen, y={}", lt.0.translation.y);
+        assert!(
+            lt.0.translation.y < 3.0,
+            "Cube should have fallen, y={}",
+            lt.0.translation.y
+        );
     }
 }

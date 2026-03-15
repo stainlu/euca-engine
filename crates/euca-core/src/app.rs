@@ -1,6 +1,6 @@
-use euca_ecs::{World, Schedule, IntoSystem};
 use crate::plugin::Plugin;
 use crate::time::Time;
+use euca_ecs::{IntoSystem, Schedule, World};
 
 /// The application — owns the ECS world, schedule, and runs the main loop.
 #[allow(clippy::type_complexity)]
@@ -71,7 +71,7 @@ impl App {
         use winit::application::ApplicationHandler;
         use winit::event::WindowEvent;
         use winit::event_loop::{ActiveEventLoop, EventLoop};
-        use winit::window::{Window, WindowId, WindowAttributes};
+        use winit::window::{Window, WindowAttributes, WindowId};
 
         #[allow(clippy::type_complexity)]
         struct NovaApp {

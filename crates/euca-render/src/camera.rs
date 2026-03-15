@@ -1,4 +1,4 @@
-use euca_math::{Vec3, Mat4};
+use euca_math::{Mat4, Vec3};
 
 /// Camera component with view + projection.
 #[derive(Clone, Debug)]
@@ -47,10 +47,7 @@ impl Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Self::new(
-            Vec3::new(0.0, 2.0, -5.0),
-            Vec3::ZERO,
-        )
+        Self::new(Vec3::new(0.0, 2.0, -5.0), Vec3::ZERO)
     }
 }
 

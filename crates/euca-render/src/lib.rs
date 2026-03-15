@@ -1,17 +1,17 @@
-mod gpu;
-mod vertex;
-mod mesh;
 mod camera;
-mod material;
+mod gpu;
 mod light;
-mod renderer;
+mod material;
+mod mesh;
 mod plugin;
+mod renderer;
+mod vertex;
 
-pub use gpu::GpuContext;
-pub use vertex::Vertex;
-pub use mesh::{Mesh, MeshHandle, MeshRenderer};
 pub use camera::Camera;
+pub use gpu::GpuContext;
+pub use light::{AmbientLight, DirectionalLight};
 pub use material::{Material, MaterialHandle, MaterialRef};
-pub use light::{DirectionalLight, AmbientLight};
-pub use renderer::{Renderer, DrawCommand};
+pub use mesh::{Mesh, MeshHandle, MeshRenderer};
 pub use plugin::RenderPlugin;
+pub use renderer::{DrawCommand, Renderer};
+pub use vertex::Vertex;

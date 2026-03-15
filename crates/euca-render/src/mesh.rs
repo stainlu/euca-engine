@@ -21,10 +21,26 @@ impl Mesh {
     pub fn cube() -> Self {
         let face = |positions: [[f32; 3]; 4], normal: [f32; 3]| -> [Vertex; 4] {
             [
-                Vertex { position: positions[0], normal, uv: [0.0, 0.0] },
-                Vertex { position: positions[1], normal, uv: [1.0, 0.0] },
-                Vertex { position: positions[2], normal, uv: [1.0, 1.0] },
-                Vertex { position: positions[3], normal, uv: [0.0, 1.0] },
+                Vertex {
+                    position: positions[0],
+                    normal,
+                    uv: [0.0, 0.0],
+                },
+                Vertex {
+                    position: positions[1],
+                    normal,
+                    uv: [1.0, 0.0],
+                },
+                Vertex {
+                    position: positions[2],
+                    normal,
+                    uv: [1.0, 1.0],
+                },
+                Vertex {
+                    position: positions[3],
+                    normal,
+                    uv: [0.0, 1.0],
+                },
             ]
         };
 
@@ -32,39 +48,69 @@ impl Mesh {
 
         // Front (z = +0.5), normal = +Z
         vertices.extend_from_slice(&face(
-            [[-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]],
+            [
+                [-0.5, -0.5, 0.5],
+                [0.5, -0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+            ],
             [0.0, 0.0, 1.0],
         ));
         // Back (z = -0.5), normal = -Z
         vertices.extend_from_slice(&face(
-            [[0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5]],
+            [
+                [0.5, -0.5, -0.5],
+                [-0.5, -0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+                [0.5, 0.5, -0.5],
+            ],
             [0.0, 0.0, -1.0],
         ));
         // Top (y = +0.5), normal = +Y
         vertices.extend_from_slice(&face(
-            [[-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5]],
+            [
+                [-0.5, 0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [0.5, 0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+            ],
             [0.0, 1.0, 0.0],
         ));
         // Bottom (y = -0.5), normal = -Y
         vertices.extend_from_slice(&face(
-            [[-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5]],
+            [
+                [-0.5, -0.5, -0.5],
+                [0.5, -0.5, -0.5],
+                [0.5, -0.5, 0.5],
+                [-0.5, -0.5, 0.5],
+            ],
             [0.0, -1.0, 0.0],
         ));
         // Right (x = +0.5), normal = +X
         vertices.extend_from_slice(&face(
-            [[0.5, -0.5, 0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5]],
+            [
+                [0.5, -0.5, 0.5],
+                [0.5, -0.5, -0.5],
+                [0.5, 0.5, -0.5],
+                [0.5, 0.5, 0.5],
+            ],
             [1.0, 0.0, 0.0],
         ));
         // Left (x = -0.5), normal = -X
         vertices.extend_from_slice(&face(
-            [[-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5]],
+            [
+                [-0.5, -0.5, -0.5],
+                [-0.5, -0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+                [-0.5, 0.5, -0.5],
+            ],
             [-1.0, 0.0, 0.0],
         ));
 
         let indices = vec![
-            0, 1, 2, 0, 2, 3,       // front
-            4, 5, 6, 4, 6, 7,       // back
-            8, 9, 10, 8, 10, 11,    // top
+            0, 1, 2, 0, 2, 3, // front
+            4, 5, 6, 4, 6, 7, // back
+            8, 9, 10, 8, 10, 11, // top
             12, 13, 14, 12, 14, 15, // bottom
             16, 17, 18, 16, 18, 19, // right
             20, 21, 22, 20, 22, 23, // left
@@ -122,10 +168,26 @@ impl Mesh {
     pub fn plane(size: f32) -> Self {
         let h = size / 2.0;
         let vertices = vec![
-            Vertex { position: [-h, 0.0, -h], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
-            Vertex { position: [ h, 0.0, -h], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
-            Vertex { position: [ h, 0.0,  h], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
-            Vertex { position: [-h, 0.0,  h], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
+            Vertex {
+                position: [-h, 0.0, -h],
+                normal: [0.0, 1.0, 0.0],
+                uv: [0.0, 0.0],
+            },
+            Vertex {
+                position: [h, 0.0, -h],
+                normal: [0.0, 1.0, 0.0],
+                uv: [1.0, 0.0],
+            },
+            Vertex {
+                position: [h, 0.0, h],
+                normal: [0.0, 1.0, 0.0],
+                uv: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-h, 0.0, h],
+                normal: [0.0, 1.0, 0.0],
+                uv: [0.0, 1.0],
+            },
         ];
         let indices = vec![0, 1, 2, 0, 2, 3];
         Self { vertices, indices }
@@ -140,7 +202,7 @@ mod tests {
     fn cube_has_24_vertices_and_36_indices() {
         let cube = Mesh::cube();
         assert_eq!(cube.vertices.len(), 24); // 6 faces * 4 vertices
-        assert_eq!(cube.indices.len(), 36);  // 6 faces * 2 triangles * 3
+        assert_eq!(cube.indices.len(), 36); // 6 faces * 2 triangles * 3
     }
 
     #[test]
@@ -148,7 +210,10 @@ mod tests {
         let cube = Mesh::cube();
         for v in &cube.vertices {
             let len = (v.normal[0].powi(2) + v.normal[1].powi(2) + v.normal[2].powi(2)).sqrt();
-            assert!((len - 1.0).abs() < 1e-5, "Normal should be unit length, got {len}");
+            assert!(
+                (len - 1.0).abs() < 1e-5,
+                "Normal should be unit length, got {len}"
+            );
         }
     }
 

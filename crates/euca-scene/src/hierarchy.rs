@@ -1,5 +1,5 @@
 use euca_ecs::Entity;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Marks an entity as a child of another entity.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
