@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/euca-ecs",
+    "crates/euca-reflect",
+    "crates/euca-reflect-derive",
+    "crates/euca-math",
+    "crates/euca-scene",
+    "crates/euca-core",
+    "crates/euca-render",
+    "crates/euca-agent",
+    "tools/euca-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"

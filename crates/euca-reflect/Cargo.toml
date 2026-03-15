@@ -1,0 +1,10 @@
+[package]
+name = "euca-reflect"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-reflect-derive = { path = "../euca-reflect-derive" }
+
+[features]
+default = []

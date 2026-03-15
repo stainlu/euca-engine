@@ -1,0 +1,9 @@
+[package]
+name = "euca-scene"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+serde = { version = "1", features = ["derive"] }

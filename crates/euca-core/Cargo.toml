@@ -1,0 +1,11 @@
+[package]
+name = "euca-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+winit = "0.30"
+log = "0.4"
+env_logger = "0.11"

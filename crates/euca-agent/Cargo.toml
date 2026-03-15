@@ -1,0 +1,22 @@
+[package]
+name = "euca-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-scene = { path = "../euca-scene" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+
+[[example]]
+name = "headless_server"
+path = "../../examples/headless_server.rs"
+
+[dev-dependencies]
+env_logger = "0.11"
+reqwest = { version = "0.12", features = ["json"] }
