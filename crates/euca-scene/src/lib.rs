@@ -59,7 +59,7 @@ pub fn transform_propagation_system(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use euca_math::{Quat, Transform, Vec3};
+    use euca_math::{Transform, Vec3};
 
     fn spawn_with_transform(world: &mut World, translation: Vec3) -> Entity {
         let entity = world.spawn(LocalTransform(Transform::from_translation(translation)));

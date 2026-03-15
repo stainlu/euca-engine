@@ -101,12 +101,12 @@ mod tests {
     use super::*;
 
     struct Position {
-        x: f32,
-        y: f32,
+        _x: f32,
+        _y: f32,
     }
     struct Velocity {
-        dx: f32,
-        dy: f32,
+        _dx: f32,
+        _dy: f32,
     }
 
     #[test]

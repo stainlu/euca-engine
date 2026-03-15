@@ -68,14 +68,9 @@ mod tests {
         dy: f32,
     }
 
-    #[derive(Debug, PartialEq)]
-    struct FrameCount(u64);
-
     #[test]
     fn schedule_runs_systems_in_order() {
         let mut world = World::new();
-        let mut log = Vec::new();
-        let log_ptr = &mut log as *mut Vec<&str>;
 
         // Can't easily share state between closures without unsafe,
         // so use resources instead

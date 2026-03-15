@@ -1,6 +1,6 @@
 use euca_core::Time;
-use euca_ecs::{Entity, Query, World};
-use euca_math::{Quat, Transform, Vec3};
+use euca_ecs::{Query, World};
+use euca_math::{Transform, Vec3};
 use euca_physics::*;
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};

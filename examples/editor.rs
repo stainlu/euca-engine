@@ -1,9 +1,8 @@
 use euca_core::Time;
-use euca_ecs::{Query, World};
+use euca_ecs::World;
 use euca_editor::{EditorState, hierarchy_panel, inspector_panel, toolbar_panel};
 use euca_math::{Transform, Vec3};
-use euca_physics::*;
-use euca_render::*;
+use euca_physics::{PhysicsBody, PhysicsCollider, PhysicsWorld, physics_step_system};
 use euca_scene::{GlobalTransform, LocalTransform};
 
 use std::sync::Arc;
@@ -34,7 +33,7 @@ impl EditorApp {
         world.insert_resource(PhysicsWorld::new());
 
         // Spawn some entities for the editor to inspect
-        let spawn_obj = |w: &mut World, pos: Vec3, name: &str| {
+        let spawn_obj = |w: &mut World, pos: Vec3, _name: &str| {
             let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
             w.insert(e, GlobalTransform::default());
             w.insert(e, PhysicsBody::dynamic());
@@ -130,7 +129,7 @@ impl EditorApp {
 
         // Clear + egui render in one pass
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("editor pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
