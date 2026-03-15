@@ -110,23 +110,23 @@ fn resolve_collisions(world: &mut World) {
                     _ => {}
                 }
 
-                // Velocity reflection for dynamic bodies hitting static
-                if *type_a == RigidBodyType::Dynamic {
-                    if let Some(vel) = world.get::<Velocity>(*e_a) {
-                        let vn = vel.linear.dot(-normal);
-                        if vn > 0.0 {
-                            let reflect = vel.linear + normal * (vn * (1.0 + restitution));
-                            corrections.push((*e_a, Vec3::ZERO, reflect - vel.linear));
-                        }
+                // Velocity reflection for dynamic bodies
+                if *type_a == RigidBodyType::Dynamic
+                    && let Some(vel) = world.get::<Velocity>(*e_a)
+                {
+                    let vn = vel.linear.dot(-normal);
+                    if vn > 0.0 {
+                        let reflect = vel.linear + normal * (vn * (1.0 + restitution));
+                        corrections.push((*e_a, Vec3::ZERO, reflect - vel.linear));
                     }
                 }
-                if *type_b == RigidBodyType::Dynamic {
-                    if let Some(vel) = world.get::<Velocity>(*e_b) {
-                        let vn = vel.linear.dot(normal);
-                        if vn > 0.0 {
-                            let reflect = vel.linear + normal * (-vn * (1.0 + restitution));
-                            corrections.push((*e_b, Vec3::ZERO, reflect - vel.linear));
-                        }
+                if *type_b == RigidBodyType::Dynamic
+                    && let Some(vel) = world.get::<Velocity>(*e_b)
+                {
+                    let vn = vel.linear.dot(normal);
+                    if vn > 0.0 {
+                        let reflect = vel.linear + normal * (-vn * (1.0 + restitution));
+                        corrections.push((*e_b, Vec3::ZERO, reflect - vel.linear));
                     }
                 }
             }
@@ -135,15 +135,15 @@ fn resolve_collisions(world: &mut World) {
 
     // Apply corrections
     for (entity, pos_correction, vel_correction) in corrections {
-        if pos_correction.length_squared() > 0.0 {
-            if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
-                lt.0.translation = lt.0.translation + pos_correction;
-            }
+        if pos_correction.length_squared() > 0.0
+            && let Some(lt) = world.get_mut::<LocalTransform>(entity)
+        {
+            lt.0.translation = lt.0.translation + pos_correction;
         }
-        if vel_correction.length_squared() > 0.0 {
-            if let Some(vel) = world.get_mut::<Velocity>(entity) {
-                vel.linear = vel.linear + vel_correction;
-            }
+        if vel_correction.length_squared() > 0.0
+            && let Some(vel) = world.get_mut::<Velocity>(entity)
+        {
+            vel.linear = vel.linear + vel_correction;
         }
     }
 }
