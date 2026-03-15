@@ -88,4 +88,4 @@ External AI Agents (Claude Code, RL agents, etc.)
 
 ## License
 
-MIT OR Apache-2.0
+MIT — see [LICENSE](LICENSE)
