@@ -211,6 +211,36 @@ impl World {
         result
     }
 
+    /// Process all entities with component T in parallel using rayon.
+    ///
+    /// The closure receives `(Entity, &T)` for each entity. Read-only access.
+    /// Uses all available CPU cores for iteration.
+    pub fn par_for_each<T: Component>(&self, f: impl Fn(Entity, &T) + Send + Sync) {
+        use rayon::prelude::*;
+
+        let comp_id = match self.components.id_of::<T>() {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Collect entity + archetype/row indices, then process in parallel
+        let items: Vec<(Entity, usize, usize)> = self
+            .archetypes
+            .iter()
+            .enumerate()
+            .filter(|(_, arch)| arch.has_component(comp_id))
+            .flat_map(|(arch_idx, arch)| {
+                (0..arch.len()).map(move |row| (arch.entities[row], arch_idx, row))
+            })
+            .collect();
+
+        items.par_iter().for_each(|(entity, arch_idx, row)| {
+            // SAFETY: Each (arch_idx, row) is unique. Read-only access to distinct slots.
+            let component = unsafe { self.archetypes[*arch_idx].get::<T>(comp_id, *row) };
+            f(*entity, component);
+        });
+    }
+
     /// Get the change tick for a specific component on an entity.
     pub fn get_change_tick<T: Component>(&self, entity: Entity) -> Option<u32> {
         let loc = self.locate(entity)?;

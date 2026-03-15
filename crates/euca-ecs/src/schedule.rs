@@ -1,47 +1,84 @@
 use crate::system::{IntoSystem, System};
 use crate::world::World;
 
-/// An ordered collection of systems that execute sequentially.
+/// A stage is a group of systems that run in sequence.
+/// Multiple stages run in order. Future: systems within a stage may run in parallel.
+struct Stage {
+    systems: Vec<Box<dyn System>>,
+}
+
+/// An ordered collection of stages, each containing systems.
 ///
 /// Deterministic: given the same system order and world state,
 /// execution always produces the same result.
+///
+/// Systems added via `add_system()` go into the default stage.
+/// Use `add_stage()` and `add_system_to_stage()` for explicit ordering.
 pub struct Schedule {
-    systems: Vec<Box<dyn System>>,
+    stages: Vec<Stage>,
 }
 
 impl Schedule {
     pub fn new() -> Self {
         Self {
-            systems: Vec::new(),
+            stages: vec![Stage {
+                systems: Vec::new(),
+            }],
         }
     }
 
-    /// Add a system to the end of the schedule.
+    /// Add a system to the default (first) stage.
     pub fn add_system<S: IntoSystem + 'static>(&mut self, system: S) -> &mut Self
     where
         S::System: 'static,
     {
-        self.systems.push(Box::new(system.into_system()));
+        self.stages[0].systems.push(Box::new(system.into_system()));
         self
     }
 
-    /// Run all systems in order, then advance the world tick.
+    /// Add a new empty stage and return its index.
+    pub fn add_stage(&mut self) -> usize {
+        let idx = self.stages.len();
+        self.stages.push(Stage {
+            systems: Vec::new(),
+        });
+        idx
+    }
+
+    /// Add a system to a specific stage.
+    pub fn add_system_to_stage<S: IntoSystem + 'static>(
+        &mut self,
+        stage: usize,
+        system: S,
+    ) -> &mut Self
+    where
+        S::System: 'static,
+    {
+        self.stages[stage]
+            .systems
+            .push(Box::new(system.into_system()));
+        self
+    }
+
+    /// Run all stages in order, then advance the world tick.
     pub fn run(&mut self, world: &mut World) {
-        for system in &mut self.systems {
-            system.run(world);
+        for stage in &mut self.stages {
+            for system in &mut stage.systems {
+                system.run(world);
+            }
         }
         world.update_events();
         world.tick();
     }
 
-    /// Number of systems in this schedule.
+    /// Total number of systems across all stages.
     pub fn len(&self) -> usize {
-        self.systems.len()
+        self.stages.iter().map(|s| s.systems.len()).sum()
     }
 
-    /// Whether the schedule is empty.
+    /// Whether the schedule has no systems.
     pub fn is_empty(&self) -> bool {
-        self.systems.is_empty()
+        self.stages.iter().all(|s| s.systems.is_empty())
     }
 }
 
@@ -71,9 +108,6 @@ mod tests {
     #[test]
     fn schedule_runs_systems_in_order() {
         let mut world = World::new();
-
-        // Can't easily share state between closures without unsafe,
-        // so use resources instead
         world.insert_resource(Vec::<String>::new());
 
         let mut schedule = Schedule::new();
@@ -112,22 +146,18 @@ mod tests {
     fn movement_system_integration() {
         let mut world = World::new();
 
-        // Spawn entities with Position + Velocity
         let e1 = world.spawn(Position { x: 0.0, y: 0.0 });
         world.insert(e1, Velocity { dx: 1.0, dy: 2.0 });
 
         let e2 = world.spawn(Position { x: 10.0, y: 10.0 });
         world.insert(e2, Velocity { dx: -1.0, dy: 0.0 });
 
-        // Movement system
         let mut schedule = Schedule::new();
         schedule.add_system(|world: &mut World| {
-            // Collect entity + velocity data first (avoid borrow conflict)
             let updates: Vec<_> = {
                 let query = Query::<(crate::Entity, &Velocity)>::new(world);
                 query.iter().map(|(e, v)| (e, v.dx, v.dy)).collect()
             };
-            // Apply position changes
             for (entity, dx, dy) in updates {
                 if let Some(pos) = world.get_mut::<Position>(entity) {
                     pos.x += dx;
@@ -136,7 +166,6 @@ mod tests {
             }
         });
 
-        // Run 3 ticks
         for _ in 0..3 {
             schedule.run(&mut world);
         }
@@ -150,5 +179,58 @@ mod tests {
             &Position { x: 7.0, y: 10.0 }
         );
         assert_eq!(world.current_tick(), 3);
+    }
+
+    #[test]
+    fn stages_run_in_order() {
+        let mut world = World::new();
+        world.insert_resource(Vec::<String>::new());
+
+        let mut schedule = Schedule::new();
+
+        // Stage 0 (default)
+        schedule.add_system(|w: &mut World| {
+            w.resource_mut::<Vec<String>>().unwrap().push("S0".into());
+        });
+
+        // Stage 1
+        let s1 = schedule.add_stage();
+        schedule.add_system_to_stage(s1, |w: &mut World| {
+            w.resource_mut::<Vec<String>>().unwrap().push("S1".into());
+        });
+
+        // Stage 2
+        let s2 = schedule.add_stage();
+        schedule.add_system_to_stage(s2, |w: &mut World| {
+            w.resource_mut::<Vec<String>>().unwrap().push("S2".into());
+        });
+
+        schedule.run(&mut world);
+
+        let log = world.resource::<Vec<String>>().unwrap();
+        assert_eq!(
+            log,
+            &vec!["S0".to_string(), "S1".to_string(), "S2".to_string()]
+        );
+    }
+
+    #[test]
+    fn par_for_each_processes_all_entities() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let mut world = World::new();
+        for i in 0..100 {
+            world.spawn(Position {
+                x: i as f32,
+                y: 0.0,
+            });
+        }
+
+        let count = AtomicU32::new(0);
+        world.par_for_each::<Position>(|_entity, _pos| {
+            count.fetch_add(1, Ordering::Relaxed);
+        });
+
+        assert_eq!(count.load(Ordering::Relaxed), 100);
     }
 }
