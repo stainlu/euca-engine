@@ -16,7 +16,12 @@ pollster = "0.4"
 
 [dev-dependencies]
 env_logger = "0.11"
+euca-physics = { path = "../euca-physics" }
 
 [[example]]
 name = "hello_cubes"
 path = "../../examples/hello_cubes.rs"
+
+[[example]]
+name = "physics_demo"
+path = "../../examples/physics_demo.rs"

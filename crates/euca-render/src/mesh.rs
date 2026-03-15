@@ -17,71 +17,117 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    /// Create a unit cube centered at origin with the given base color.
-    /// Each face is tinted slightly differently for 3D depth cues.
-    pub fn cube(color: [f32; 3]) -> Self {
-        let tint = |base: [f32; 3], factor: f32| -> [f32; 3] {
-            [base[0] * factor, base[1] * factor, base[2] * factor]
-        };
-
-        let face = |pos: [[f32; 3]; 4], c: [f32; 3]| -> [Vertex; 4] {
+    /// Create a unit cube centered at origin with proper normals per face.
+    pub fn cube() -> Self {
+        let face = |positions: [[f32; 3]; 4], normal: [f32; 3]| -> [Vertex; 4] {
             [
-                Vertex { position: pos[0], color: c },
-                Vertex { position: pos[1], color: c },
-                Vertex { position: pos[2], color: c },
-                Vertex { position: pos[3], color: c },
+                Vertex { position: positions[0], normal, uv: [0.0, 0.0] },
+                Vertex { position: positions[1], normal, uv: [1.0, 0.0] },
+                Vertex { position: positions[2], normal, uv: [1.0, 1.0] },
+                Vertex { position: positions[3], normal, uv: [0.0, 1.0] },
             ]
         };
 
-        let top    = tint(color, 1.0);   // brightest
-        let front  = tint(color, 0.85);
-        let right  = tint(color, 0.7);
-        let back   = tint(color, 0.6);
-        let left   = tint(color, 0.55);
-        let bottom = tint(color, 0.4);   // darkest
-
         let mut vertices = Vec::with_capacity(24);
 
-        // Front (z = 0.5)
+        // Front (z = +0.5), normal = +Z
         vertices.extend_from_slice(&face(
             [[-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]],
-            front,
+            [0.0, 0.0, 1.0],
         ));
-        // Back (z = -0.5)
+        // Back (z = -0.5), normal = -Z
         vertices.extend_from_slice(&face(
-            [[-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5]],
-            back,
+            [[0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5]],
+            [0.0, 0.0, -1.0],
         ));
-        // Top (y = 0.5)
+        // Top (y = +0.5), normal = +Y
         vertices.extend_from_slice(&face(
-            [[-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]],
-            top,
+            [[-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5]],
+            [0.0, 1.0, 0.0],
         ));
-        // Bottom (y = -0.5)
+        // Bottom (y = -0.5), normal = -Y
         vertices.extend_from_slice(&face(
             [[-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5]],
-            bottom,
+            [0.0, -1.0, 0.0],
         ));
-        // Right (x = 0.5)
+        // Right (x = +0.5), normal = +X
         vertices.extend_from_slice(&face(
-            [[0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [0.5, -0.5, 0.5]],
-            right,
+            [[0.5, -0.5, 0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5]],
+            [1.0, 0.0, 0.0],
         ));
-        // Left (x = -0.5)
+        // Left (x = -0.5), normal = -X
         vertices.extend_from_slice(&face(
-            [[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
-            left,
+            [[-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5]],
+            [-1.0, 0.0, 0.0],
         ));
 
         let indices = vec![
             0, 1, 2, 0, 2, 3,       // front
-            4, 6, 5, 4, 7, 6,       // back
+            4, 5, 6, 4, 6, 7,       // back
             8, 9, 10, 8, 10, 11,    // top
-            12, 14, 13, 12, 15, 14, // bottom
+            12, 13, 14, 12, 14, 15, // bottom
             16, 17, 18, 16, 18, 19, // right
-            20, 22, 21, 20, 23, 22, // left
+            20, 21, 22, 20, 22, 23, // left
         ];
 
+        Self { vertices, indices }
+    }
+
+    /// Create a UV sphere with the given radius, stacks, and sectors.
+    pub fn sphere(radius: f32, stacks: u32, sectors: u32) -> Self {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        for i in 0..=stacks {
+            let phi = std::f32::consts::PI * i as f32 / stacks as f32;
+            let y = radius * phi.cos();
+            let r = radius * phi.sin();
+
+            for j in 0..=sectors {
+                let theta = 2.0 * std::f32::consts::PI * j as f32 / sectors as f32;
+                let x = r * theta.cos();
+                let z = r * theta.sin();
+
+                let nx = x / radius;
+                let ny = y / radius;
+                let nz = z / radius;
+
+                vertices.push(Vertex {
+                    position: [x, y, z],
+                    normal: [nx, ny, nz],
+                    uv: [j as f32 / sectors as f32, i as f32 / stacks as f32],
+                });
+            }
+        }
+
+        for i in 0..stacks {
+            for j in 0..sectors {
+                let a = i * (sectors + 1) + j;
+                let b = a + sectors + 1;
+
+                indices.push(a);
+                indices.push(b);
+                indices.push(a + 1);
+
+                indices.push(a + 1);
+                indices.push(b);
+                indices.push(b + 1);
+            }
+        }
+
+        Self { vertices, indices }
+    }
+
+    /// Create a flat plane (quad) on the XZ plane centered at origin.
+    pub fn plane(size: f32) -> Self {
+        let h = size / 2.0;
+        let vertices = vec![
+            Vertex { position: [-h, 0.0, -h], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
+            Vertex { position: [ h, 0.0, -h], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
+            Vertex { position: [ h, 0.0,  h], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
+            Vertex { position: [-h, 0.0,  h], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
+        ];
+        let indices = vec![0, 1, 2, 0, 2, 3];
         Self { vertices, indices }
     }
 }

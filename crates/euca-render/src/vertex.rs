@@ -1,11 +1,12 @@
 use bytemuck::{Pod, Zeroable};
 
-/// A vertex with position and color.
+/// A vertex with position, normal, and UV coordinates.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
-    pub color: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 impl Vertex {
@@ -19,11 +20,17 @@ impl Vertex {
                 offset: 0,
                 shader_location: 0,
             },
-            // color
+            // normal
             wgpu::VertexAttribute {
                 format: wgpu::VertexFormat::Float32x3,
                 offset: 12,
                 shader_location: 1,
+            },
+            // uv
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 24,
+                shader_location: 2,
             },
         ],
     };
