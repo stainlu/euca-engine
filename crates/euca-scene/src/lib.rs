@@ -4,9 +4,11 @@ mod transform;
 pub use hierarchy::{Children, Parent};
 pub use transform::{GlobalTransform, LocalTransform};
 
+use std::collections::VecDeque;
+
 use euca_ecs::{Entity, Query, World};
 
-/// Propagate transforms through the parent/child hierarchy.
+/// Propagate transforms through the parent/child hierarchy (BFS).
 ///
 /// For each entity with a `Parent`, its `GlobalTransform` is computed as:
 /// `parent.global_transform * self.local_transform`
@@ -25,18 +27,17 @@ pub fn transform_propagation_system(world: &mut World) {
         }
     }
 
-    // Second pass: propagate through children (BFS)
-    let mut queue: Vec<(Entity, euca_math::Transform)> = Vec::new();
+    // Second pass: propagate through children (proper BFS with VecDeque)
+    let mut queue: VecDeque<(Entity, euca_math::Transform)> = VecDeque::new();
     for (entity, local) in roots {
         if let Some(children) = world.get::<Children>(entity) {
-            let global = local; // Root's global = local
             for &child in &children.0 {
-                queue.push((child, global));
+                queue.push_back((child, local));
             }
         }
     }
 
-    while let Some((entity, parent_global)) = queue.pop() {
+    while let Some((entity, parent_global)) = queue.pop_front() {
         let local = world
             .get::<LocalTransform>(entity)
             .map(|lt| lt.0)
@@ -50,7 +51,7 @@ pub fn transform_propagation_system(world: &mut World) {
 
         if let Some(children) = world.get::<Children>(entity) {
             for &child in &children.0 {
-                queue.push((child, global));
+                queue.push_back((child, global));
             }
         }
     }

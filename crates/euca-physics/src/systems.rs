@@ -5,11 +5,48 @@ use euca_scene::LocalTransform;
 use crate::components;
 use crate::world::PhysicsWorld;
 
-/// Main physics system: register new bodies, step simulation, write back transforms.
+/// Main physics system: cleanup despawned, register new bodies, step, write back.
 pub fn physics_step_system(world: &mut World) {
+    cleanup_despawned_bodies(world);
     register_new_bodies(world);
     step_simulation(world);
     write_back_transforms(world);
+}
+
+/// Remove Rapier bodies for entities that no longer exist in the ECS world.
+fn cleanup_despawned_bodies(world: &mut World) {
+    // Collect stale entity keys first (read-only access to physics)
+    let stale: Vec<Entity> = {
+        let physics = match world.resource::<PhysicsWorld>() {
+            Some(p) => p,
+            None => return,
+        };
+        physics
+            .entity_to_body
+            .keys()
+            .filter(|e| !world.is_alive(**e))
+            .copied()
+            .collect()
+    };
+
+    if stale.is_empty() {
+        return;
+    }
+
+    // Now mutably remove the bodies
+    let physics = world.resource_mut::<PhysicsWorld>().unwrap();
+    for entity in stale {
+        if let Some(body_handle) = physics.entity_to_body.remove(&entity) {
+            physics.bodies.remove(
+                body_handle,
+                &mut physics.island_manager,
+                &mut physics.colliders,
+                &mut physics.impulse_joints,
+                &mut physics.multibody_joints,
+                false,
+            );
+        }
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -229,6 +266,45 @@ mod tests {
             lt.0.translation.y < 3.0,
             "Cube should have fallen, y={}",
             lt.0.translation.y
+        );
+    }
+
+    #[test]
+    fn despawned_bodies_are_cleaned_up() {
+        let mut world = World::new();
+        world.insert_resource(PhysicsWorld::new());
+
+        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 5.0, 0.0,
+        ))));
+        world.insert(entity, GlobalTransform::default());
+        world.insert(entity, components::PhysicsBody::dynamic());
+        world.insert(entity, components::PhysicsCollider::cuboid(0.5, 0.5, 0.5));
+
+        // Register the body
+        physics_step_system(&mut world);
+        assert_eq!(
+            world
+                .resource::<PhysicsWorld>()
+                .unwrap()
+                .entity_to_body
+                .len(),
+            1
+        );
+
+        // Despawn the entity
+        world.despawn(entity);
+
+        // Run physics again — should clean up the Rapier body
+        physics_step_system(&mut world);
+        assert_eq!(
+            world
+                .resource::<PhysicsWorld>()
+                .unwrap()
+                .entity_to_body
+                .len(),
+            0,
+            "Rapier body should be removed after entity despawn"
         );
     }
 }
