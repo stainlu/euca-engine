@@ -203,16 +203,18 @@ Any external AI agent (Claude Code, RL agent, custom bot) can control the engine
 ```
 eucaengine/
 ├── crates/
-│   ├── euca-ecs/          # Custom archetype-based ECS (43 tests)
-│   ├── euca-math/         # Math types: Vec2/3/4, Quat, Mat4, Transform (23 tests)
+│   ├── euca-ecs/          # Custom archetype-based ECS (51 tests)
+│   ├── euca-math/         # Custom SIMD-ready math (26 tests, zero deps)
 │   ├── euca-reflect/      # #[derive(Reflect)] proc macro
-│   ├── euca-scene/        # Transform hierarchy + propagation (3 tests)
+│   ├── euca-scene/        # Transform hierarchy + BFS propagation (3 tests)
 │   ├── euca-core/         # App lifecycle, Plugin, Time (1 test)
 │   ├── euca-render/       # wgpu PBR renderer (8 tests)
-│   ├── euca-physics/      # Rapier3D integration (3 tests)
+│   ├── euca-physics/      # Custom collision + raycasting (12 tests, zero deps)
 │   ├── euca-asset/        # glTF 2.0 model loading (1 test)
+│   ├── euca-input/        # InputState, ActionMap, InputSnapshot (4 tests)
+│   ├── euca-net/          # Raw UDP networking (11 tests, zero async deps)
 │   ├── euca-agent/        # HTTP API server for AI agents
-│   └── euca-editor/       # egui visual editor (4 tests)
+│   └── euca-editor/       # egui editor with 3D viewport (4 tests)
 ├── tools/
 │   └── euca-cli/          # CLI tool (euca observe, step, spawn, etc.)
 ├── examples/

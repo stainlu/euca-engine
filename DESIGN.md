@@ -42,19 +42,19 @@ External AI Agents (Claude Code, RL agents, etc.)
 
 | Crate | Purpose | Status | Tests |
 |-------|---------|--------|-------|
-| `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query, Resource, Event, Command, System, Schedule | Done | 43 |
-| `euca-math` | Vec2/3/4, Quat, Mat4, Transform, AABB (wraps glam) | Done | 23 |
+| `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query, Resource, Event, Command, Schedule, Snapshot, Change Detection, par_for_each | Done | 51 |
+| `euca-math` | Custom SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) | Done | 26 |
 | `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info | Done | 1 |
-| `euca-scene` | Transform hierarchy, Parent/Children propagation | Done | 3 |
+| `euca-scene` | Transform hierarchy, Parent/Children BFS propagation | Done | 3 |
 | `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
 | `euca-render` | wgpu PBR renderer (Cook-Torrance BRDF, materials, lights) | Done | 8 |
-| `euca-physics` | Rapier3D integration (RigidBody, Collider, step system, despawn cleanup) | Done | 4 |
+| `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero deps) | Done | 12 |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
 | `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 0 |
-| `euca-editor` | egui-based visual editor (hierarchy, inspector, play/pause) | Done | 4 |
+| `euca-editor` | egui editor with 3D viewport, hierarchy, inspector, play/pause/stop | Done | 4 |
+| `euca-input` | InputState, ActionMap, InputSnapshot for humans + AI agents | Done | 4 |
+| `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, protocol | Done | 11 |
 | `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) | Done | 0 |
-| `euca-audio` | Spatial audio via cpal | Planned | — |
-| `euca-net` | Multiplayer state replication via QUIC (quinn) | Planned | — |
 
 ## Dependency DAG
 
@@ -63,7 +63,7 @@ euca-reflect-derive (proc-macro, no deps)
        │
 euca-reflect (re-exports derive)
        │
-euca-math (glam, serde)
+euca-math (serde — zero external math deps)
        │
 euca-ecs (euca-reflect, euca-math, serde)
        │
@@ -205,3 +205,12 @@ POST /reset                        → reset to initial state
 | 2026-03-15 | — | Open-sourced under MIT license |
 | 2026-03-15 | — | REVIEW.md: first-principles assessment, roadmap |
 | 2026-03-15 | 7 | Fix: physics body leak on despawn, transform BFS propagation |
+| 2026-03-15 | 7 | ECS: tick-based change detection, World::changed_entities, World::par_for_each |
+| 2026-03-15 | 7 | Schedule: system stages (add_stage, add_system_to_stage) |
+| 2026-03-15 | 7 | euca-input: InputState, ActionMap, InputSnapshot for networking |
+| 2026-03-15 | 7 | euca-net: GameServer, GameClient, protocol (bincode serialization) |
+| 2026-03-15 | 7 | ECS: WorldSnapshot (bincode + JSON serialization) |
+| 2026-03-15 | 7 | Benchmarks: criterion (spawn, query, get, despawn, par_for_each, tick) |
+| 2026-03-16 | 8 | GHOSTTY REFACTOR: removed glam → custom SIMD-ready math from scratch |
+| 2026-03-16 | 8 | GHOSTTY REFACTOR: removed rapier3d/nalgebra → custom AABB/sphere/raycast physics |
+| 2026-03-16 | 8 | GHOSTTY REFACTOR: removed quinn/rustls/tokio(net) → raw UDP with PacketHeader |

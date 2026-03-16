@@ -36,16 +36,18 @@ cargo test --workspace
 
 | Crate | Purpose |
 |-------|---------|
-| `euca-ecs` | Custom archetype-based ECS (Entity, Component, World, Query, Schedule) |
-| `euca-math` | Math types wrapping glam (Vec2/3/4, Quat, Mat4, Transform, AABB) |
+| `euca-ecs` | Custom archetype-based ECS (Entity, Component, World, Query, Schedule, Change Detection, Snapshots, par_for_each) |
+| `euca-math` | Custom SIMD-ready math — Vec2/3/4, Quat, Mat4, Transform, AABB (zero external deps) |
 | `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info |
-| `euca-scene` | Transform hierarchy (LocalTransform, GlobalTransform, Parent/Children) |
+| `euca-scene` | Transform hierarchy (LocalTransform, GlobalTransform, Parent/Children BFS propagation) |
 | `euca-core` | App lifecycle, Plugin trait, Time resource, winit event loop |
 | `euca-render` | wgpu PBR renderer (Cook-Torrance BRDF, materials, lights, meshes) |
-| `euca-physics` | Rapier3D integration (RigidBody, Collider, physics step system) |
+| `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero external deps) |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) |
+| `euca-input` | InputState, ActionMap, InputSnapshot (humans + AI agents) |
+| `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, state replication protocol |
 | `euca-agent` | HTTP API server for external AI agents (axum + tokio) |
-| `euca-editor` | egui-based visual editor (hierarchy, inspector, play/pause) |
+| `euca-editor` | egui editor with 3D viewport, hierarchy, inspector, play/pause/stop |
 | `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) |
 
 ## Agent Interface
