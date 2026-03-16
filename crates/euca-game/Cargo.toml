@@ -1,0 +1,26 @@
+[package]
+name = "euca-game"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-scene = { path = "../euca-scene" }
+euca-physics = { path = "../euca-physics" }
+euca-render = { path = "../euca-render" }
+euca-net = { path = "../euca-net" }
+euca-input = { path = "../euca-input" }
+euca-core = { path = "../euca-core" }
+winit = "0.30"
+log = "0.4"
+env_logger = "0.11"
+bincode = "1"
+
+[[example]]
+name = "server"
+path = "../../examples/server.rs"
+
+[[example]]
+name = "client"
+path = "../../examples/client.rs"
