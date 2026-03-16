@@ -158,9 +158,7 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
                     });
                 });
 
-                if changed
-                    && let Some(lt) = world.get_mut::<LocalTransform>(entity)
-                {
+                if changed && let Some(lt) = world.get_mut::<LocalTransform>(entity) {
                     lt.0.translation = euca_math::Vec3::new(pos[0], pos[1], pos[2]);
                     lt.0.scale = euca_math::Vec3::new(scl[0], scl[1], scl[2]);
                 }
