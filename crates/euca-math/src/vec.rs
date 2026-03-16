@@ -205,6 +205,28 @@ impl Vec3 {
             z: self.z.max(rhs.z),
         }
     }
+
+    /// Find the parameter t on a line (line_origin + line_dir * t) at the point
+    /// closest to a ray (ray_origin + ray_dir * s). Returns t.
+    /// Used for projecting mouse rays onto gizmo axes.
+    pub fn closest_line_param(
+        line_origin: Vec3,
+        line_dir: Vec3,
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+    ) -> f32 {
+        let w0 = line_origin - ray_origin;
+        let a = line_dir.dot(line_dir);
+        let b = line_dir.dot(ray_dir);
+        let c = ray_dir.dot(ray_dir);
+        let d = line_dir.dot(w0);
+        let e = ray_dir.dot(w0);
+        let denom = a * c - b * b;
+        if denom.abs() < 1e-10 {
+            return 0.0; // parallel lines
+        }
+        (b * e - c * d) / denom
+    }
 }
 
 impl Add for Vec3 {
@@ -420,5 +442,24 @@ mod tests {
         let a = Vec4::new(1.0, 2.0, 3.0, 4.0);
         let b = Vec4::new(5.0, 6.0, 7.0, 8.0);
         assert_eq!(a.dot(b), 70.0);
+    }
+
+    #[test]
+    fn closest_line_param_perpendicular() {
+        // Line along X at y=1, ray along Y at x=2
+        let t = Vec3::closest_line_param(
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::X,
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::Y,
+        );
+        assert!((t - 2.0).abs() < 1e-6, "Expected t=2.0, got {t}");
+    }
+
+    #[test]
+    fn closest_line_param_parallel() {
+        // Parallel lines should return 0.0
+        let t = Vec3::closest_line_param(Vec3::ZERO, Vec3::X, Vec3::new(0.0, 1.0, 0.0), Vec3::X);
+        assert_eq!(t, 0.0);
     }
 }

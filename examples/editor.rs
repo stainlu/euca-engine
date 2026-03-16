@@ -1,8 +1,8 @@
 use euca_core::Time;
 use euca_ecs::{Query, World};
 use euca_editor::{
-    EditorState, SceneFile, SpawnRequest, ToolbarAction, hierarchy_panel, inspector_panel,
-    toolbar_panel,
+    EditorState, SceneFile, SpawnRequest, ToolbarAction, find_alive_entity, hierarchy_panel,
+    inspector_panel, toolbar_panel,
 };
 use euca_math::{Transform, Vec3};
 use euca_physics::{
@@ -41,6 +41,9 @@ struct EditorApp {
     cube_mesh: Option<MeshHandle>,
     sphere_mesh: Option<MeshHandle>,
     default_material: Option<MaterialHandle>,
+    // Modifier key tracking
+    ctrl_held: bool,
+    shift_held: bool,
 }
 
 impl EditorApp {
@@ -81,6 +84,8 @@ impl EditorApp {
             cube_mesh: None,
             sphere_mesh: None,
             default_material: None,
+            ctrl_held: false,
+            shift_held: false,
         }
     }
 
@@ -93,6 +98,9 @@ impl EditorApp {
         let plane = renderer.upload_mesh(gpu, &Mesh::plane(20.0));
         self.cube_mesh = Some(cube);
         self.sphere_mesh = Some(sphere);
+
+        // Initialize gizmo (reuses cube mesh, uploads bright R/G/B materials)
+        self.editor_state.gizmo = euca_editor::gizmo::init_gizmo(renderer, gpu, cube);
 
         // Grid texture for ground (dark lines on lighter background)
         let grid_tex = renderer.checkerboard_texture(gpu, 512, 32);
@@ -313,6 +321,21 @@ impl EditorApp {
                 }
             }
 
+            // Gizmo: draw axis handles on selected entity
+            if let Some(sel_idx) = self.editor_state.selected_entity {
+                if let Some(entity) = find_alive_entity(&self.world, sel_idx) {
+                    if let Some(gt) = self.world.get::<GlobalTransform>(entity) {
+                        let camera = self.world.resource::<Camera>().unwrap();
+                        let gizmo_cmds = euca_editor::gizmo::gizmo_draw_commands(
+                            gt.0.translation,
+                            camera.eye,
+                            &self.editor_state.gizmo,
+                        );
+                        draw_commands.extend(gizmo_cmds);
+                    }
+                }
+            }
+
             let light = {
                 let query = Query::<&DirectionalLight>::new(&self.world);
                 query.iter().next().cloned().unwrap_or_default()
@@ -434,6 +457,12 @@ impl EditorApp {
                 SpawnRequest::Empty => {}
             }
             self.editor_state.selected_entity = Some(e.index());
+            // Track spawn for undo
+            self.editor_state
+                .undo
+                .push(euca_editor::undo::UndoAction::SpawnEntity {
+                    entity_index: e.index(),
+                });
         }
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
@@ -550,14 +579,28 @@ impl ApplicationHandler for EditorApp {
                     },
                 ..
             } => {
-                // Delete selected entity
+                // Delete selected entity (with undo support)
                 if let Some(idx) = self.editor_state.selected_entity {
-                    for g in 0..16u32 {
-                        let e = euca_ecs::Entity::from_raw(idx, g);
-                        if self.world.is_alive(e) {
-                            self.world.despawn(e);
-                            break;
-                        }
+                    if let Some(e) = find_alive_entity(&self.world, idx) {
+                        // Capture state before despawn
+                        let transform = self
+                            .world
+                            .get::<LocalTransform>(e)
+                            .map(|lt| lt.0)
+                            .unwrap_or_default();
+                        let mesh = self.world.get::<MeshRenderer>(e).map(|mr| mr.mesh);
+                        let material = self.world.get::<MaterialRef>(e).map(|mr| mr.handle);
+                        let collider = self.world.get::<Collider>(e).cloned();
+                        self.world.despawn(e);
+                        self.editor_state
+                            .undo
+                            .push(euca_editor::undo::UndoAction::DespawnEntity {
+                                entity_index: idx,
+                                transform,
+                                mesh,
+                                material,
+                                collider,
+                            });
                     }
                     self.editor_state.selected_entity = None;
                 }
@@ -573,17 +616,41 @@ impl ApplicationHandler for EditorApp {
             } if ch.as_str() == "f" || ch.as_str() == "F" => {
                 // Focus camera on selected entity
                 if let Some(idx) = self.editor_state.selected_entity {
-                    for g in 0..16u32 {
-                        let e = euca_ecs::Entity::from_raw(idx, g);
-                        if self.world.is_alive(e) {
-                            if let Some(gt) = self.world.get::<GlobalTransform>(e) {
-                                self.cam_target = gt.0.translation;
-                                self.cam_distance = 5.0;
-                            }
-                            break;
+                    if let Some(e) = find_alive_entity(&self.world, idx) {
+                        if let Some(gt) = self.world.get::<GlobalTransform>(e) {
+                            self.cam_target = gt.0.translation;
+                            self.cam_distance = 5.0;
                         }
                     }
                 }
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(ref ch),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if ch.as_str() == "z" && self.ctrl_held && !self.shift_held => {
+                self.editor_state.undo.undo(&mut self.world);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(ref ch),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if (ch.as_str() == "y" && self.ctrl_held)
+                || (ch.as_str() == "z" && self.ctrl_held && self.shift_held) =>
+            {
+                self.editor_state.undo.redo(&mut self.world);
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.ctrl_held = modifiers.state().control_key();
+                self.shift_held = modifiers.state().shift_key();
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
@@ -606,13 +673,23 @@ impl ApplicationHandler for EditorApp {
                     new_pos[1] - self.mouse_pos[1],
                 ];
                 self.mouse_pos = new_pos;
+
+                // Update gizmo drag if active
+                if self.editor_state.gizmo.active_drag.is_some() {
+                    self.update_gizmo_drag();
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let pressed = state == ElementState::Pressed;
                 match button {
                     winit::event::MouseButton::Left => {
                         if pressed {
-                            self.pick_entity_at_cursor();
+                            // Try gizmo pick first; fall through to entity pick
+                            if !self.try_begin_gizmo_drag() {
+                                self.pick_entity_at_cursor();
+                            }
+                        } else {
+                            self.end_gizmo_drag();
                         }
                     }
                     winit::event::MouseButton::Right => {
@@ -675,6 +752,112 @@ impl EditorApp {
         }
 
         self.editor_state.selected_entity = closest.map(|(e, _)| e.index());
+    }
+
+    /// Try to begin a gizmo drag. Returns true if a gizmo axis was hit.
+    fn try_begin_gizmo_drag(&mut self) -> bool {
+        let sel_idx = match self.editor_state.selected_entity {
+            Some(idx) => idx,
+            None => return false,
+        };
+        let entity = match find_alive_entity(&self.world, sel_idx) {
+            Some(e) => e,
+            None => return false,
+        };
+        let entity_pos = match self.world.get::<GlobalTransform>(entity) {
+            Some(gt) => gt.0.translation,
+            None => return false,
+        };
+        let gpu = match &self.gpu {
+            Some(g) => g,
+            None => return false,
+        };
+        let camera = match self.world.resource::<Camera>() {
+            Some(c) => c.clone(),
+            None => return false,
+        };
+
+        let screen_w = gpu.surface_config.width as f32;
+        let screen_h = gpu.surface_config.height as f32;
+        let (ray_origin, ray_dir) =
+            camera.screen_to_ray(self.mouse_pos[0], self.mouse_pos[1], screen_w, screen_h);
+        let ray = Ray::new(ray_origin, ray_dir);
+
+        if let Some((axis, _t)) = euca_editor::gizmo::pick_gizmo_axis(&ray, entity_pos, camera.eye)
+        {
+            // Compute grab point on the axis line
+            let axis_dir = axis.direction();
+            let grab_t =
+                Vec3::closest_line_param(entity_pos, axis_dir, ray_origin, ray_dir.normalize());
+            let grab_point = entity_pos + axis_dir * grab_t;
+
+            let current_transform = self
+                .world
+                .get::<LocalTransform>(entity)
+                .map(|lt| lt.0)
+                .unwrap_or_default();
+
+            self.editor_state.gizmo.active_drag = Some(euca_editor::gizmo::GizmoDrag {
+                axis,
+                entity_index: sel_idx,
+                start_position: entity_pos,
+                grab_point,
+            });
+
+            // Begin undo tracking for this drag
+            self.editor_state
+                .undo
+                .begin_drag(sel_idx, current_transform);
+
+            return true;
+        }
+
+        false
+    }
+
+    /// End an active gizmo drag and commit the undo action.
+    fn end_gizmo_drag(&mut self) {
+        if let Some(drag) = self.editor_state.gizmo.active_drag.take() {
+            if let Some(entity) = find_alive_entity(&self.world, drag.entity_index) {
+                let current = self
+                    .world
+                    .get::<LocalTransform>(entity)
+                    .map(|lt| lt.0)
+                    .unwrap_or_default();
+                self.editor_state.undo.end_drag(current);
+            } else {
+                self.editor_state.undo.cancel_drag();
+            }
+        }
+    }
+
+    /// Update entity position during an active gizmo drag.
+    fn update_gizmo_drag(&mut self) {
+        let drag = match &self.editor_state.gizmo.active_drag {
+            Some(d) => d.clone(),
+            None => return,
+        };
+        let gpu = match &self.gpu {
+            Some(g) => g,
+            None => return,
+        };
+        let camera = match self.world.resource::<Camera>() {
+            Some(c) => c.clone(),
+            None => return,
+        };
+
+        let screen_w = gpu.surface_config.width as f32;
+        let screen_h = gpu.surface_config.height as f32;
+        let (ray_origin, ray_dir) =
+            camera.screen_to_ray(self.mouse_pos[0], self.mouse_pos[1], screen_w, screen_h);
+
+        let new_pos = euca_editor::gizmo::update_gizmo_drag(&drag, ray_origin, ray_dir.normalize());
+
+        if let Some(entity) = find_alive_entity(&self.world, drag.entity_index) {
+            if let Some(lt) = self.world.get_mut::<LocalTransform>(entity) {
+                lt.0.translation = new_pos;
+            }
+        }
     }
 }
 

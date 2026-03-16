@@ -254,14 +254,6 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
         });
 }
 
-/// Try to find a living entity with the given index.
 fn find_alive_entity(world: &World, index: u32) -> Option<Entity> {
-    // Try common generations
-    for g in 0..16 {
-        let e = Entity::from_raw(index, g);
-        if world.is_alive(e) {
-            return Some(e);
-        }
-    }
-    None
+    crate::find_alive_entity(world, index)
 }

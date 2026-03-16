@@ -1,10 +1,14 @@
+pub mod gizmo;
 mod panels;
 mod scene_file;
+pub mod undo;
 
+pub use gizmo::GizmoState;
 pub use panels::{SpawnRequest, ToolbarAction, hierarchy_panel, inspector_panel, toolbar_panel};
 pub use scene_file::{SceneEntity, SceneFile, load_scene_into_world};
+pub use undo::UndoHistory;
 
-/// Editor state: tracks selection, play/pause, etc.
+/// Editor state: tracks selection, play/pause, gizmo, undo history.
 pub struct EditorState {
     /// Currently selected entity index (if any).
     pub selected_entity: Option<u32>,
@@ -14,6 +18,10 @@ pub struct EditorState {
     pub step_once: bool,
     /// Whether a reset was requested (stop + restore initial scene).
     pub reset_requested: bool,
+    /// Transform gizmo state.
+    pub gizmo: GizmoState,
+    /// Undo/redo history.
+    pub undo: UndoHistory,
 }
 
 impl EditorState {
@@ -23,6 +31,8 @@ impl EditorState {
             playing: false,
             step_once: false,
             reset_requested: false,
+            gizmo: GizmoState::new(),
+            undo: UndoHistory::new(),
         }
     }
 
@@ -45,6 +55,17 @@ impl Default for EditorState {
     }
 }
 
+/// Try to find a living entity with the given index (checks generations 0..16).
+pub fn find_alive_entity(world: &euca_ecs::World, index: u32) -> Option<euca_ecs::Entity> {
+    for g in 0..16 {
+        let e = euca_ecs::Entity::from_raw(index, g);
+        if world.is_alive(e) {
+            return Some(e);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,15 +82,15 @@ mod tests {
         let mut state = EditorState::new();
         state.playing = true;
         assert!(state.should_tick());
-        assert!(state.should_tick()); // continues ticking
+        assert!(state.should_tick());
     }
 
     #[test]
     fn should_tick_once_on_step() {
         let mut state = EditorState::new();
         state.step_once = true;
-        assert!(state.should_tick()); // first call returns true
-        assert!(!state.should_tick()); // second call returns false (step consumed)
+        assert!(state.should_tick());
+        assert!(!state.should_tick());
     }
 
     #[test]
