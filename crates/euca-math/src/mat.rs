@@ -18,6 +18,7 @@ impl Default for Mat4 {
 }
 
 impl Mat4 {
+    /// The identity matrix.
     pub const IDENTITY: Self = Self {
         cols: [
             [1.0, 0.0, 0.0, 0.0],
@@ -27,10 +28,12 @@ impl Mat4 {
         ],
     };
 
+    /// All zeros.
     pub const ZERO: Self = Self {
         cols: [[0.0; 4]; 4],
     };
 
+    /// Returns column `i` as a 4-element array.
     #[inline(always)]
     pub fn col(&self, i: usize) -> [f32; 4] {
         self.cols[i]
@@ -42,6 +45,7 @@ impl Mat4 {
         self.cols[col][row]
     }
 
+    /// Creates a translation matrix from a 3D offset.
     pub fn from_translation(t: Vec3) -> Self {
         let mut m = Self::IDENTITY;
         m.cols[3][0] = t.x;
@@ -50,6 +54,7 @@ impl Mat4 {
         m
     }
 
+    /// Creates a non-uniform scale matrix.
     pub fn from_scale(s: Vec3) -> Self {
         let mut m = Self::IDENTITY;
         m.cols[0][0] = s.x;
@@ -58,6 +63,7 @@ impl Mat4 {
         m
     }
 
+    /// Creates a rotation matrix from a unit quaternion.
     pub fn from_rotation(q: Quat) -> Self {
         let x2 = q.x + q.x;
         let y2 = q.y + q.y;
@@ -82,6 +88,7 @@ impl Mat4 {
         }
     }
 
+    /// Creates a combined scale-rotation-translation matrix.
     pub fn from_scale_rotation_translation(s: Vec3, r: Quat, t: Vec3) -> Self {
         let rot = Self::from_rotation(r);
         Self {
@@ -136,6 +143,7 @@ impl Mat4 {
         }
     }
 
+    /// Perspective projection (left-handed, depth 0..1).
     pub fn perspective_lh(fov_y_radians: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
         let h = 1.0 / (fov_y_radians * 0.5).tan();
         let w = h / aspect;
@@ -151,6 +159,7 @@ impl Mat4 {
         }
     }
 
+    /// Left-handed look-at view matrix.
     pub fn look_at_lh(eye: Vec3, target: Vec3, up: Vec3) -> Self {
         let f = (target - eye).normalize();
         let s = up.cross(f).normalize();
@@ -166,6 +175,7 @@ impl Mat4 {
         }
     }
 
+    /// Computes the matrix inverse via cofactor expansion.
     pub fn inverse(self) -> Self {
         // Cofactor expansion for 4x4 inverse
         let m = &self.cols;
@@ -225,6 +235,7 @@ impl Mat4 {
         }
     }
 
+    /// Returns the transpose of this matrix.
     pub fn transpose(self) -> Self {
         let m = &self.cols;
         Self {

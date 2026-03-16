@@ -48,6 +48,7 @@ pub(crate) struct EntityAllocator {
 }
 
 impl EntityAllocator {
+    /// Creates an allocator with no entities.
     pub fn new() -> Self {
         Self {
             generations: Vec::new(),

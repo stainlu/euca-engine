@@ -33,6 +33,7 @@ pub struct Events {
 }
 
 impl Events {
+    /// Creates an empty event manager.
     pub fn new() -> Self {
         Self {
             buffers: HashMap::new(),

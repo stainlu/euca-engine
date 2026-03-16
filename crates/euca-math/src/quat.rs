@@ -20,6 +20,7 @@ impl Default for Quat {
 }
 
 impl Quat {
+    /// The identity quaternion (no rotation).
     pub const IDENTITY: Self = Self {
         x: 0.0,
         y: 0.0,
@@ -27,6 +28,7 @@ impl Quat {
         w: 1.0,
     };
 
+    /// Creates a quaternion from raw x, y, z, w components.
     #[inline(always)]
     pub const fn from_xyzw(x: f32, y: f32, z: f32, w: f32) -> Self {
         Self { x, y, z, w }
@@ -62,11 +64,13 @@ impl Quat {
         }
     }
 
+    /// Returns the length (norm) of the quaternion.
     #[inline(always)]
     pub fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z + self.w * self.w).sqrt()
     }
 
+    /// Returns a unit-length quaternion in the same direction.
     #[inline]
     pub fn normalize(self) -> Self {
         let inv = 1.0 / self.length();
@@ -78,6 +82,7 @@ impl Quat {
         }
     }
 
+    /// Returns the conjugate (inverse for unit quaternions).
     #[inline]
     pub fn inverse(self) -> Self {
         Self {

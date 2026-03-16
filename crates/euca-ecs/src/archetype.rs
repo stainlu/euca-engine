@@ -228,16 +228,19 @@ impl Archetype {
         }
     }
 
+    /// Returns the number of entities in this archetype.
     #[inline]
     pub fn len(&self) -> usize {
         self.entities.len()
     }
 
+    /// Returns `true` if this archetype contains no entities.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
     }
 
+    /// Returns `true` if this archetype includes the given component type.
     #[inline]
     pub fn has_component(&self, id: ComponentId) -> bool {
         self.component_ids.binary_search(&id).is_ok()

@@ -63,6 +63,7 @@ pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
 }
 
 impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
+    /// Create a new query bound to the given world.
     pub fn new(world: &'w World) -> Self {
         Self {
             world,

@@ -25,6 +25,7 @@ pub struct World {
 }
 
 impl World {
+    /// Creates an empty world with no entities, components, or resources.
     pub fn new() -> Self {
         Self {
             entities: EntityAllocator::new(),
@@ -38,14 +39,17 @@ impl World {
         }
     }
 
+    /// Register a component type, returning its ID. Idempotent.
     pub fn register<T: Component>(&mut self) -> ComponentId {
         self.components.register::<T>()
     }
 
+    /// Look up the ID of a previously registered component type.
     pub fn component_id<T: Component>(&self) -> Option<ComponentId> {
         self.components.id_of::<T>()
     }
 
+    /// Spawn a new entity with no components.
     pub fn spawn_empty(&mut self) -> Entity {
         let entity = self.entities.allocate();
         let arch_id = self.get_or_create_archetype(&[]);
@@ -55,6 +59,7 @@ impl World {
         entity
     }
 
+    /// Spawn a new entity with a single component.
     pub fn spawn<T: Component>(&mut self, component: T) -> Entity {
         let entity = self.entities.allocate();
         let comp_id = self.components.register::<T>();
@@ -72,6 +77,7 @@ impl World {
         entity
     }
 
+    /// Destroy an entity and drop all its components. Returns `false` if already dead.
     pub fn despawn(&mut self, entity: Entity) -> bool {
         if !self.entities.is_alive(entity) {
             return false;
@@ -94,11 +100,13 @@ impl World {
         true
     }
 
+    /// Returns `true` if the entity handle is still valid.
     #[inline]
     pub fn is_alive(&self, entity: Entity) -> bool {
         self.entities.is_alive(entity)
     }
 
+    /// Get an immutable reference to a component on an entity.
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&T> {
         let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
@@ -109,6 +117,7 @@ impl World {
         Some(unsafe { arch.get::<T>(comp_id, loc.row) })
     }
 
+    /// Get a mutable reference to a component, marking it as changed at the current tick.
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
         let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
@@ -121,6 +130,7 @@ impl World {
         Some(unsafe { arch.get_mut::<T>(comp_id, loc.row) })
     }
 
+    /// Add or overwrite a component on an entity. Returns `false` if the entity is dead.
     pub fn insert<T: Component>(&mut self, entity: Entity, component: T) -> bool {
         let loc = match self.locate(entity) {
             Some(loc) => loc,
@@ -153,6 +163,7 @@ impl World {
         true
     }
 
+    /// Remove a component from an entity, returning it if present.
     pub fn remove<T: Component>(&mut self, entity: Entity) -> Option<T> {
         let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
@@ -175,16 +186,19 @@ impl World {
         Some(value)
     }
 
+    /// Returns the number of currently alive entities.
     #[inline]
     pub fn entity_count(&self) -> u32 {
         self.entities.alive_count()
     }
 
+    /// Returns the number of distinct archetypes in the world.
     #[inline]
     pub fn archetype_count(&self) -> usize {
         self.archetypes.len()
     }
 
+    /// Advance the world tick counter by one.
     pub fn tick(&mut self) {
         self.tick += 1;
     }
@@ -252,6 +266,7 @@ impl World {
         Some(arch.get_change_tick(comp_id, loc.row))
     }
 
+    /// Returns the current world tick.
     #[inline]
     pub fn current_tick(&self) -> u64 {
         self.tick
@@ -259,32 +274,39 @@ impl World {
 
     // ── Resources ──
 
+    /// Insert a singleton resource into the world. Overwrites if already present.
     pub fn insert_resource<T: Send + Sync + 'static>(&mut self, value: T) {
         self.resources.insert(value);
     }
 
+    /// Get an immutable reference to a resource.
     pub fn resource<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.resources.get::<T>()
     }
 
+    /// Get a mutable reference to a resource.
     pub fn resource_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
         self.resources.get_mut::<T>()
     }
 
+    /// Remove a resource from the world, returning it if present.
     pub fn remove_resource<T: Send + Sync + 'static>(&mut self) -> Option<T> {
         self.resources.remove::<T>()
     }
 
     // ── Events ──
 
+    /// Send an event into the world's double-buffered event system.
     pub fn send_event<T: Send + Sync + 'static>(&mut self, event: T) {
         self.events.send(event);
     }
 
+    /// Read all events of type `T` from the current and previous frame.
     pub fn read_events<T: Send + Sync + 'static>(&self) -> impl Iterator<Item = &T> {
         self.events.read::<T>()
     }
 
+    /// Swap event buffers. Call once per tick to age out old events.
     pub fn update_events(&mut self) {
         self.events.update();
     }

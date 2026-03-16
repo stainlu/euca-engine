@@ -15,6 +15,7 @@ impl<T: 'static + Send + Sync> Component for T {}
 pub struct ComponentId(pub(crate) u32);
 
 impl ComponentId {
+    /// Returns the numeric index of this component ID.
     #[inline]
     pub fn index(self) -> u32 {
         self.0
@@ -47,6 +48,7 @@ pub struct ComponentStorage {
 }
 
 impl ComponentStorage {
+    /// Creates an empty component registry.
     pub fn new() -> Self {
         Self::default()
     }

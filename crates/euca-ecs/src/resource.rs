@@ -9,6 +9,7 @@ pub struct Resources {
 }
 
 impl Resources {
+    /// Creates an empty resource store.
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),

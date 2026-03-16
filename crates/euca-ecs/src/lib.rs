@@ -1,3 +1,8 @@
+//! A minimal, archetype-based Entity Component System (ECS) for the Euca game engine.
+//!
+//! Provides entities, components, queries, resources, events, and a schedule
+//! for deterministic system execution with change detection and parallel iteration.
+
 mod archetype;
 mod command;
 mod component;

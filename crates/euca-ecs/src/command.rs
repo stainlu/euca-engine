@@ -64,6 +64,7 @@ pub struct Commands {
 }
 
 impl Commands {
+    /// Creates an empty command queue.
     pub fn new() -> Self {
         Self { queue: Vec::new() }
     }

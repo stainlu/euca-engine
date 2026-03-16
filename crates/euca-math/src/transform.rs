@@ -18,12 +18,14 @@ impl Default for Transform {
 }
 
 impl Transform {
+    /// The identity transform (no translation, rotation, or scale).
     pub const IDENTITY: Self = Self {
         translation: Vec3::ZERO,
         rotation: Quat::IDENTITY,
         scale: Vec3::ONE,
     };
 
+    /// Creates a transform with only a translation.
     #[inline]
     pub fn from_translation(translation: Vec3) -> Self {
         Self {
@@ -32,6 +34,7 @@ impl Transform {
         }
     }
 
+    /// Creates a transform with only a rotation.
     #[inline]
     pub fn from_rotation(rotation: Quat) -> Self {
         Self {
@@ -40,6 +43,7 @@ impl Transform {
         }
     }
 
+    /// Creates a transform with only a scale.
     #[inline]
     pub fn from_scale(scale: Vec3) -> Self {
         Self {

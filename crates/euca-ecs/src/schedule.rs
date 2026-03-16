@@ -19,6 +19,7 @@ pub struct Schedule {
 }
 
 impl Schedule {
+    /// Creates a schedule with a single default stage.
     pub fn new() -> Self {
         Self {
             stages: vec![Stage {

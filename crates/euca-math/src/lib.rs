@@ -1,3 +1,5 @@
+//! Core math primitives for the Euca engine: vectors, matrices, quaternions, transforms, and AABBs.
+
 mod aabb;
 mod mat;
 mod quat;

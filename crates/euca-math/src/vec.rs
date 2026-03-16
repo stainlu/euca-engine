@@ -31,26 +31,34 @@ pub struct Vec4 {
 // ── Vec2 ──
 
 impl Vec2 {
+    /// All zeros.
     pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
+    /// All ones.
     pub const ONE: Self = Self { x: 1.0, y: 1.0 };
+    /// Unit vector along the X axis.
     pub const X: Self = Self { x: 1.0, y: 0.0 };
+    /// Unit vector along the Y axis.
     pub const Y: Self = Self { x: 0.0, y: 1.0 };
 
+    /// Creates a new `Vec2` from x and y components.
     #[inline(always)]
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
 
+    /// Returns the dot product of two vectors.
     #[inline(always)]
     pub fn dot(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y
     }
 
+    /// Returns the Euclidean length of the vector.
     #[inline(always)]
     pub fn length(self) -> f32 {
         self.dot(self).sqrt()
     }
 
+    /// Returns a unit-length vector in the same direction.
     #[inline(always)]
     pub fn normalize(self) -> Self {
         let inv = 1.0 / self.length();
@@ -60,6 +68,7 @@ impl Vec2 {
         }
     }
 
+    /// Returns the Euclidean distance between two points.
     #[inline(always)]
     pub fn distance(self, rhs: Self) -> f32 {
         (self - rhs).length()
@@ -113,42 +122,50 @@ impl Neg for Vec2 {
 // ── Vec3 ──
 
 impl Vec3 {
+    /// All zeros.
     pub const ZERO: Self = Self {
         x: 0.0,
         y: 0.0,
         z: 0.0,
     };
+    /// All ones.
     pub const ONE: Self = Self {
         x: 1.0,
         y: 1.0,
         z: 1.0,
     };
+    /// Unit vector along the X axis.
     pub const X: Self = Self {
         x: 1.0,
         y: 0.0,
         z: 0.0,
     };
+    /// Unit vector along the Y axis.
     pub const Y: Self = Self {
         x: 0.0,
         y: 1.0,
         z: 0.0,
     };
+    /// Unit vector along the Z axis.
     pub const Z: Self = Self {
         x: 0.0,
         y: 0.0,
         z: 1.0,
     };
 
+    /// Creates a new `Vec3` from x, y, and z components.
     #[inline(always)]
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
+    /// Returns the dot product of two vectors.
     #[inline(always)]
     pub fn dot(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
 
+    /// Returns the cross product of two vectors.
     #[inline(always)]
     pub fn cross(self, rhs: Self) -> Self {
         Self {
@@ -158,16 +175,19 @@ impl Vec3 {
         }
     }
 
+    /// Returns the Euclidean length of the vector.
     #[inline(always)]
     pub fn length(self) -> f32 {
         self.dot(self).sqrt()
     }
 
+    /// Returns the squared length (avoids a square root).
     #[inline(always)]
     pub fn length_squared(self) -> f32 {
         self.dot(self)
     }
 
+    /// Returns a unit-length vector in the same direction.
     #[inline(always)]
     pub fn normalize(self) -> Self {
         let inv = 1.0 / self.length();
@@ -178,16 +198,19 @@ impl Vec3 {
         }
     }
 
+    /// Returns the Euclidean distance between two points.
     #[inline(always)]
     pub fn distance(self, rhs: Self) -> f32 {
         (self - rhs).length()
     }
 
+    /// Linearly interpolates between `self` and `rhs` by factor `t`.
     #[inline(always)]
     pub fn lerp(self, rhs: Self, t: f32) -> Self {
         self + (rhs - self) * t
     }
 
+    /// Returns the component-wise minimum of two vectors.
     #[inline(always)]
     pub fn min(self, rhs: Self) -> Self {
         Self {
@@ -197,6 +220,7 @@ impl Vec3 {
         }
     }
 
+    /// Returns the component-wise maximum of two vectors.
     #[inline(always)]
     pub fn max(self, rhs: Self) -> Self {
         Self {
@@ -293,12 +317,14 @@ impl Neg for Vec3 {
 // ── Vec4 ──
 
 impl Vec4 {
+    /// All zeros.
     pub const ZERO: Self = Self {
         x: 0.0,
         y: 0.0,
         z: 0.0,
         w: 0.0,
     };
+    /// All ones.
     pub const ONE: Self = Self {
         x: 1.0,
         y: 1.0,
@@ -306,21 +332,25 @@ impl Vec4 {
         w: 1.0,
     };
 
+    /// Creates a new `Vec4` from x, y, z, and w components.
     #[inline(always)]
     pub const fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
         Self { x, y, z, w }
     }
 
+    /// Returns the dot product of two vectors.
     #[inline(always)]
     pub fn dot(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z + self.w * rhs.w
     }
 
+    /// Returns the Euclidean length of the vector.
     #[inline(always)]
     pub fn length(self) -> f32 {
         self.dot(self).sqrt()
     }
 
+    /// Returns a unit-length vector in the same direction.
     #[inline(always)]
     pub fn normalize(self) -> Self {
         let inv = 1.0 / self.length();

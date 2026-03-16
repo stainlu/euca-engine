@@ -2,6 +2,12 @@
 name = "euca-math"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "SIMD-ready game math: Vec2/3/4, Quat, Mat4, Transform, AABB — zero deps beyond serde"
+keywords = ["math", "gamedev", "linear-algebra", "vector", "quaternion"]
+categories = ["game-development", "mathematics"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
