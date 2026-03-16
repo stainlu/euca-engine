@@ -48,6 +48,7 @@ struct SceneUniforms {
     light_color: [f32; 4],
     ambient_color: [f32; 4],
     light_vp: [[f32; 4]; 4], // light view-projection for shadow mapping
+    inv_vp: [[f32; 4]; 4],   // inverse view-projection for sky ray direction
 }
 
 /// Per-material GPU resources.
@@ -77,6 +78,9 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
     materials: Vec<GpuMaterial>,
     textures: TextureStore,
+
+    // Sky
+    sky_pipeline: wgpu::RenderPipeline,
 
     // Shadow mapping
     shadow_pipeline: wgpu::RenderPipeline,
@@ -346,6 +350,61 @@ impl Renderer {
                 cache: None,
             });
 
+        let depth_format = wgpu::TextureFormat::Depth32Float;
+
+        // ── Sky pipeline (fullscreen triangle, procedural gradient) ──
+        let sky_shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Sky Shader"),
+                source: wgpu::ShaderSource::Wgsl(SKY_SHADER.into()),
+            });
+
+        let sky_pipeline_layout =
+            gpu.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Sky Pipeline Layout"),
+                    bind_group_layouts: &[&scene_bgl], // only scene data (group 0 in sky shader)
+                    push_constant_ranges: &[],
+                });
+
+        let sky_pipeline = gpu
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Sky Pipeline"),
+                layout: Some(&sky_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &sky_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[], // fullscreen triangle from vertex ID
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &sky_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: gpu.surface_config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: false, // sky doesn't write depth
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            });
+
         // ── Main PBR pipeline ──
         let shader = gpu
             .device
@@ -362,7 +421,6 @@ impl Renderer {
                 push_constant_ranges: &[],
             });
 
-        let depth_format = wgpu::TextureFormat::Depth32Float;
         let depth_texture =
             Self::create_depth_texture(&gpu.device, &gpu.surface_config, depth_format);
 
@@ -417,6 +475,7 @@ impl Renderer {
             sampler,
             materials: Vec::new(),
             textures,
+            sky_pipeline,
             shadow_pipeline,
             shadow_map,
             shadow_map_view,
@@ -673,6 +732,7 @@ impl Renderer {
                 ambient.intensity,
             ],
             light_vp: light_vp.to_cols_array_2d(),
+            inv_vp: vp.inverse().to_cols_array_2d(),
         };
         gpu.queue
             .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
@@ -729,6 +789,12 @@ impl Renderer {
                 ..Default::default()
             });
 
+            // Draw sky first (fullscreen triangle, depth write off, renders behind everything)
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.set_bind_group(0, &self.scene_bind_group, &[]);
+            pass.draw(0..3, 0..1); // fullscreen triangle from vertex IDs
+
+            // Draw PBR geometry
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(1, &self.scene_bind_group, &[]);
 
@@ -808,6 +874,7 @@ struct SceneUniforms {
     light_color: vec4<f32>,
     ambient_color: vec4<f32>,
     light_vp: mat4x4<f32>,
+    inv_vp: mat4x4<f32>,
 };
 @group(1) @binding(0) var<uniform> scene: SceneUniforms;
 @group(1) @binding(1) var shadow_map: texture_depth_2d;
@@ -956,5 +1023,87 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let gamma_corrected = pow(mapped, vec3<f32>(1.0 / 2.2));
 
     return vec4<f32>(gamma_corrected, 1.0);
+}
+"#;
+
+/// Procedural sky shader — fullscreen triangle with gradient + sun glow.
+const SKY_SHADER: &str = r#"
+struct SceneUniforms {
+    camera_pos: vec4<f32>,
+    light_direction: vec4<f32>,
+    light_color: vec4<f32>,
+    ambient_color: vec4<f32>,
+    light_vp: mat4x4<f32>,
+    inv_vp: mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> scene: SceneUniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) ndc: vec2<f32>,
+};
+
+// Fullscreen triangle from vertex ID (no vertex buffer needed)
+@vertex
+fn vs_main(@builtin(vertex_index) id: u32) -> VertexOutput {
+    // Oversized triangle covering the full screen
+    let x = f32(i32(id) / 2) * 4.0 - 1.0;
+    let y = f32(i32(id) % 2) * 4.0 - 1.0;
+    var out: VertexOutput;
+    out.position = vec4<f32>(x, y, 1.0, 1.0); // at far plane
+    out.ndc = vec2<f32>(x, y);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Reconstruct view direction from NDC using inverse VP
+    let clip = vec4<f32>(in.ndc.x, in.ndc.y, 1.0, 1.0);
+    let world_h = scene.inv_vp * clip;
+    let world_dir = normalize(world_h.xyz / world_h.w - scene.camera_pos.xyz);
+
+    // Vertical gradient: ground to sky
+    let up = max(world_dir.y, 0.0);
+    let down = max(-world_dir.y, 0.0);
+
+    // Sky colors
+    let sky_zenith = vec3<f32>(0.15, 0.3, 0.65);   // deep blue
+    let sky_horizon = vec3<f32>(0.55, 0.7, 0.9);    // pale blue
+    let ground_color = vec3<f32>(0.15, 0.13, 0.12); // dark ground
+
+    // Blend sky gradient
+    var color: vec3<f32>;
+    if world_dir.y >= 0.0 {
+        // Sky: horizon → zenith
+        let t = pow(up, 0.5);
+        color = mix(sky_horizon, sky_zenith, t);
+    } else {
+        // Below horizon: darken toward ground
+        let t = pow(down, 0.8);
+        color = mix(sky_horizon, ground_color, t);
+    }
+
+    // Sun glow near light direction
+    let sun_dir = normalize(-scene.light_direction.xyz);
+    let sun_dot = max(dot(world_dir, sun_dir), 0.0);
+
+    // Sun disk
+    let sun_disk = smoothstep(0.9995, 0.9999, sun_dot);
+    let sun_color = vec3<f32>(1.0, 0.95, 0.85);
+    color = mix(color, sun_color * 3.0, sun_disk);
+
+    // Sun glow (halo)
+    let glow = pow(sun_dot, 64.0) * 0.6;
+    color += sun_color * glow;
+
+    // Atmospheric scattering near horizon
+    let horizon_glow = pow(sun_dot, 8.0) * (1.0 - up) * 0.3;
+    color += vec3<f32>(1.0, 0.6, 0.3) * horizon_glow;
+
+    // Tone map + gamma
+    let mapped = color / (color + vec3<f32>(1.0));
+    let gamma = pow(mapped, vec3<f32>(1.0 / 2.2));
+
+    return vec4<f32>(gamma, 1.0);
 }
 "#;
