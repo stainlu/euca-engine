@@ -31,6 +31,8 @@ impl AgentServer {
         Router::new()
             .route("/", get(routes::status))
             .route("/observe", post(routes::observe))
+            .route("/entities/{id}", get(routes::get_entity))
+            .route("/entities/{id}/components", post(routes::patch_entity))
             .route("/step", post(routes::step))
             .route("/spawn", post(routes::spawn))
             .route("/despawn", post(routes::despawn))
@@ -45,7 +47,9 @@ impl AgentServer {
         let router = self.router();
 
         log::info!("Euca Agent Server listening on http://{addr}");
-        log::info!("Endpoints: GET /, POST /observe, /step, /spawn, /despawn, /reset, GET /schema");
+        log::info!(
+            "Endpoints: GET /, POST /observe, /step, /spawn, /despawn, /reset, GET /schema, /entities/:id"
+        );
 
         let listener = tokio::net::TcpListener::bind(&addr)
             .await

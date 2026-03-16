@@ -1,14 +1,104 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use euca_ecs::{Entity, Query};
+use euca_math::Vec3;
+use euca_physics::{Collider, ColliderShape, PhysicsBody, RigidBodyType, Velocity};
 use euca_scene::{GlobalTransform, LocalTransform};
 
 use crate::state::SharedWorld;
 
-// ── Response types ──
+// ── Serializable component representations ──
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TransformData {
+    pub position: [f32; 3],
+    #[serde(default = "default_rotation")]
+    pub rotation: [f32; 4],
+    #[serde(default = "default_scale")]
+    pub scale: [f32; 3],
+}
+
+fn default_rotation() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 1.0]
+}
+fn default_scale() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct VelocityData {
+    pub linear: [f32; 3],
+    #[serde(default)]
+    pub angular: [f32; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "shape")]
+pub enum ColliderData {
+    Aabb { hx: f32, hy: f32, hz: f32 },
+    Sphere { radius: f32 },
+}
+
+// ── Rich entity representation ──
+
+#[derive(Serialize)]
+pub struct RichEntityData {
+    pub id: u32,
+    pub generation: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform: Option<TransformData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub velocity: Option<VelocityData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collider: Option<ColliderData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physics_body: Option<String>,
+}
+
+fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
+    let transform = w.get::<GlobalTransform>(entity).map(|gt| {
+        let t = &gt.0;
+        TransformData {
+            position: [t.translation.x, t.translation.y, t.translation.z],
+            rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+            scale: [t.scale.x, t.scale.y, t.scale.z],
+        }
+    });
+
+    let velocity = w.get::<Velocity>(entity).map(|v| VelocityData {
+        linear: [v.linear.x, v.linear.y, v.linear.z],
+        angular: [v.angular.x, v.angular.y, v.angular.z],
+    });
+
+    let collider = w.get::<Collider>(entity).map(|c| match &c.shape {
+        ColliderShape::Aabb { hx, hy, hz } => ColliderData::Aabb {
+            hx: *hx,
+            hy: *hy,
+            hz: *hz,
+        },
+        ColliderShape::Sphere { radius } => ColliderData::Sphere { radius: *radius },
+    });
+
+    let physics_body = w.get::<PhysicsBody>(entity).map(|pb| match pb.body_type {
+        RigidBodyType::Dynamic => "Dynamic".to_string(),
+        RigidBodyType::Static => "Static".to_string(),
+        RigidBodyType::Kinematic => "Kinematic".to_string(),
+    });
+
+    RichEntityData {
+        id: entity.index(),
+        generation: entity.generation(),
+        transform,
+        velocity,
+        collider,
+        physics_body,
+    }
+}
+
+// ── Response / Request types ──
 
 #[derive(Serialize)]
 pub struct StatusResponse {
@@ -20,18 +110,10 @@ pub struct StatusResponse {
 }
 
 #[derive(Serialize)]
-pub struct EntityData {
-    pub id: u32,
-    pub generation: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub position: Option<[f32; 3]>,
-}
-
-#[derive(Serialize)]
 pub struct ObserveResponse {
     pub tick: u64,
     pub entity_count: u32,
-    pub entities: Vec<EntityData>,
+    pub entities: Vec<RichEntityData>,
 }
 
 #[derive(Deserialize)]
@@ -39,7 +121,6 @@ pub struct StepRequest {
     #[serde(default = "default_ticks")]
     pub ticks: u64,
 }
-
 fn default_ticks() -> u64 {
     1
 }
@@ -55,6 +136,14 @@ pub struct StepResponse {
 pub struct SpawnRequest {
     #[serde(default)]
     pub position: Option<[f32; 3]>,
+    #[serde(default)]
+    pub scale: Option<[f32; 3]>,
+    #[serde(default)]
+    pub velocity: Option<VelocityData>,
+    #[serde(default)]
+    pub collider: Option<ColliderData>,
+    #[serde(default)]
+    pub physics_body: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -76,6 +165,75 @@ pub struct MessageResponse {
     pub message: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ComponentPatch {
+    #[serde(default)]
+    pub transform: Option<TransformData>,
+    #[serde(default)]
+    pub velocity: Option<VelocityData>,
+    #[serde(default)]
+    pub collider: Option<ColliderData>,
+    #[serde(default)]
+    pub physics_body: Option<String>,
+}
+
+// ── Helpers ──
+
+fn find_entity(w: &euca_ecs::World, id: u32) -> Option<Entity> {
+    for g in 0..16u32 {
+        let e = Entity::from_raw(id, g);
+        if w.is_alive(e) {
+            return Some(e);
+        }
+    }
+    None
+}
+
+fn apply_velocity(w: &mut euca_ecs::World, entity: Entity, v: &VelocityData) {
+    let vel = Velocity {
+        linear: Vec3::new(v.linear[0], v.linear[1], v.linear[2]),
+        angular: Vec3::new(v.angular[0], v.angular[1], v.angular[2]),
+    };
+    if w.get::<Velocity>(entity).is_some() {
+        if let Some(existing) = w.get_mut::<Velocity>(entity) {
+            *existing = vel;
+        }
+    } else {
+        w.insert(entity, vel);
+    }
+}
+
+fn apply_collider(w: &mut euca_ecs::World, entity: Entity, c: &ColliderData) {
+    let collider = match c {
+        ColliderData::Aabb { hx, hy, hz } => Collider::aabb(*hx, *hy, *hz),
+        ColliderData::Sphere { radius } => Collider::sphere(*radius),
+    };
+    if w.get::<Collider>(entity).is_some() {
+        if let Some(existing) = w.get_mut::<Collider>(entity) {
+            *existing = collider;
+        }
+    } else {
+        w.insert(entity, collider);
+    }
+}
+
+fn apply_physics_body(w: &mut euca_ecs::World, entity: Entity, body_type: &str) {
+    let pb = match body_type {
+        "Static" => PhysicsBody::fixed(),
+        "Kinematic" => PhysicsBody {
+            body_type: RigidBodyType::Kinematic,
+        },
+        _ => PhysicsBody::dynamic(),
+    };
+    if w.get::<PhysicsBody>(entity).is_some() {
+        if let Some(existing) = w.get_mut::<PhysicsBody>(entity) {
+            *existing = pb;
+        }
+    } else {
+        w.insert(entity, pb);
+    }
+}
+
 // ── Route handlers ──
 
 /// GET / — engine status
@@ -90,31 +248,13 @@ pub async fn status(State(world): State<SharedWorld>) -> Json<StatusResponse> {
     Json(resp)
 }
 
-/// POST /observe — query world state
+/// POST /observe — query full world state
 pub async fn observe(State(world): State<SharedWorld>) -> Json<ObserveResponse> {
     let resp = world.with_world(|w| {
-        let mut entities = Vec::new();
-
-        // Query all entities with GlobalTransform (positioned in the world)
-        let query = Query::<(Entity, &GlobalTransform)>::new(w);
-        for (entity, gt) in query.iter() {
-            entities.push(EntityData {
-                id: entity.index(),
-                generation: entity.generation(),
-                position: Some([gt.0.translation.x, gt.0.translation.y, gt.0.translation.z]),
-            });
-        }
-
-        // Also include entities without transforms
-        let query_bare = Query::<Entity, euca_ecs::Without<GlobalTransform>>::new(w);
-        for entity in query_bare.iter() {
-            entities.push(EntityData {
-                id: entity.index(),
-                generation: entity.generation(),
-                position: None,
-            });
-        }
-
+        let entities: Vec<RichEntityData> = {
+            let query = Query::<Entity>::new(w);
+            query.iter().map(|e| read_entity_data(w, e)).collect()
+        };
         ObserveResponse {
             tick: w.current_tick(),
             entity_count: w.entity_count(),
@@ -124,13 +264,60 @@ pub async fn observe(State(world): State<SharedWorld>) -> Json<ObserveResponse> 
     Json(resp)
 }
 
+/// GET /entities/:id — query single entity
+pub async fn get_entity(
+    State(world): State<SharedWorld>,
+    Path(id): Path<u32>,
+) -> Result<Json<RichEntityData>, StatusCode> {
+    let result = world.with_world(|w| find_entity(w, id).map(|e| read_entity_data(w, e)));
+    match result {
+        Some(data) => Ok(Json(data)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// POST /entities/:id/components — add/update components on an entity
+pub async fn patch_entity(
+    State(world): State<SharedWorld>,
+    Path(id): Path<u32>,
+    Json(patch): Json<ComponentPatch>,
+) -> Result<Json<MessageResponse>, StatusCode> {
+    world.with(|w, _| {
+        let entity = match find_entity(w, id) {
+            Some(e) => e,
+            None => return Err(StatusCode::NOT_FOUND),
+        };
+
+        if let Some(t) = &patch.transform
+            && let Some(lt) = w.get_mut::<LocalTransform>(entity)
+        {
+            lt.0.translation = Vec3::new(t.position[0], t.position[1], t.position[2]);
+            lt.0.scale = Vec3::new(t.scale[0], t.scale[1], t.scale[2]);
+        }
+        if let Some(v) = &patch.velocity {
+            apply_velocity(w, entity, v);
+        }
+        if let Some(c) = &patch.collider {
+            apply_collider(w, entity, c);
+        }
+        if let Some(pb) = &patch.physics_body {
+            apply_physics_body(w, entity, pb);
+        }
+
+        Ok(Json(MessageResponse {
+            ok: true,
+            message: None,
+        }))
+    })
+}
+
 /// POST /step — advance simulation
 pub async fn step(
     State(world): State<SharedWorld>,
     Json(req): Json<StepRequest>,
 ) -> Json<StepResponse> {
     let resp = world.with(|w, schedule| {
-        let ticks = req.ticks.min(10000); // Cap to prevent abuse
+        let ticks = req.ticks.min(10000);
         for _ in 0..ticks {
             schedule.run(w);
         }
@@ -143,17 +330,31 @@ pub async fn step(
     Json(resp)
 }
 
-/// POST /spawn — create a new entity
+/// POST /spawn — create entity with optional components
 pub async fn spawn(
     State(world): State<SharedWorld>,
     Json(req): Json<SpawnRequest>,
 ) -> (StatusCode, Json<SpawnResponse>) {
     let resp = world.with(|w, _| {
         let pos = req.position.unwrap_or([0.0, 0.0, 0.0]);
-        let transform =
-            euca_math::Transform::from_translation(euca_math::Vec3::new(pos[0], pos[1], pos[2]));
+        let scl = req.scale.unwrap_or([1.0, 1.0, 1.0]);
+        let mut transform =
+            euca_math::Transform::from_translation(Vec3::new(pos[0], pos[1], pos[2]));
+        transform.scale = Vec3::new(scl[0], scl[1], scl[2]);
+
         let entity = w.spawn(LocalTransform(transform));
         w.insert(entity, GlobalTransform::default());
+
+        if let Some(v) = &req.velocity {
+            apply_velocity(w, entity, v);
+        }
+        if let Some(c) = &req.collider {
+            apply_collider(w, entity, c);
+        }
+        if let Some(pb) = &req.physics_body {
+            apply_physics_body(w, entity, pb);
+        }
+
         SpawnResponse {
             entity_id: entity.index(),
             entity_generation: entity.generation(),
@@ -184,10 +385,9 @@ pub async fn despawn(
     Json(resp)
 }
 
-/// POST /reset — reset the world (despawn all entities)
+/// POST /reset — reset the world
 pub async fn reset(State(world): State<SharedWorld>) -> Json<MessageResponse> {
     let resp = world.with(|w, _| {
-        // Collect all entities, then despawn them
         let entities: Vec<Entity> = {
             let query = Query::<Entity>::new(w);
             query.iter().collect()
@@ -203,24 +403,40 @@ pub async fn reset(State(world): State<SharedWorld>) -> Json<MessageResponse> {
     Json(resp)
 }
 
-/// GET /schema — list available component types and actions
+/// GET /schema — dynamic schema: all component types and actions
 pub async fn schema() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "components": [
-            {
-                "name": "LocalTransform",
-                "fields": {"translation": "[f32; 3]", "rotation": "[f32; 4]", "scale": "[f32; 3]"}
+        "components": {
+            "LocalTransform": {
+                "fields": {"position": "[f32; 3]", "rotation": "[f32; 4] (xyzw)", "scale": "[f32; 3]"}
             },
-            {
-                "name": "GlobalTransform",
-                "fields": {"translation": "[f32; 3]", "rotation": "[f32; 4]", "scale": "[f32; 3]"}
+            "GlobalTransform": {
+                "fields": {"position": "[f32; 3]", "rotation": "[f32; 4] (xyzw)", "scale": "[f32; 3]"},
+                "note": "Read-only. Computed from LocalTransform hierarchy."
+            },
+            "Velocity": {
+                "fields": {"linear": "[f32; 3]", "angular": "[f32; 3]"}
+            },
+            "PhysicsBody": {
+                "fields": {"body_type": "Dynamic | Static | Kinematic"}
+            },
+            "Collider": {
+                "variants": {
+                    "Aabb": {"hx": "f32", "hy": "f32", "hz": "f32"},
+                    "Sphere": {"radius": "f32"}
+                }
             }
-        ],
-        "actions": [
-            {"name": "spawn", "params": {"position": "[f32; 3] (optional)"}},
-            {"name": "despawn", "params": {"entity_id": "u32", "entity_generation": "u32"}},
-            {"name": "step", "params": {"ticks": "u64 (default: 1)"}},
-            {"name": "reset", "params": {}}
-        ]
+        },
+        "endpoints": {
+            "GET /": "Engine status",
+            "POST /observe": "Full world state (all entities with all components)",
+            "GET /entities/:id": "Single entity with all components",
+            "POST /entities/:id/components": "Add/update components on entity",
+            "POST /spawn": "Create entity with optional components (position, scale, velocity, collider, physics_body)",
+            "POST /despawn": "Remove entity by id + generation",
+            "POST /step": "Advance simulation N ticks",
+            "POST /reset": "Despawn all entities",
+            "GET /schema": "This endpoint"
+        }
     }))
 }
