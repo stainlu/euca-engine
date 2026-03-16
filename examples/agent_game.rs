@@ -88,6 +88,65 @@ impl GameState {
         }
     }
 
+    fn agent_join(&mut self, name: String) -> (NetworkId, SocketAddr) {
+        let tick = self.world.current_tick();
+        let (nid, addr) = self.bridge.join(&mut self.server, name, tick);
+        self.bridge.collect_server_messages(&mut self.server);
+        (nid, addr)
+    }
+
+    fn agent_send_input(&mut self, player_id: u64, keys: Vec<String>) -> bool {
+        let tick = self.world.current_tick();
+        if !self
+            .bridge
+            .send_input(&mut self.server, player_id, keys, tick)
+        {
+            return false;
+        }
+        // Process input immediately
+        let incoming = self.server.drain_incoming();
+        for (addr, msg) in incoming {
+            if let ClientMessage::Input {
+                pressed_keys,
+                mouse_position: _,
+                mouse_delta: _,
+                tick: _,
+            } = msg
+            {
+                self.handle_input(addr, &pressed_keys);
+            }
+        }
+        true
+    }
+
+    fn agent_leave(&mut self, player_id: u64) {
+        if let Some(fake_addr) = self.bridge.agent_addr(player_id) {
+            if let Some((entity, nid)) = self.players.remove(&fake_addr) {
+                self.world.despawn(entity);
+                self.net_to_entity.remove(&nid);
+            }
+        }
+        self.bridge.leave(&mut self.server, player_id);
+    }
+
+    fn update_agent_views(&mut self) {
+        let tick = self.world.current_tick();
+        let entities = self.collect_entities();
+        let agent_nids: Vec<u64> = self
+            .players
+            .values()
+            .filter(|(_, nid)| self.bridge.is_agent(nid.0))
+            .map(|(_, nid)| nid.0)
+            .collect();
+        for nid in agent_nids {
+            if let Some(fake_addr) = self.bridge.agent_addr(nid) {
+                self.server
+                    .send_delta(fake_addr, tick, entities.clone(), vec![]);
+            }
+        }
+        self.bridge.collect_server_messages(&mut self.server);
+    }
+
     fn collect_entities(&self) -> Vec<EntityState> {
         let query = Query::<(Entity, &GlobalTransform, &NetworkId)>::new(&self.world);
         query
@@ -122,15 +181,9 @@ async fn status(State(game): State<SharedGame>) -> Json<GameStatus> {
 
 async fn join(State(game): State<SharedGame>, Json(req): Json<JoinRequest>) -> Json<JoinResponse> {
     let mut g = game.lock().unwrap();
-    let tick = g.world.current_tick();
-    let (network_id, fake_addr) = g.bridge.join(&mut g.server, req.name, tick);
-
-    // Spawn player entity for the agent
+    let (network_id, fake_addr) = g.agent_join(req.name);
     g.spawn_player(network_id, fake_addr);
-
-    // Drain the welcome message (agent bridge will handle it)
-    g.bridge.collect_server_messages(&mut g.server);
-
+    let tick = g.world.current_tick();
     Json(JoinResponse {
         player_id: network_id.0,
         tick,
@@ -142,36 +195,10 @@ async fn action(
     Json(req): Json<ActionRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut g = game.lock().unwrap();
-    let tick = g.world.current_tick();
-
-    // Feed input into game server (same pipeline as UDP)
-    if !g
-        .bridge
-        .send_input(&mut g.server, req.player_id, req.keys, tick)
-    {
+    if !g.agent_send_input(req.player_id, req.keys) {
         return Err(StatusCode::NOT_FOUND);
     }
-
-    // Process the input immediately (translate to entity velocity)
-    if let Some(fake_addr) = g.bridge.agent_addr(req.player_id) {
-        let incoming = g.server.drain_incoming();
-        for (addr, msg) in incoming {
-            if let ClientMessage::Input {
-                pressed_keys,
-                mouse_position: _,
-                mouse_delta: _,
-                tick: _,
-            } = msg
-            {
-                g.handle_input(addr, &pressed_keys);
-            }
-            // Re-queue non-input messages
-            if addr != fake_addr {
-                g.server.push_incoming(addr, ClientMessage::Disconnect); // won't happen, just safety
-            }
-        }
-    }
-
+    let tick = g.world.current_tick();
     Ok(Json(serde_json::json!({"ok": true, "tick": tick})))
 }
 
@@ -192,16 +219,7 @@ async fn leave(
 ) -> Json<serde_json::Value> {
     let player_id = req["player_id"].as_u64().unwrap_or(0);
     let mut g = game.lock().unwrap();
-
-    // Remove player entity
-    if let Some(fake_addr) = g.bridge.agent_addr(player_id) {
-        if let Some((entity, nid)) = g.players.remove(&fake_addr) {
-            g.world.despawn(entity);
-            g.net_to_entity.remove(&nid);
-        }
-    }
-
-    g.bridge.leave(&mut g.server, player_id);
+    g.agent_leave(player_id);
     Json(serde_json::json!({"ok": true}))
 }
 
@@ -248,7 +266,7 @@ fn main() {
     });
 
     // UDP transport for human players
-    let transport = UdpTransport::bind(format!("0.0.0.0:{UDP_PORT}").parse().unwrap())
+    let mut transport = UdpTransport::bind(format!("0.0.0.0:{UDP_PORT}").parse().unwrap())
         .expect("Failed to bind UDP");
     let tick_duration = Duration::from_micros(1_000_000 / TICK_RATE);
 
@@ -268,11 +286,9 @@ fn main() {
                 match msg {
                     ClientMessage::Connect { player_name } => {
                         if !g.players.contains_key(&addr) {
-                            let network_id = g.server.handle_connect(
-                                addr,
-                                player_name.clone(),
-                                g.world.current_tick(),
-                            );
+                            let tick = g.world.current_tick();
+                            let network_id =
+                                g.server.handle_connect(addr, player_name.clone(), tick);
                             let entity = g.spawn_player(network_id, addr);
                             log::info!("Human '{}' connected: Entity {}", player_name, entity);
                         }
@@ -320,27 +336,27 @@ fn main() {
             let entities = g.collect_entities();
             let tick = g.world.current_tick();
 
-            // Send to UDP human players
+            // Send to UDP human players (not agent fake_addrs)
             let delta = ServerMessage::StateDelta {
                 tick,
-                changed: entities.clone(),
+                changed: entities,
                 despawned: vec![],
             };
-            for addr in g.players.keys() {
-                // Only send to real UDP addresses (not agent fake_addrs)
-                if !g
-                    .bridge
-                    .is_agent(g.players.get(addr).map(|(_, nid)| nid.0).unwrap_or(0))
-                {
-                    let payload = bincode::serialize(&delta).unwrap();
-                    let header = PacketHeader {
-                        sequence: send_seq,
-                        ack: 0,
-                        ack_bits: 0,
-                    };
-                    send_seq += 1;
-                    let _ = transport.send_packet(&header, &payload, *addr);
-                }
+            let udp_addrs: Vec<SocketAddr> = g
+                .players
+                .iter()
+                .filter(|(_, (_, nid))| !g.bridge.is_agent(nid.0))
+                .map(|(addr, _)| *addr)
+                .collect();
+            for addr in udp_addrs {
+                let payload = bincode::serialize(&delta).unwrap();
+                let header = PacketHeader {
+                    sequence: send_seq,
+                    ack: 0,
+                    ack_bits: 0,
+                };
+                send_seq += 1;
+                let _ = transport.send_packet(&header, &payload, addr);
             }
 
             // Send welcome/snapshot to new UDP players
@@ -355,28 +371,8 @@ fn main() {
                 let _ = transport.send_packet(&header, &payload, addr);
             }
 
-            // Update agent views
-            // Manually set the state for agent players
-            for (nid_val, _) in g.bridge.agents_iter() {
-                // We need to update the agent's view with current entities
-                // This is handled by the bridge's collect mechanism
-            }
-
-            // Feed state to agent bridge as StateDelta
-            let agent_nids: Vec<u64> = g
-                .players
-                .values()
-                .filter(|(_, nid)| g.bridge.is_agent(nid.0))
-                .map(|(_, nid)| nid.0)
-                .collect();
-
-            for nid in agent_nids {
-                if let Some(fake_addr) = g.bridge.agent_addr(nid) {
-                    g.server
-                        .send_delta(fake_addr, tick, entities.clone(), vec![]);
-                }
-            }
-            g.bridge.collect_server_messages(&mut g.server);
+            // Update agent player views
+            g.update_agent_views();
         }
 
         drop(g); // Release lock before sleeping
