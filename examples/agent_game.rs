@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use euca_agent::bridge::{ActionRequest, AgentBridge, JoinRequest, JoinResponse, PlayerView};
 use euca_ecs::{Entity, Query, World};
+use euca_game::arena::{self, ArenaState, Health, Projectile};
 use euca_math::{Transform, Vec3};
 use euca_net::{
     ClientMessage, EntityState, GameServer, NetworkId, PacketHeader, ServerMessage, UdpTransport,
@@ -54,6 +55,7 @@ impl GameState {
         self.world
             .insert(entity, Collider::aabb(0.5, 0.5, 0.5).with_restitution(0.3));
         self.world.insert(entity, network_id);
+        self.world.insert(entity, Health::new(3));
 
         self.players.insert(addr, (entity, network_id));
         self.net_to_entity.insert(network_id, entity);
@@ -61,19 +63,35 @@ impl GameState {
     }
 
     fn handle_input(&mut self, addr: SocketAddr, pressed_keys: &[euca_input::InputKey]) {
-        let (entity, _) = match self.players.get(&addr) {
+        let (entity, network_id) = match self.players.get(&addr) {
             Some(p) => *p,
             None => return,
         };
 
         let mut move_dir = Vec3::ZERO;
+        let mut shoot = false;
+        let mut shoot_dir = Vec3::ZERO;
+
         for key in pressed_keys {
             if let euca_input::InputKey::Key(k) = key {
                 match k.to_uppercase().as_str() {
-                    "W" => move_dir.z += 1.0,
-                    "S" => move_dir.z -= 1.0,
-                    "A" => move_dir.x -= 1.0,
-                    "D" => move_dir.x += 1.0,
+                    "W" => {
+                        move_dir.z += 1.0;
+                        shoot_dir = Vec3::Z;
+                    }
+                    "S" => {
+                        move_dir.z -= 1.0;
+                        shoot_dir = Vec3::new(0.0, 0.0, -1.0);
+                    }
+                    "A" => {
+                        move_dir.x -= 1.0;
+                        shoot_dir = Vec3::new(-1.0, 0.0, 0.0);
+                    }
+                    "D" => {
+                        move_dir.x += 1.0;
+                        shoot_dir = Vec3::X;
+                    }
+                    "SPACE" | "SHOOT" => shoot = true,
                     _ => {}
                 }
             }
@@ -85,6 +103,19 @@ impl GameState {
 
         if let Some(vel) = self.world.get_mut::<Velocity>(entity) {
             vel.linear = Vec3::new(move_dir.x, vel.linear.y, move_dir.z);
+        }
+
+        // Shoot projectile in last movement direction
+        if shoot {
+            if shoot_dir.length_squared() < 0.001 {
+                shoot_dir = Vec3::Z; // default forward
+            }
+            let pos = self
+                .world
+                .get::<GlobalTransform>(entity)
+                .map(|gt| gt.0.translation)
+                .unwrap_or(Vec3::ZERO);
+            arena::spawn_projectile(&mut self.world, network_id.0, pos, shoot_dir);
         }
     }
 
@@ -229,6 +260,7 @@ fn main() {
     // Create shared game state
     let mut world = World::new();
     world.insert_resource(PhysicsConfig::new());
+    world.insert_resource(ArenaState::new());
 
     // Ground
     let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
@@ -329,6 +361,8 @@ fn main() {
         // Step simulation
         physics_step_system(&mut g.world);
         euca_scene::transform_propagation_system(&mut g.world);
+        arena::projectile_system(&mut g.world);
+        arena::elimination_system(&mut g.world);
         g.world.tick();
 
         // Broadcast state

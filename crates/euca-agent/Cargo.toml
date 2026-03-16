@@ -32,3 +32,4 @@ path = "../../examples/agent_client.rs"
 env_logger = "0.11"
 bincode = "1"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
+euca-game = { path = "../euca-game" }

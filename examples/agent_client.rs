@@ -57,7 +57,7 @@ fn main() {
                 ])
             });
 
-        // Decide: move toward origin (simple strategy)
+        // Decide: move toward origin + shoot periodically
         let mut keys = Vec::new();
         if let Some(pos) = my_pos {
             if pos[0] > 0.5 {
@@ -69,6 +69,11 @@ fn main() {
                 keys.push("s");
             } else if pos[2] < -0.5 {
                 keys.push("w");
+            }
+
+            // Shoot every 30 ticks (0.5 seconds)
+            if tick % 30 == 0 {
+                keys.push("shoot");
             }
 
             if tick % 60 == 0 {
