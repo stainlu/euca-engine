@@ -1,4 +1,4 @@
-use euca_math::{Mat4, Vec3};
+use euca_math::{Mat4, Vec3, Vec4};
 
 /// Camera component with view + projection.
 #[derive(Clone, Debug)]
@@ -42,6 +42,45 @@ impl Camera {
     /// Combined view-projection matrix.
     pub fn view_projection_matrix(&self, aspect_ratio: f32) -> Mat4 {
         self.projection_matrix(aspect_ratio) * self.view_matrix()
+    }
+
+    /// Convert a screen pixel position to a world-space ray (origin, direction).
+    /// Used for viewport click-to-select (raycasting from camera through mouse cursor).
+    pub fn screen_to_ray(
+        &self,
+        pixel_x: f32,
+        pixel_y: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> (Vec3, Vec3) {
+        let aspect = screen_w / screen_h;
+        let inv_vp = self.view_projection_matrix(aspect).inverse();
+
+        // Convert pixel → NDC [-1, 1] (Y is flipped: top=1, bottom=-1)
+        let ndc_x = (pixel_x / screen_w) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (pixel_y / screen_h) * 2.0;
+
+        // Unproject near and far points
+        let near_ndc = Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+        let far_ndc = Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+
+        let near_world = inv_vp * near_ndc;
+        let far_world = inv_vp * far_ndc;
+
+        // Perspective divide
+        let near_pos = Vec3::new(
+            near_world.x / near_world.w,
+            near_world.y / near_world.w,
+            near_world.z / near_world.w,
+        );
+        let far_pos = Vec3::new(
+            far_world.x / far_world.w,
+            far_world.y / far_world.w,
+            far_world.z / far_world.w,
+        );
+
+        let direction = (far_pos - near_pos).normalize();
+        (near_pos, direction)
     }
 }
 

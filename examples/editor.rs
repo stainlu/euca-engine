@@ -2,7 +2,9 @@ use euca_core::Time;
 use euca_ecs::{Query, World};
 use euca_editor::{EditorState, hierarchy_panel, inspector_panel, toolbar_panel};
 use euca_math::{Transform, Vec3};
-use euca_physics::{Collider, PhysicsBody, PhysicsConfig, Velocity, physics_step_system};
+use euca_physics::{
+    Collider, PhysicsBody, PhysicsConfig, Ray, Velocity, physics_step_system, raycast_collider,
+};
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
 
@@ -23,6 +25,8 @@ struct EditorApp {
     egui_winit: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
     window_attrs: WindowAttributes,
+    mouse_pos: [f32; 2],
+    outline_material: Option<MaterialHandle>,
 }
 
 impl EditorApp {
@@ -51,6 +55,8 @@ impl EditorApp {
             window_attrs: WindowAttributes::default()
                 .with_title("Euca Engine — Editor")
                 .with_inner_size(winit::dpi::LogicalSize::new(1280, 800)),
+            mouse_pos: [0.0, 0.0],
+            outline_material: None,
         }
     }
 
@@ -67,6 +73,10 @@ impl EditorApp {
         let blue = renderer.upload_material(gpu, &Material::blue_plastic());
         let gold = renderer.upload_material(gpu, &Material::gold());
         let green = renderer.upload_material(gpu, &Material::green());
+
+        // Bright orange outline material for selection highlight
+        self.outline_material =
+            Some(renderer.upload_material(gpu, &Material::new([1.0, 0.6, 0.0, 1.0], 0.0, 1.0)));
 
         // Ground
         let g = self
@@ -172,7 +182,7 @@ impl EditorApp {
 
         // === 1. Render 3D scene ===
         {
-            let draw_commands: Vec<DrawCommand> = {
+            let mut draw_commands: Vec<DrawCommand> = {
                 let query =
                     Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
                 query
@@ -184,6 +194,32 @@ impl EditorApp {
                     })
                     .collect()
             };
+
+            // Selection outline: draw selected entity again at 1.06x scale with orange material
+            if let (Some(sel_idx), Some(outline_mat)) =
+                (self.editor_state.selected_entity, self.outline_material)
+            {
+                // Find the selected entity
+                for g in 0..16u32 {
+                    let entity = euca_ecs::Entity::from_raw(sel_idx, g);
+                    if !self.world.is_alive(entity) {
+                        continue;
+                    }
+                    if let (Some(gt), Some(mr)) = (
+                        self.world.get::<GlobalTransform>(entity),
+                        self.world.get::<MeshRenderer>(entity),
+                    ) {
+                        let mut t = gt.0;
+                        t.scale = t.scale * 1.06;
+                        draw_commands.push(DrawCommand {
+                            mesh: mr.mesh,
+                            material: outline_mat,
+                            model_matrix: t.to_matrix(),
+                        });
+                    }
+                    break;
+                }
+            }
 
             let light = {
                 let query = Query::<&DirectionalLight>::new(&self.world);
@@ -339,8 +375,61 @@ impl ApplicationHandler for EditorApp {
                     w.request_redraw();
                 }
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_pos = [position.x as f32, position.y as f32];
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => {
+                // Viewport click-to-select via raycasting
+                self.pick_entity_at_cursor();
+            }
             _ => {}
         }
+    }
+}
+
+impl EditorApp {
+    fn pick_entity_at_cursor(&mut self) {
+        let gpu = match &self.gpu {
+            Some(g) => g,
+            None => return,
+        };
+        let camera = match self.world.resource::<Camera>() {
+            Some(c) => c.clone(),
+            None => return,
+        };
+
+        let screen_w = gpu.surface_config.width as f32;
+        let screen_h = gpu.surface_config.height as f32;
+        let (ray_origin, ray_dir) =
+            camera.screen_to_ray(self.mouse_pos[0], self.mouse_pos[1], screen_w, screen_h);
+        let ray = Ray::new(ray_origin, ray_dir);
+
+        // Test against all entities with colliders
+        let mut closest: Option<(euca_ecs::Entity, f32)> = None;
+
+        let candidates: Vec<(euca_ecs::Entity, Vec3, Collider)> = {
+            let query = Query::<(euca_ecs::Entity, &GlobalTransform, &Collider)>::new(&self.world);
+            query
+                .iter()
+                .map(|(e, gt, col)| (e, gt.0.translation, col.clone()))
+                .collect()
+        };
+
+        for (entity, pos, collider) in &candidates {
+            if let Some(hit) = raycast_collider(&ray, *pos, collider) {
+                if hit.t >= 0.0 {
+                    if closest.is_none() || hit.t < closest.unwrap().1 {
+                        closest = Some((*entity, hit.t));
+                    }
+                }
+            }
+        }
+
+        self.editor_state.selected_entity = closest.map(|(e, _)| e.index());
     }
 }
 

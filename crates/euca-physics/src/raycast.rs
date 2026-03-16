@@ -108,6 +108,20 @@ pub fn raycast_sphere(ray: &Ray, center: Vec3, radius: f32) -> Option<RayHit> {
     Some(RayHit { t, point, normal })
 }
 
+/// Raycast against a collider at a given position. Dispatches by shape.
+pub fn raycast_collider(
+    ray: &Ray,
+    pos: euca_math::Vec3,
+    collider: &crate::components::Collider,
+) -> Option<RayHit> {
+    match &collider.shape {
+        crate::components::ColliderShape::Aabb { hx, hy, hz } => {
+            raycast_aabb(ray, pos, *hx, *hy, *hz)
+        }
+        crate::components::ColliderShape::Sphere { radius } => raycast_sphere(ray, pos, *radius),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
