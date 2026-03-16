@@ -20,6 +20,15 @@ log = "0.4"
 name = "headless_server"
 path = "../../examples/headless_server.rs"
 
+[[example]]
+name = "agent_game"
+path = "../../examples/agent_game.rs"
+
+[[example]]
+name = "agent_client"
+path = "../../examples/agent_client.rs"
+
 [dev-dependencies]
 env_logger = "0.11"
-reqwest = { version = "0.12", features = ["json"] }
+bincode = "1"
+reqwest = { version = "0.12", features = ["json", "blocking"] }

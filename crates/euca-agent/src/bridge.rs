@@ -155,6 +155,13 @@ impl AgentBridge {
         self.agents.contains_key(&network_id)
     }
 
+    /// Iterate over agent (network_id, fake_addr) pairs.
+    pub fn agents_iter(&self) -> impl Iterator<Item = (u64, SocketAddr)> + '_ {
+        self.agents
+            .iter()
+            .map(|(nid, agent)| (*nid, agent.fake_addr))
+    }
+
     /// Get the fake_addr for an agent (used by game server to look up player).
     pub fn agent_addr(&self, network_id: u64) -> Option<SocketAddr> {
         self.agents.get(&network_id).map(|a| a.fake_addr)
