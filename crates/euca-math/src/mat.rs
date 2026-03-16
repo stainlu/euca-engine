@@ -109,6 +109,33 @@ impl Mat4 {
         }
     }
 
+    /// Orthographic projection (left-handed, depth 0..1).
+    pub fn orthographic_lh(
+        left: f32,
+        right: f32,
+        bottom: f32,
+        top: f32,
+        z_near: f32,
+        z_far: f32,
+    ) -> Self {
+        let rml = right - left;
+        let tmb = top - bottom;
+        let fmn = z_far - z_near;
+        Self {
+            cols: [
+                [2.0 / rml, 0.0, 0.0, 0.0],
+                [0.0, 2.0 / tmb, 0.0, 0.0],
+                [0.0, 0.0, 1.0 / fmn, 0.0],
+                [
+                    -(right + left) / rml,
+                    -(top + bottom) / tmb,
+                    -z_near / fmn,
+                    1.0,
+                ],
+            ],
+        }
+    }
+
     pub fn perspective_lh(fov_y_radians: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
         let h = 1.0 / (fov_y_radians * 0.5).tan();
         let w = h / aspect;
