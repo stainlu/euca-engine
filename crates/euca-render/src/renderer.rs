@@ -95,9 +95,18 @@ pub struct Renderer {
     shadow_instance_buffer: wgpu::Buffer,
     shadow_instance_bind_group: wgpu::BindGroup,
 
+    // Post-processing
+    postprocess_pipeline: wgpu::RenderPipeline,
+    postprocess_bgl: wgpu::BindGroupLayout,
+    postprocess_sampler: wgpu::Sampler,
+    hdr_texture: wgpu::Texture,
+    hdr_view: wgpu::TextureView,
+    postprocess_bind_group: wgpu::BindGroup,
+
     meshes: Vec<GpuMesh>,
     depth_texture: wgpu::TextureView,
     depth_format: wgpu::TextureFormat,
+    surface_format: wgpu::TextureFormat,
 }
 
 impl Renderer {
@@ -360,44 +369,9 @@ impl Renderer {
                     push_constant_ranges: &[],
                 });
 
-        let sky_pipeline = gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Sky Pipeline"),
-                layout: Some(&sky_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &sky_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &sky_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: gpu.surface_config.format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: depth_format,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                multiview: None,
-                cache: None,
-            });
+        // ── Main PBR pipeline (renders to HDR texture) ──
+        let hdr_format = wgpu::TextureFormat::Rgba16Float;
 
-        // ── Main PBR pipeline ──
         let shader = gpu
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -431,7 +405,7 @@ impl Renderer {
                     module: &shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: gpu.surface_config.format,
+                        format: hdr_format,
                         blend: Some(wgpu::BlendState::REPLACE),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -455,6 +429,135 @@ impl Renderer {
                 cache: None,
             });
 
+        // Sky pipeline also renders to HDR
+        // (already created above — need to recreate with hdr_format)
+        // We'll handle this by creating a separate sky pipeline for HDR
+        // Actually sky_pipeline was created with surface format; let's recreate it
+        let sky_pipeline = gpu
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Sky Pipeline"),
+                layout: Some(&sky_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &sky_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &sky_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: hdr_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // ── HDR offscreen texture ──
+        let (hdr_texture, hdr_view) = Self::create_hdr_texture(&gpu.device, &gpu.surface_config);
+
+        // ── Post-processing pipeline (HDR → surface) ──
+        let postprocess_shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Postprocess Shader"),
+                source: wgpu::ShaderSource::Wgsl(POSTPROCESS_SHADER.into()),
+            });
+
+        let postprocess_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Postprocess Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let postprocess_bgl =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Postprocess BGL"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+        let postprocess_bind_group = Self::create_postprocess_bind_group(
+            &gpu.device,
+            &postprocess_bgl,
+            &hdr_view,
+            &postprocess_sampler,
+        );
+
+        let postprocess_pipeline_layout =
+            gpu.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Postprocess Pipeline Layout"),
+                    bind_group_layouts: &[&postprocess_bgl],
+                    push_constant_ranges: &[],
+                });
+
+        let postprocess_pipeline =
+            gpu.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Postprocess Pipeline"),
+                    layout: Some(&postprocess_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &postprocess_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &postprocess_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: gpu.surface_config.format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    multiview: None,
+                    cache: None,
+                });
+
         Self {
             pipeline,
             instance_buffer,
@@ -474,9 +577,16 @@ impl Renderer {
             shadow_sampler,
             shadow_instance_buffer,
             shadow_instance_bind_group,
+            postprocess_pipeline,
+            postprocess_bgl,
+            postprocess_sampler,
+            hdr_texture,
+            hdr_view,
+            postprocess_bind_group,
             meshes: Vec::new(),
             depth_texture,
             depth_format,
+            surface_format: gpu.surface_config.format,
         }
     }
 
@@ -582,6 +692,15 @@ impl Renderer {
     pub fn resize(&mut self, gpu: &GpuContext) {
         self.depth_texture =
             Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
+        let (hdr_texture, hdr_view) = Self::create_hdr_texture(&gpu.device, &gpu.surface_config);
+        self.hdr_texture = hdr_texture;
+        self.hdr_view = hdr_view;
+        self.postprocess_bind_group = Self::create_postprocess_bind_group(
+            &gpu.device,
+            &self.postprocess_bgl,
+            &self.hdr_view,
+            &self.postprocess_sampler,
+        );
     }
 
     fn light_vp(light: &DirectionalLight) -> Mat4 {
@@ -772,12 +891,12 @@ impl Renderer {
         gpu.queue
             .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
 
-        // ── Main PBR pass ──
+        // ── Main PBR pass (renders to HDR offscreen texture) ──
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("PBR Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_view,
+                    view: &self.hdr_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -825,6 +944,28 @@ impl Renderer {
                 );
             }
         }
+
+        // ── Post-processing pass (HDR → output) ──
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Postprocess Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+
+            pass.set_pipeline(&self.postprocess_pipeline);
+            pass.set_bind_group(0, &self.postprocess_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
     }
 
     fn create_depth_texture(
@@ -847,6 +988,50 @@ impl Renderer {
             view_formats: &[],
         });
         texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    fn create_hdr_texture(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("HDR Texture"),
+            size: wgpu::Extent3d {
+                width: config.width.max(1),
+                height: config.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
+    }
+
+    fn create_postprocess_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        hdr_view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Postprocess BG"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(hdr_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        })
     }
 }
 
@@ -1017,9 +1202,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient = scene.ambient_color.rgb * ambient_intensity * albedo;
 
     let color = ambient + Lo;
-    let mapped = color / (color + vec3<f32>(1.0));
-    let gamma_corrected = pow(mapped, vec3<f32>(1.0 / 2.2));
-    return vec4<f32>(gamma_corrected, 1.0);
+    return vec4<f32>(color, 1.0); // linear HDR output — tone mapping done in post-processing
 }
 "#;
 
@@ -1086,8 +1269,88 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let horizon_glow = pow(sun_dot, 8.0) * (1.0 - up) * 0.3;
     color += vec3<f32>(1.0, 0.6, 0.3) * horizon_glow;
 
-    let mapped = color / (color + vec3<f32>(1.0));
+    return vec4<f32>(color, 1.0); // linear HDR — tone mapping in post-processing
+}
+"#;
+
+/// Post-processing shader: bloom approximation + ACES tone mapping + vignette.
+const POSTPROCESS_SHADER: &str = r#"
+@group(0) @binding(0) var hdr_tex: texture_2d<f32>;
+@group(0) @binding(1) var hdr_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) id: u32) -> VertexOutput {
+    let x = f32(i32(id) / 2) * 4.0 - 1.0;
+    let y = f32(i32(id) % 2) * 4.0 - 1.0;
+    var out: VertexOutput;
+    out.position = vec4<f32>(x, y, 0.0, 1.0);
+    out.uv = vec2<f32>(x * 0.5 + 0.5, -y * 0.5 + 0.5);
+    return out;
+}
+
+// ACES filmic tone mapping (fitted curve by Krzysztof Narkowicz)
+fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// Simple bloom: 13-tap filter sampling at wide offsets for glow
+fn bloom_sample(uv: vec2<f32>, texel: vec2<f32>) -> vec3<f32> {
+    var bloom = vec3<f32>(0.0);
+    // Center
+    let center = textureSample(hdr_tex, hdr_sampler, uv).rgb;
+
+    // 12 samples in a circle at wide radius for glow approximation
+    let offsets = array<vec2<f32>, 12>(
+        vec2<f32>(-1.0,  0.0), vec2<f32>( 1.0,  0.0),
+        vec2<f32>( 0.0, -1.0), vec2<f32>( 0.0,  1.0),
+        vec2<f32>(-0.7, -0.7), vec2<f32>( 0.7, -0.7),
+        vec2<f32>(-0.7,  0.7), vec2<f32>( 0.7,  0.7),
+        vec2<f32>(-2.0,  0.0), vec2<f32>( 2.0,  0.0),
+        vec2<f32>( 0.0, -2.0), vec2<f32>( 0.0,  2.0),
+    );
+
+    let radius = 4.0; // pixel radius for bloom
+    for (var i = 0u; i < 12u; i++) {
+        let sample_uv = uv + offsets[i] * texel * radius;
+        let s = textureSample(hdr_tex, hdr_sampler, sample_uv).rgb;
+        // Only bloom bright pixels (threshold at ~1.0 luminance)
+        let luminance = dot(s, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let bright = max(luminance - 0.8, 0.0) / max(luminance, 0.001);
+        bloom += s * bright;
+    }
+
+    return center + bloom * 0.08; // subtle bloom intensity
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(hdr_tex));
+    let texel = 1.0 / dims;
+
+    // Bloom
+    let hdr = bloom_sample(in.uv, texel);
+
+    // ACES tone mapping
+    let mapped = aces_tonemap(hdr);
+
+    // Gamma correction (linear → sRGB)
     let gamma = pow(mapped, vec3<f32>(1.0 / 2.2));
-    return vec4<f32>(gamma, 1.0);
+
+    // Vignette (subtle darkening at edges)
+    let center_dist = length(in.uv - 0.5) * 1.4;
+    let vignette = 1.0 - center_dist * center_dist * 0.35;
+    let final_color = gamma * vignette;
+
+    return vec4<f32>(final_color, 1.0);
 }
 "#;
