@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Archetype-based ECS with generational entities, type-safe queries, change detection, and parallel iteration"
-keywords = ["ecs", "gamedev", "entity-component-system", "archetype"]
+keywords = ["ecs", "gamedev", "archetype", "entity", "component"]
 categories = ["game-development", "data-structures"]
 
 [dependencies]
