@@ -243,6 +243,12 @@ impl Mat4 {
         self.cols
     }
 
+    /// Create from a column-major 2D array.
+    #[inline(always)]
+    pub fn from_cols_array_2d(cols: &[[f32; 4]; 4]) -> Self {
+        Self { cols: *cols }
+    }
+
     /// Transform a point (w=1, applies translation).
     pub fn transform_point3(&self, p: Vec3) -> Vec3 {
         let m = &self.cols;

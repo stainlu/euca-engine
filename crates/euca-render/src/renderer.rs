@@ -30,16 +30,15 @@ pub struct DrawCommand {
     pub model_matrix: Mat4,
 }
 
-/// Per-object transform uniforms (used in both shadow and main pass).
+/// Per-instance data in storage buffer.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct ObjectUniforms {
-    mvp: [[f32; 4]; 4],
+struct InstanceData {
     model: [[f32; 4]; 4],
     normal_matrix: [[f32; 4]; 4],
 }
 
-/// Per-frame scene uniforms (camera + lighting + shadow).
+/// Per-frame scene uniforms.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct SceneUniforms {
@@ -47,8 +46,9 @@ struct SceneUniforms {
     light_direction: [f32; 4],
     light_color: [f32; 4],
     ambient_color: [f32; 4],
-    light_vp: [[f32; 4]; 4], // light view-projection for shadow mapping
-    inv_vp: [[f32; 4]; 4],   // inverse view-projection for sky ray direction
+    camera_vp: [[f32; 4]; 4],
+    light_vp: [[f32; 4]; 4],
+    inv_vp: [[f32; 4]; 4],
 }
 
 /// Per-material GPU resources.
@@ -57,39 +57,43 @@ struct GpuMaterial {
     _buffer: wgpu::Buffer,
 }
 
-const MAX_DRAW_CALLS: usize = 1024;
+/// A batch of instances sharing the same mesh + material.
+struct DrawBatch {
+    mesh: MeshHandle,
+    material: MaterialHandle,
+    instance_start: u32,
+    instance_count: u32,
+}
+
+const MAX_INSTANCES: usize = 16384;
 const SHADOW_MAP_SIZE: u32 = 2048;
-const SHADOW_ORTHO_SIZE: f32 = 20.0; // world units covered by shadow map
+const SHADOW_ORTHO_SIZE: f32 = 20.0;
 
 #[allow(dead_code)]
 pub struct Renderer {
-    // Main PBR pipeline
     pipeline: wgpu::RenderPipeline,
-    // Group 0: per-object transforms (dynamic)
-    object_buffer: wgpu::Buffer,
-    object_bind_group: wgpu::BindGroup,
-    object_aligned_size: u64,
-    // Group 1: per-frame scene data + shadow map
+    // Group 0: per-instance storage buffer
+    instance_buffer: wgpu::Buffer,
+    instance_bind_group: wgpu::BindGroup,
+    instance_bgl: wgpu::BindGroupLayout,
+    // Group 1: scene + shadow
     scene_buffer: wgpu::Buffer,
     scene_bgl: wgpu::BindGroupLayout,
     scene_bind_group: wgpu::BindGroup,
-    // Group 2: per-material (individual bind groups)
+    // Group 2: per-material
     material_bgl: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     materials: Vec<GpuMaterial>,
     textures: TextureStore,
 
-    // Sky
     sky_pipeline: wgpu::RenderPipeline,
 
-    // Shadow mapping
     shadow_pipeline: wgpu::RenderPipeline,
     shadow_map: wgpu::Texture,
     shadow_map_view: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
-    shadow_object_buffer: wgpu::Buffer,
-    shadow_object_bind_group: wgpu::BindGroup,
-    shadow_object_aligned_size: u64,
+    shadow_instance_buffer: wgpu::Buffer,
+    shadow_instance_bind_group: wgpu::BindGroup,
 
     meshes: Vec<GpuMesh>,
     depth_texture: wgpu::TextureView,
@@ -98,15 +102,13 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
-        let min_align = gpu.device.limits().min_uniform_buffer_offset_alignment as u64;
-        let object_size = std::mem::size_of::<ObjectUniforms>() as u64;
-        let object_aligned = object_size.div_ceil(min_align) * min_align;
+        let instance_buf_size = (MAX_INSTANCES * std::mem::size_of::<InstanceData>()) as u64;
 
-        // ── Shared resources ──
-        let object_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Object UBO"),
-            size: object_aligned * MAX_DRAW_CALLS as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        // ── Buffers ──
+        let instance_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance SSBO"),
+            size: instance_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -114,6 +116,13 @@ impl Renderer {
             label: Some("Scene UBO"),
             size: std::mem::size_of::<SceneUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let shadow_instance_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Shadow Instance SSBO"),
+            size: instance_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -156,23 +165,22 @@ impl Renderer {
         });
 
         // ── Bind group layouts ──
-        let object_bgl = gpu
+        let instance_bgl = gpu
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Object BGL"),
+                label: Some("Instance BGL"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(object_size),
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
                     count: None,
                 }],
             });
 
-        // Scene BGL: uniforms + shadow map + shadow sampler
         let scene_bgl = gpu
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -247,16 +255,21 @@ impl Renderer {
             });
 
         // ── Bind groups ──
-        let object_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Object BG"),
-            layout: &object_bgl,
+        let instance_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Instance BG"),
+            layout: &instance_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &object_buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(object_size),
-                }),
+                resource: instance_buffer.as_entire_binding(),
+            }],
+        });
+
+        let shadow_instance_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Shadow Instance BG"),
+            layout: &instance_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: shadow_instance_buffer.as_entire_binding(),
             }],
         });
 
@@ -279,7 +292,9 @@ impl Renderer {
             ],
         });
 
-        // ── Shadow pipeline (depth-only, uses only group 0) ──
+        let depth_format = wgpu::TextureFormat::Depth32Float;
+
+        // ── Shadow pipeline ──
         let shadow_shader = gpu
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -287,32 +302,11 @@ impl Renderer {
                 source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
             });
 
-        // Shadow pass uses its own object buffer (light-space MVPs)
-        let shadow_object_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Shadow Object UBO"),
-            size: object_aligned * MAX_DRAW_CALLS as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let shadow_object_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Shadow Object BG"),
-            layout: &object_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &shadow_object_buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(object_size),
-                }),
-            }],
-        });
-
         let shadow_pipeline_layout =
             gpu.device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Shadow Pipeline Layout"),
-                    bind_group_layouts: &[&object_bgl],
+                    bind_group_layouts: &[&instance_bgl], // only instances, no scene (avoids shadow map conflict)
                     push_constant_ranges: &[],
                 });
 
@@ -327,15 +321,15 @@ impl Renderer {
                     buffers: &[Vertex::LAYOUT],
                     compilation_options: Default::default(),
                 },
-                fragment: None, // depth-only
+                fragment: None,
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Front), // front-face culling reduces shadow acne
+                    cull_mode: Some(wgpu::Face::Front),
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
+                    format: depth_format,
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: Default::default(),
@@ -350,9 +344,7 @@ impl Renderer {
                 cache: None,
             });
 
-        let depth_format = wgpu::TextureFormat::Depth32Float;
-
-        // ── Sky pipeline (fullscreen triangle, procedural gradient) ──
+        // ── Sky pipeline ──
         let sky_shader = gpu
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -364,7 +356,7 @@ impl Renderer {
             gpu.device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Sky Pipeline Layout"),
-                    bind_group_layouts: &[&scene_bgl], // only scene data (group 0 in sky shader)
+                    bind_group_layouts: &[&scene_bgl],
                     push_constant_ranges: &[],
                 });
 
@@ -376,7 +368,7 @@ impl Renderer {
                 vertex: wgpu::VertexState {
                     module: &sky_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[], // fullscreen triangle from vertex ID
+                    buffers: &[],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -395,7 +387,7 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: false, // sky doesn't write depth
+                    depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::Always,
                     stencil: Default::default(),
                     bias: Default::default(),
@@ -417,7 +409,7 @@ impl Renderer {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("PBR Pipeline Layout"),
-                bind_group_layouts: &[&object_bgl, &scene_bgl, &material_bgl],
+                bind_group_layouts: &[&instance_bgl, &scene_bgl, &material_bgl],
                 push_constant_ranges: &[],
             });
 
@@ -465,9 +457,9 @@ impl Renderer {
 
         Self {
             pipeline,
-            object_buffer,
-            object_bind_group,
-            object_aligned_size: object_aligned,
+            instance_buffer,
+            instance_bind_group,
+            instance_bgl,
             scene_buffer,
             scene_bgl,
             scene_bind_group,
@@ -480,9 +472,8 @@ impl Renderer {
             shadow_map,
             shadow_map_view,
             shadow_sampler,
-            shadow_object_buffer,
-            shadow_object_bind_group,
-            shadow_object_aligned_size: object_aligned,
+            shadow_instance_buffer,
+            shadow_instance_bind_group,
             meshes: Vec::new(),
             depth_texture,
             depth_format,
@@ -542,19 +533,16 @@ impl Renderer {
             .checkerboard(&gpu.device, &gpu.queue, size, tile)
     }
 
-    /// Upload a material's PBR properties to the GPU, returning a handle.
+    /// Upload a material's PBR properties to the GPU.
     pub fn upload_material(&mut self, gpu: &GpuContext, mat: &Material) -> MaterialHandle {
         use wgpu::util::DeviceExt;
-
         let handle = MaterialHandle(self.materials.len() as u32);
-
         let uniforms = MaterialUniforms {
             albedo: mat.albedo,
             metallic: mat.metallic,
             roughness: mat.roughness,
             _pad: [0.0; 2],
         };
-
         let buffer = gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -562,12 +550,10 @@ impl Renderer {
                 contents: bytemuck::bytes_of(&uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-
         let tex_handle = mat
             .albedo_texture
             .unwrap_or_else(TextureStore::default_white);
         let tex_view = self.textures.view(tex_handle);
-
         let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material BG"),
             layout: &self.material_bgl,
@@ -586,12 +572,10 @@ impl Renderer {
                 },
             ],
         });
-
         self.materials.push(GpuMaterial {
             bind_group,
             _buffer: buffer,
         });
-
         handle
     }
 
@@ -600,11 +584,9 @@ impl Renderer {
             Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
     }
 
-    /// Compute light view-projection matrix for directional shadow mapping.
     fn light_vp(light: &DirectionalLight) -> Mat4 {
         use euca_math::Vec3;
         let dir = Vec3::new(light.direction[0], light.direction[1], light.direction[2]).normalize();
-        // Place light camera far back along the light direction
         let light_pos = dir * -30.0;
         let light_view = Mat4::look_at_lh(light_pos, Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0));
         let s = SHADOW_ORTHO_SIZE;
@@ -612,7 +594,54 @@ impl Renderer {
         light_proj * light_view
     }
 
-    /// Draw all commands with PBR lighting + shadows.
+    /// Sort commands by (mesh, material) and build batches for instanced drawing.
+    fn build_batches(commands: &[DrawCommand]) -> (Vec<InstanceData>, Vec<DrawBatch>) {
+        if commands.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+
+        // Sort indices by (mesh, material)
+        let mut indices: Vec<usize> = (0..commands.len()).collect();
+        indices.sort_by_key(|&i| (commands[i].mesh.0, commands[i].material.0));
+
+        let mut instances = Vec::with_capacity(commands.len());
+        let mut batches = Vec::new();
+
+        let mut batch_start = 0u32;
+        let mut batch_mesh = commands[indices[0]].mesh;
+        let mut batch_mat = commands[indices[0]].material;
+
+        for &idx in &indices {
+            let cmd = &commands[idx];
+            if cmd.mesh != batch_mesh || cmd.material != batch_mat {
+                batches.push(DrawBatch {
+                    mesh: batch_mesh,
+                    material: batch_mat,
+                    instance_start: batch_start,
+                    instance_count: instances.len() as u32 - batch_start,
+                });
+                batch_start = instances.len() as u32;
+                batch_mesh = cmd.mesh;
+                batch_mat = cmd.material;
+            }
+            let model = cmd.model_matrix;
+            let normal_mat = model.inverse().transpose();
+            instances.push(InstanceData {
+                model: model.to_cols_array_2d(),
+                normal_matrix: normal_mat.to_cols_array_2d(),
+            });
+        }
+        // Final batch
+        batches.push(DrawBatch {
+            mesh: batch_mesh,
+            material: batch_mat,
+            instance_start: batch_start,
+            instance_count: instances.len() as u32 - batch_start,
+        });
+
+        (instances, batches)
+    }
+
     pub fn draw(
         &self,
         gpu: &GpuContext,
@@ -629,24 +658,19 @@ impl Renderer {
                 return;
             }
         };
-
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-
         self.render_to_view(gpu, camera, light, ambient, commands, &view, &mut encoder);
-
         gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
 
-    /// Render to a given texture view (shadow pass + main pass).
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view(
         &self,
@@ -658,27 +682,38 @@ impl Renderer {
         color_view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) {
+        let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
+        let (instances, batches) = Self::build_batches(commands);
 
-        // ── Shadow pass: render depth from light's perspective ──
+        // Upload instance data
+        if !instances.is_empty() {
+            gpu.queue
+                .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        }
+
+        // ── Shadow pass ──
         {
-            let aligned = self.shadow_object_aligned_size as usize;
-            let mut shadow_data = vec![0u8; aligned * commands.len()];
-            for (i, cmd) in commands.iter().enumerate() {
-                let model = cmd.model_matrix;
-                let mvp = light_vp * model;
-                let obj = ObjectUniforms {
-                    mvp: mvp.to_cols_array_2d(),
-                    model: model.to_cols_array_2d(),
-                    normal_matrix: [[0.0; 4]; 4], // unused in shadow pass
-                };
-                let offset = i * aligned;
-                shadow_data[offset..offset + std::mem::size_of::<ObjectUniforms>()]
-                    .copy_from_slice(bytemuck::bytes_of(&obj));
-            }
-            if !commands.is_empty() {
-                gpu.queue
-                    .write_buffer(&self.shadow_object_buffer, 0, &shadow_data);
+            // Bake light_vp * model into shadow instances (avoids binding scene group
+            // which references the shadow map texture — can't read + write same texture)
+            let shadow_instances: Vec<InstanceData> = instances
+                .iter()
+                .map(|inst| {
+                    let model = Mat4::from_cols_array_2d(&inst.model);
+                    let shadow_mvp = light_vp * model;
+                    InstanceData {
+                        model: shadow_mvp.to_cols_array_2d(),
+                        normal_matrix: [[0.0; 4]; 4], // unused in shadow pass
+                    }
+                })
+                .collect();
+
+            if !shadow_instances.is_empty() {
+                gpu.queue.write_buffer(
+                    &self.shadow_instance_buffer,
+                    0,
+                    bytemuck::cast_slice(&shadow_instances),
+                );
             }
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -696,22 +731,21 @@ impl Renderer {
             });
 
             pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(0, &self.shadow_instance_bind_group, &[]);
 
-            for (i, cmd) in commands.iter().enumerate() {
-                let obj_offset = (i as u64 * self.shadow_object_aligned_size) as u32;
-                pass.set_bind_group(0, &self.shadow_object_bind_group, &[obj_offset]);
-
-                let mesh = &self.meshes[cmd.mesh.0 as usize];
+            for batch in &batches {
+                let mesh = &self.meshes[batch.mesh.0 as usize];
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                pass.draw_indexed(
+                    0..mesh.index_count,
+                    0,
+                    batch.instance_start..batch.instance_start + batch.instance_count,
+                );
             }
         }
 
-        // ── Main PBR pass ──
-        let vp = camera.view_projection_matrix(gpu.aspect_ratio());
-
-        // Write scene uniforms (with light VP for shadow sampling)
+        // ── Write scene uniforms ──
         let dir = light.direction;
         let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
             .sqrt()
@@ -731,36 +765,14 @@ impl Renderer {
                 ambient.color[2],
                 ambient.intensity,
             ],
+            camera_vp: vp.to_cols_array_2d(),
             light_vp: light_vp.to_cols_array_2d(),
             inv_vp: vp.inverse().to_cols_array_2d(),
         };
         gpu.queue
             .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
 
-        // Recreate scene bind group each frame (shadow map view doesn't change, but
-        // this ensures the shadow map rendered above is available for sampling)
-        // Note: since shadow_map_view is persistent, the bind group created at init works fine.
-
-        // Write object transforms for main pass
-        let aligned = self.object_aligned_size as usize;
-        let mut obj_data = vec![0u8; aligned * commands.len()];
-        for (i, cmd) in commands.iter().enumerate() {
-            let model = cmd.model_matrix;
-            let mvp = vp * model;
-            let normal_mat = model.inverse().transpose();
-            let obj = ObjectUniforms {
-                mvp: mvp.to_cols_array_2d(),
-                model: model.to_cols_array_2d(),
-                normal_matrix: normal_mat.to_cols_array_2d(),
-            };
-            let offset = i * aligned;
-            obj_data[offset..offset + std::mem::size_of::<ObjectUniforms>()]
-                .copy_from_slice(bytemuck::bytes_of(&obj));
-        }
-        if !commands.is_empty() {
-            gpu.queue.write_buffer(&self.object_buffer, 0, &obj_data);
-        }
-
+        // ── Main PBR pass ──
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("PBR Pass"),
@@ -789,26 +801,28 @@ impl Renderer {
                 ..Default::default()
             });
 
-            // Draw sky first (fullscreen triangle, depth write off, renders behind everything)
+            // Sky
             pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &self.scene_bind_group, &[]);
-            pass.draw(0..3, 0..1); // fullscreen triangle from vertex IDs
+            pass.draw(0..3, 0..1);
 
-            // Draw PBR geometry
+            // PBR geometry (instanced batches)
             pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.instance_bind_group, &[]);
             pass.set_bind_group(1, &self.scene_bind_group, &[]);
 
-            for (i, cmd) in commands.iter().enumerate() {
-                let obj_offset = (i as u64 * self.object_aligned_size) as u32;
-                pass.set_bind_group(0, &self.object_bind_group, &[obj_offset]);
-
-                let gpu_mat = &self.materials[cmd.material.0 as usize];
+            for batch in &batches {
+                let gpu_mat = &self.materials[batch.material.0 as usize];
                 pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
 
-                let mesh = &self.meshes[cmd.mesh.0 as usize];
+                let mesh = &self.meshes[batch.mesh.0 as usize];
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                pass.draw_indexed(
+                    0..mesh.index_count,
+                    0,
+                    batch.instance_start..batch.instance_start + batch.instance_count,
+                );
             }
         }
     }
@@ -836,14 +850,18 @@ impl Renderer {
     }
 }
 
-/// Shadow pass vertex-only shader (depth output from light perspective).
+// ════════════════════════════════════════════════════════════════════════
+// WGSL Shaders
+// ════════════════════════════════════════════════════════════════════════
+
+/// Shadow pass: depth-only. Instance model already contains light_vp * model (baked on CPU).
 const SHADOW_SHADER: &str = r#"
-struct ObjectUniforms {
-    mvp: mat4x4<f32>,
+struct InstanceData {
     model: mat4x4<f32>,
     normal_matrix: mat4x4<f32>,
 };
-@group(0) @binding(0) var<uniform> object: ObjectUniforms;
+
+@group(0) @binding(0) var<storage, read> instances: array<InstanceData>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -852,45 +870,42 @@ struct VertexInput {
 };
 
 @vertex
-fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
-    return object.mvp * vec4<f32>(in.position, 1.0);
+fn vs_main(in: VertexInput, @builtin(instance_index) iid: u32) -> @builtin(position) vec4<f32> {
+    return instances[iid].model * vec4<f32>(in.position, 1.0);
 }
 "#;
 
-/// PBR shader with Cook-Torrance BRDF, texture support, and shadow mapping.
+/// PBR shader with instancing, textures, shadows.
 const PBR_SHADER: &str = r#"
-// ── Bind Group 0: Per-object transforms ──
-struct ObjectUniforms {
-    mvp: mat4x4<f32>,
+struct InstanceData {
     model: mat4x4<f32>,
     normal_matrix: mat4x4<f32>,
 };
-@group(0) @binding(0) var<uniform> object: ObjectUniforms;
 
-// ── Bind Group 1: Per-frame scene data + shadow map ──
 struct SceneUniforms {
     camera_pos: vec4<f32>,
     light_direction: vec4<f32>,
     light_color: vec4<f32>,
     ambient_color: vec4<f32>,
+    camera_vp: mat4x4<f32>,
     light_vp: mat4x4<f32>,
     inv_vp: mat4x4<f32>,
 };
-@group(1) @binding(0) var<uniform> scene: SceneUniforms;
-@group(1) @binding(1) var shadow_map: texture_depth_2d;
-@group(1) @binding(2) var shadow_sampler: sampler_comparison;
 
-// ── Bind Group 2: Per-material data ──
 struct MaterialUniforms {
     albedo: vec4<f32>,
     metallic: f32,
     roughness: f32,
 };
+
+@group(0) @binding(0) var<storage, read> instances: array<InstanceData>;
+@group(1) @binding(0) var<uniform> scene: SceneUniforms;
+@group(1) @binding(1) var shadow_map: texture_depth_2d;
+@group(1) @binding(2) var shadow_sampler: sampler_comparison;
 @group(2) @binding(0) var<uniform> material: MaterialUniforms;
 @group(2) @binding(1) var albedo_tex: texture_2d<f32>;
 @group(2) @binding(2) var albedo_sampler: sampler;
 
-// ── Vertex ──
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -905,17 +920,18 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
+fn vs_main(in: VertexInput, @builtin(instance_index) iid: u32) -> VertexOutput {
+    let model = instances[iid].model;
+    let normal_mat = instances[iid].normal_matrix;
     var out: VertexOutput;
-    let world_pos = (object.model * vec4<f32>(in.position, 1.0)).xyz;
-    out.clip_position = object.mvp * vec4<f32>(in.position, 1.0);
+    let world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    out.clip_position = scene.camera_vp * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
-    out.world_normal = normalize((object.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+    out.world_normal = normalize((normal_mat * vec4<f32>(in.normal, 0.0)).xyz);
     out.uv = in.uv;
     return out;
 }
 
-// ── PBR math ──
 const PI: f32 = 3.14159265359;
 
 fn distribution_ggx(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
@@ -943,22 +959,15 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-// ── Shadow sampling with 3×3 PCF ──
 fn shadow_factor(world_pos: vec3<f32>) -> f32 {
     let light_clip = scene.light_vp * vec4<f32>(world_pos, 1.0);
     let ndc = light_clip.xyz / light_clip.w;
-
-    // NDC to shadow UV: x [-1,1] → [0,1], y [-1,1] → [1,0] (flip Y)
     let shadow_uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
     let current_depth = ndc.z;
-
-    // Outside shadow map → fully lit
     if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
         return 1.0;
     }
-
-    // 3×3 PCF (Percentage Closer Filtering) for soft shadows
-    let texel_size = 1.0 / 2048.0; // SHADOW_MAP_SIZE
+    let texel_size = 1.0 / 2048.0;
     var shadow = 0.0;
     for (var x = -1i; x <= 1i; x++) {
         for (var y = -1i; y <= 1i; y++) {
@@ -972,7 +981,6 @@ fn shadow_factor(world_pos: vec3<f32>) -> f32 {
     return shadow / 9.0;
 }
 
-// ── Fragment ──
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(albedo_tex, albedo_sampler, in.uv);
@@ -982,7 +990,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let N = normalize(in.world_normal);
     let V = normalize(scene.camera_pos.xyz - in.world_pos);
-
     let F0 = mix(vec3<f32>(0.04), albedo, metallic);
 
     let L = normalize(-scene.light_direction.xyz);
@@ -992,7 +999,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_intensity = scene.light_color.w;
     let radiance = scene.light_color.rgb * light_intensity;
 
-    // Cook-Torrance BRDF
     let D = distribution_ggx(N, H, roughness);
     let G = geometry_smith(N, V, L, roughness);
     let F = fresnel_schlick(max(dot(H, V), 0.0), F0);
@@ -1004,35 +1010,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
 
-    // Shadow
     let shadow = shadow_factor(in.world_pos);
-
-    // Outgoing radiance (attenuated by shadow)
     let Lo = (kD * albedo / PI + specular) * radiance * NdotL * shadow;
 
-    // Ambient (not affected by shadow)
     let ambient_intensity = scene.ambient_color.w;
     let ambient = scene.ambient_color.rgb * ambient_intensity * albedo;
 
     let color = ambient + Lo;
-
-    // Reinhard tone mapping
     let mapped = color / (color + vec3<f32>(1.0));
-
-    // Gamma correction
     let gamma_corrected = pow(mapped, vec3<f32>(1.0 / 2.2));
-
     return vec4<f32>(gamma_corrected, 1.0);
 }
 "#;
 
-/// Procedural sky shader — fullscreen triangle with gradient + sun glow.
+/// Procedural sky shader.
 const SKY_SHADER: &str = r#"
 struct SceneUniforms {
     camera_pos: vec4<f32>,
     light_direction: vec4<f32>,
     light_color: vec4<f32>,
     ambient_color: vec4<f32>,
+    camera_vp: mat4x4<f32>,
     light_vp: mat4x4<f32>,
     inv_vp: mat4x4<f32>,
 };
@@ -1043,67 +1041,53 @@ struct VertexOutput {
     @location(0) ndc: vec2<f32>,
 };
 
-// Fullscreen triangle from vertex ID (no vertex buffer needed)
 @vertex
 fn vs_main(@builtin(vertex_index) id: u32) -> VertexOutput {
-    // Oversized triangle covering the full screen
     let x = f32(i32(id) / 2) * 4.0 - 1.0;
     let y = f32(i32(id) % 2) * 4.0 - 1.0;
     var out: VertexOutput;
-    out.position = vec4<f32>(x, y, 1.0, 1.0); // at far plane
+    out.position = vec4<f32>(x, y, 1.0, 1.0);
     out.ndc = vec2<f32>(x, y);
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Reconstruct view direction from NDC using inverse VP
     let clip = vec4<f32>(in.ndc.x, in.ndc.y, 1.0, 1.0);
     let world_h = scene.inv_vp * clip;
     let world_dir = normalize(world_h.xyz / world_h.w - scene.camera_pos.xyz);
 
-    // Vertical gradient: ground to sky
     let up = max(world_dir.y, 0.0);
     let down = max(-world_dir.y, 0.0);
 
-    // Sky colors
-    let sky_zenith = vec3<f32>(0.15, 0.3, 0.65);   // deep blue
-    let sky_horizon = vec3<f32>(0.55, 0.7, 0.9);    // pale blue
-    let ground_color = vec3<f32>(0.15, 0.13, 0.12); // dark ground
+    let sky_zenith = vec3<f32>(0.15, 0.3, 0.65);
+    let sky_horizon = vec3<f32>(0.55, 0.7, 0.9);
+    let ground_color = vec3<f32>(0.15, 0.13, 0.12);
 
-    // Blend sky gradient
     var color: vec3<f32>;
     if world_dir.y >= 0.0 {
-        // Sky: horizon → zenith
         let t = pow(up, 0.5);
         color = mix(sky_horizon, sky_zenith, t);
     } else {
-        // Below horizon: darken toward ground
         let t = pow(down, 0.8);
         color = mix(sky_horizon, ground_color, t);
     }
 
-    // Sun glow near light direction
     let sun_dir = normalize(-scene.light_direction.xyz);
     let sun_dot = max(dot(world_dir, sun_dir), 0.0);
 
-    // Sun disk
     let sun_disk = smoothstep(0.9995, 0.9999, sun_dot);
     let sun_color = vec3<f32>(1.0, 0.95, 0.85);
     color = mix(color, sun_color * 3.0, sun_disk);
 
-    // Sun glow (halo)
     let glow = pow(sun_dot, 64.0) * 0.6;
     color += sun_color * glow;
 
-    // Atmospheric scattering near horizon
     let horizon_glow = pow(sun_dot, 8.0) * (1.0 - up) * 0.3;
     color += vec3<f32>(1.0, 0.6, 0.3) * horizon_glow;
 
-    // Tone map + gamma
     let mapped = color / (color + vec3<f32>(1.0));
     let gamma = pow(mapped, vec3<f32>(1.0 / 2.2));
-
     return vec4<f32>(gamma, 1.0);
 }
 "#;
