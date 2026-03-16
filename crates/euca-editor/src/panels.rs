@@ -44,16 +44,42 @@ pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World
     });
 }
 
+/// Entity spawn request from the hierarchy panel.
+#[derive(Clone, Debug)]
+pub enum SpawnRequest {
+    Empty,
+    Cube,
+    Sphere,
+}
+
 /// Left panel: entity hierarchy list.
-pub fn hierarchy_panel(ctx: &egui::Context, state: &mut EditorState, world: &World) {
+pub fn hierarchy_panel(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    world: &World,
+) -> Option<SpawnRequest> {
+    let mut spawn = None;
     egui::SidePanel::left("hierarchy")
         .default_width(200.0)
         .show(ctx, |ui| {
             ui.heading("Hierarchy");
+
+            // Add Entity buttons
+            ui.horizontal(|ui| {
+                if ui.button("+ Empty").clicked() {
+                    spawn = Some(SpawnRequest::Empty);
+                }
+                if ui.button("+ Cube").clicked() {
+                    spawn = Some(SpawnRequest::Cube);
+                }
+                if ui.button("+ Sphere").clicked() {
+                    spawn = Some(SpawnRequest::Sphere);
+                }
+            });
+
             ui.separator();
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                // List all entities with GlobalTransform (scene entities)
                 let entities: Vec<(Entity, bool, bool, bool)> = {
                     let query = Query::<Entity>::new(world);
                     query
@@ -87,6 +113,7 @@ pub fn hierarchy_panel(ctx: &egui::Context, state: &mut EditorState, world: &Wor
                 }
             });
         });
+    spawn
 }
 
 /// Right panel: inspector for the selected entity.

@@ -1,6 +1,6 @@
 mod panels;
 
-pub use panels::{hierarchy_panel, inspector_panel, toolbar_panel};
+pub use panels::{SpawnRequest, hierarchy_panel, inspector_panel, toolbar_panel};
 
 /// Editor state: tracks selection, play/pause, etc.
 pub struct EditorState {

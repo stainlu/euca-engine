@@ -1,6 +1,6 @@
 use euca_core::Time;
 use euca_ecs::{Query, World};
-use euca_editor::{EditorState, hierarchy_panel, inspector_panel, toolbar_panel};
+use euca_editor::{EditorState, SpawnRequest, hierarchy_panel, inspector_panel, toolbar_panel};
 use euca_math::{Transform, Vec3};
 use euca_physics::{
     Collider, PhysicsBody, PhysicsConfig, Ray, Velocity, physics_step_system, raycast_collider,
@@ -34,6 +34,10 @@ struct EditorApp {
     cam_distance: f32,
     cam_target: Vec3,
     outline_material: Option<MaterialHandle>,
+    // Stored handles for entity creation
+    cube_mesh: Option<MeshHandle>,
+    sphere_mesh: Option<MeshHandle>,
+    default_material: Option<MaterialHandle>,
 }
 
 impl EditorApp {
@@ -71,6 +75,9 @@ impl EditorApp {
             cam_distance: 12.0,
             cam_target: Vec3::new(0.0, 1.0, 0.0),
             outline_material: None,
+            cube_mesh: None,
+            sphere_mesh: None,
+            default_material: None,
         }
     }
 
@@ -81,24 +88,32 @@ impl EditorApp {
         let cube = renderer.upload_mesh(gpu, &Mesh::cube());
         let sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.5, 16, 32));
         let plane = renderer.upload_mesh(gpu, &Mesh::plane(20.0));
+        self.cube_mesh = Some(cube);
+        self.sphere_mesh = Some(sphere);
 
-        let gray = renderer.upload_material(gpu, &Material::gray());
+        // Grid texture for ground (dark lines on lighter background)
+        let grid_tex = renderer.checkerboard_texture(gpu, 512, 32);
+        let grid_mat = renderer.upload_material(
+            gpu,
+            &Material::new([0.45, 0.45, 0.45, 1.0], 0.0, 0.95).with_texture(grid_tex),
+        );
         let red = renderer.upload_material(gpu, &Material::red_plastic());
         let blue = renderer.upload_material(gpu, &Material::blue_plastic());
         let gold = renderer.upload_material(gpu, &Material::gold());
         let green = renderer.upload_material(gpu, &Material::green());
+        self.default_material = Some(blue);
 
         // Bright orange outline material for selection highlight
         self.outline_material =
             Some(renderer.upload_material(gpu, &Material::new([1.0, 0.6, 0.0, 1.0], 0.0, 1.0)));
 
-        // Ground
+        // Ground with grid texture
         let g = self
             .world
             .spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         self.world.insert(g, GlobalTransform::default());
         self.world.insert(g, MeshRenderer { mesh: plane });
-        self.world.insert(g, MaterialRef { handle: gray });
+        self.world.insert(g, MaterialRef { handle: grid_mat });
         self.world.insert(g, PhysicsBody::fixed());
         self.world.insert(g, Collider::aabb(10.0, 0.01, 10.0));
 
@@ -131,10 +146,34 @@ impl EditorApp {
             };
 
         // Pillars
-        spawn_static(&mut self.world, Vec3::new(5.0, 1.0, 5.0), cube, gray, 0.3);
-        spawn_static(&mut self.world, Vec3::new(-5.0, 1.0, 5.0), cube, gray, 0.3);
-        spawn_static(&mut self.world, Vec3::new(5.0, 1.0, -5.0), cube, gray, 0.3);
-        spawn_static(&mut self.world, Vec3::new(-5.0, 1.0, -5.0), cube, gray, 0.3);
+        spawn_static(
+            &mut self.world,
+            Vec3::new(5.0, 1.0, 5.0),
+            cube,
+            grid_mat,
+            0.3,
+        );
+        spawn_static(
+            &mut self.world,
+            Vec3::new(-5.0, 1.0, 5.0),
+            cube,
+            grid_mat,
+            0.3,
+        );
+        spawn_static(
+            &mut self.world,
+            Vec3::new(5.0, 1.0, -5.0),
+            cube,
+            grid_mat,
+            0.3,
+        );
+        spawn_static(
+            &mut self.world,
+            Vec3::new(-5.0, 1.0, -5.0),
+            cube,
+            grid_mat,
+            0.3,
+        );
 
         // Spheres
         let spawn_sphere = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
@@ -299,6 +338,7 @@ impl EditorApp {
         let egui_winit = self.egui_winit.as_mut().unwrap();
         let raw_input = egui_winit.take_egui_input(window);
 
+        let mut spawn_request = None;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             let dt = self
                 .world
@@ -306,10 +346,40 @@ impl EditorApp {
                 .map(|t| t.delta)
                 .unwrap_or(0.0);
             toolbar_panel(ctx, &mut self.editor_state, &self.world, dt);
-            hierarchy_panel(ctx, &mut self.editor_state, &self.world);
+            spawn_request = hierarchy_panel(ctx, &mut self.editor_state, &self.world);
             inspector_panel(ctx, &mut self.editor_state, &mut self.world);
-            // Central panel is transparent — 3D scene shows through
         });
+
+        // Handle entity spawn requests
+        if let Some(req) = spawn_request {
+            let pos = Vec3::new(0.0, 2.0, 0.0);
+            let e = self
+                .world
+                .spawn(LocalTransform(Transform::from_translation(pos)));
+            self.world.insert(e, GlobalTransform::default());
+            match req {
+                SpawnRequest::Cube => {
+                    if let Some(mesh) = self.cube_mesh {
+                        self.world.insert(e, MeshRenderer { mesh });
+                    }
+                    if let Some(mat) = self.default_material {
+                        self.world.insert(e, MaterialRef { handle: mat });
+                    }
+                    self.world.insert(e, Collider::aabb(0.5, 0.5, 0.5));
+                }
+                SpawnRequest::Sphere => {
+                    if let Some(mesh) = self.sphere_mesh {
+                        self.world.insert(e, MeshRenderer { mesh });
+                    }
+                    if let Some(mat) = self.default_material {
+                        self.world.insert(e, MaterialRef { handle: mat });
+                    }
+                    self.world.insert(e, Collider::sphere(0.5));
+                }
+                SpawnRequest::Empty => {}
+            }
+            self.editor_state.selected_entity = Some(e.index());
+        }
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
@@ -416,6 +486,50 @@ impl ApplicationHandler for EditorApp {
                     },
                 ..
             } => event_loop.exit(),
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::Delete),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                // Delete selected entity
+                if let Some(idx) = self.editor_state.selected_entity {
+                    for g in 0..16u32 {
+                        let e = euca_ecs::Entity::from_raw(idx, g);
+                        if self.world.is_alive(e) {
+                            self.world.despawn(e);
+                            break;
+                        }
+                    }
+                    self.editor_state.selected_entity = None;
+                }
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(ref ch),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if ch.as_str() == "f" || ch.as_str() == "F" => {
+                // Focus camera on selected entity
+                if let Some(idx) = self.editor_state.selected_entity {
+                    for g in 0..16u32 {
+                        let e = euca_ecs::Entity::from_raw(idx, g);
+                        if self.world.is_alive(e) {
+                            if let Some(gt) = self.world.get::<GlobalTransform>(e) {
+                                self.cam_target = gt.0.translation;
+                                self.cam_distance = 5.0;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
