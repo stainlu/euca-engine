@@ -1,6 +1,4 @@
-use euca_net::{
-    ClientMessage, EntityState, GameServer, NetworkId, ServerMessage,
-};
+use euca_net::{ClientMessage, EntityState, GameServer, NetworkId, ServerMessage};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
