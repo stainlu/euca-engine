@@ -1,6 +1,8 @@
 mod panels;
+mod scene_file;
 
-pub use panels::{SpawnRequest, hierarchy_panel, inspector_panel, toolbar_panel};
+pub use panels::{SpawnRequest, ToolbarAction, hierarchy_panel, inspector_panel, toolbar_panel};
+pub use scene_file::{SceneEntity, SceneFile, load_scene_into_world};
 
 /// Editor state: tracks selection, play/pause, etc.
 pub struct EditorState {

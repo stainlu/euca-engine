@@ -1,6 +1,9 @@
 use euca_core::Time;
 use euca_ecs::{Query, World};
-use euca_editor::{EditorState, SpawnRequest, hierarchy_panel, inspector_panel, toolbar_panel};
+use euca_editor::{
+    EditorState, SceneFile, SpawnRequest, ToolbarAction, hierarchy_panel, inspector_panel,
+    toolbar_panel,
+};
 use euca_math::{Transform, Vec3};
 use euca_physics::{
     Collider, PhysicsBody, PhysicsConfig, Ray, Velocity, physics_step_system, raycast_collider,
@@ -339,16 +342,68 @@ impl EditorApp {
         let raw_input = egui_winit.take_egui_input(window);
 
         let mut spawn_request = None;
+        let mut toolbar_action = None;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             let dt = self
                 .world
                 .resource::<Time>()
                 .map(|t| t.delta)
                 .unwrap_or(0.0);
-            toolbar_panel(ctx, &mut self.editor_state, &self.world, dt);
+            toolbar_action = toolbar_panel(ctx, &mut self.editor_state, &self.world, dt);
             spawn_request = hierarchy_panel(ctx, &mut self.editor_state, &self.world);
             inspector_panel(ctx, &mut self.editor_state, &mut self.world);
         });
+
+        // Handle save/load
+        if let Some(action) = toolbar_action {
+            match action {
+                ToolbarAction::SaveScene => {
+                    let scene = SceneFile::capture(&self.world);
+                    if let Err(e) = scene.save("scene.json") {
+                        log::error!("Save failed: {e}");
+                    } else {
+                        log::info!("Scene saved to scene.json");
+                    }
+                }
+                ToolbarAction::LoadScene => match SceneFile::load("scene.json") {
+                    Ok(scene) => {
+                        log::info!(
+                            "Scene loaded: {} entities from scene.json",
+                            scene.entities.len()
+                        );
+                        // Clear existing entities
+                        let entities: Vec<euca_ecs::Entity> = {
+                            let query = Query::<euca_ecs::Entity>::new(&self.world);
+                            query.iter().collect()
+                        };
+                        for entity in entities {
+                            self.world.despawn(entity);
+                        }
+                        // Rebuild from scene file
+                        let cube_mesh = self.cube_mesh;
+                        let sphere_mesh = self.sphere_mesh;
+                        euca_editor::load_scene_into_world(
+                            &mut self.world,
+                            &scene,
+                            &|name| match name {
+                                n if n.contains("0") => cube_mesh, // mesh_0 = cube (first uploaded)
+                                n if n.contains("1") => sphere_mesh, // mesh_1 = sphere
+                                _ => cube_mesh,
+                            },
+                            6, // number of uploaded materials
+                        );
+                        // Re-add light
+                        self.world.spawn(DirectionalLight {
+                            direction: [0.5, -1.0, 0.3],
+                            color: [1.0, 0.98, 0.95],
+                            intensity: 2.0,
+                        });
+                        self.editor_state.selected_entity = None;
+                    }
+                    Err(e) => log::error!("Load failed: {e}"),
+                },
+            }
+        }
 
         // Handle entity spawn requests
         if let Some(req) = spawn_request {

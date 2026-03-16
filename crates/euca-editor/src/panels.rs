@@ -5,8 +5,21 @@ use euca_scene::{GlobalTransform, LocalTransform};
 
 use crate::EditorState;
 
-/// Top toolbar: Play/Pause/Step controls + info + FPS.
-pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World, delta_time: f32) {
+/// Actions returned from the toolbar.
+#[derive(Clone, Debug)]
+pub enum ToolbarAction {
+    SaveScene,
+    LoadScene,
+}
+
+/// Top toolbar: Play/Pause/Step controls + Save/Load + info + FPS.
+pub fn toolbar_panel(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    world: &World,
+    delta_time: f32,
+) -> Option<ToolbarAction> {
+    let mut action = None;
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
             if state.playing {
@@ -28,6 +41,15 @@ pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World
 
             ui.separator();
 
+            if ui.button("Save").clicked() {
+                action = Some(ToolbarAction::SaveScene);
+            }
+            if ui.button("Load").clicked() {
+                action = Some(ToolbarAction::LoadScene);
+            }
+
+            ui.separator();
+
             let fps = if delta_time > 0.0 {
                 (1.0 / delta_time) as u32
             } else {
@@ -42,6 +64,7 @@ pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World
             ));
         });
     });
+    action
 }
 
 /// Entity spawn request from the hierarchy panel.
