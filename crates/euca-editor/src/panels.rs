@@ -5,8 +5,8 @@ use euca_scene::{GlobalTransform, LocalTransform};
 
 use crate::EditorState;
 
-/// Top toolbar: Play/Pause/Step controls + info.
-pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World) {
+/// Top toolbar: Play/Pause/Step controls + info + FPS.
+pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World, delta_time: f32) {
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
             if state.playing {
@@ -27,8 +27,15 @@ pub fn toolbar_panel(ctx: &egui::Context, state: &mut EditorState, world: &World
             }
 
             ui.separator();
+
+            let fps = if delta_time > 0.0 {
+                (1.0 / delta_time) as u32
+            } else {
+                0
+            };
             ui.label(format!(
-                "Entities: {} | Tick: {} | Archetypes: {}",
+                "FPS: {} | Entities: {} | Tick: {} | Archetypes: {}",
+                fps,
                 world.entity_count(),
                 world.current_tick(),
                 world.archetype_count(),
@@ -112,27 +119,58 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
             ui.label(format!("Entity: {}", entity));
             ui.separator();
 
-            // Transform
+            // Editable Transform
             if let Some(lt) = world.get::<LocalTransform>(entity) {
-                let t = lt.0;
+                let mut pos = [lt.0.translation.x, lt.0.translation.y, lt.0.translation.z];
+                let mut scl = [lt.0.scale.x, lt.0.scale.y, lt.0.scale.z];
+                let mut changed = false;
+
                 ui.collapsing("LocalTransform", |ui| {
-                    ui.label(format!(
-                        "Position: ({:.2}, {:.2}, {:.2})",
-                        t.translation.x, t.translation.y, t.translation.z
-                    ));
-                    ui.label(format!(
-                        "Scale: ({:.2}, {:.2}, {:.2})",
-                        t.scale.x, t.scale.y, t.scale.z
-                    ));
+                    ui.label("Position:");
+                    ui.horizontal(|ui| {
+                        ui.label("X");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut pos[0]).speed(0.1))
+                            .changed();
+                        ui.label("Y");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut pos[1]).speed(0.1))
+                            .changed();
+                        ui.label("Z");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut pos[2]).speed(0.1))
+                            .changed();
+                    });
+                    ui.label("Scale:");
+                    ui.horizontal(|ui| {
+                        ui.label("X");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut scl[0]).speed(0.01))
+                            .changed();
+                        ui.label("Y");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut scl[1]).speed(0.01))
+                            .changed();
+                        ui.label("Z");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut scl[2]).speed(0.01))
+                            .changed();
+                    });
                 });
+
+                if changed {
+                    if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                        lt.0.translation = euca_math::Vec3::new(pos[0], pos[1], pos[2]);
+                        lt.0.scale = euca_math::Vec3::new(scl[0], scl[1], scl[2]);
+                    }
+                }
             }
 
             if let Some(gt) = world.get::<GlobalTransform>(entity) {
-                let t = gt.0;
                 ui.collapsing("GlobalTransform", |ui| {
                     ui.label(format!(
-                        "Position: ({:.2}, {:.2}, {:.2})",
-                        t.translation.x, t.translation.y, t.translation.z
+                        "World Pos: ({:.2}, {:.2}, {:.2})",
+                        gt.0.translation.x, gt.0.translation.y, gt.0.translation.z
                     ));
                 });
             }

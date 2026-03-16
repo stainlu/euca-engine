@@ -26,6 +26,13 @@ struct EditorApp {
     egui_renderer: Option<egui_wgpu::Renderer>,
     window_attrs: WindowAttributes,
     mouse_pos: [f32; 2],
+    mouse_delta: [f32; 2],
+    right_mouse_down: bool,
+    middle_mouse_down: bool,
+    cam_yaw: f32,
+    cam_pitch: f32,
+    cam_distance: f32,
+    cam_target: Vec3,
     outline_material: Option<MaterialHandle>,
 }
 
@@ -56,6 +63,13 @@ impl EditorApp {
                 .with_title("Euca Engine — Editor")
                 .with_inner_size(winit::dpi::LogicalSize::new(1280, 800)),
             mouse_pos: [0.0, 0.0],
+            mouse_delta: [0.0, 0.0],
+            right_mouse_down: false,
+            middle_mouse_down: false,
+            cam_yaw: 0.5,
+            cam_pitch: 0.4,
+            cam_distance: 12.0,
+            cam_target: Vec3::new(0.0, 1.0, 0.0),
             outline_material: None,
         }
     }
@@ -99,24 +113,43 @@ impl EditorApp {
             w.insert(e, Collider::aabb(half, half, half).with_restitution(0.4));
         };
 
+        // Dynamic cubes (will fall when playing)
         spawn(&mut self.world, Vec3::new(0.0, 4.0, 0.0), cube, red, 0.5);
         spawn(&mut self.world, Vec3::new(1.5, 6.0, 0.5), cube, blue, 0.5);
         spawn(&mut self.world, Vec3::new(-1.0, 8.0, -0.5), cube, gold, 0.5);
         spawn(&mut self.world, Vec3::new(0.5, 10.0, 1.0), cube, green, 0.5);
 
-        // Sphere
-        let s = self
-            .world
-            .spawn(LocalTransform(Transform::from_translation(Vec3::new(
-                -2.0, 7.0, 1.0,
-            ))));
-        self.world.insert(s, GlobalTransform::default());
-        self.world.insert(s, MeshRenderer { mesh: sphere });
-        self.world.insert(s, MaterialRef { handle: gold });
-        self.world.insert(s, PhysicsBody::dynamic());
-        self.world.insert(s, Velocity::default());
-        self.world
-            .insert(s, Collider::sphere(0.5).with_restitution(0.6));
+        // Static objects (decoration — won't fall)
+        let spawn_static =
+            |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
+                let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
+                w.insert(e, GlobalTransform::default());
+                w.insert(e, MeshRenderer { mesh });
+                w.insert(e, MaterialRef { handle: mat });
+                w.insert(e, PhysicsBody::fixed());
+                w.insert(e, Collider::aabb(half, half, half));
+            };
+
+        // Pillars
+        spawn_static(&mut self.world, Vec3::new(5.0, 1.0, 5.0), cube, gray, 0.3);
+        spawn_static(&mut self.world, Vec3::new(-5.0, 1.0, 5.0), cube, gray, 0.3);
+        spawn_static(&mut self.world, Vec3::new(5.0, 1.0, -5.0), cube, gray, 0.3);
+        spawn_static(&mut self.world, Vec3::new(-5.0, 1.0, -5.0), cube, gray, 0.3);
+
+        // Spheres
+        let spawn_sphere = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
+            let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
+            w.insert(e, GlobalTransform::default());
+            w.insert(e, MeshRenderer { mesh: sphere });
+            w.insert(e, MaterialRef { handle: mat });
+            w.insert(e, PhysicsBody::dynamic());
+            w.insert(e, Velocity::default());
+            w.insert(e, Collider::sphere(0.5).with_restitution(0.6));
+        };
+
+        spawn_sphere(&mut self.world, Vec3::new(-2.0, 7.0, 1.0), gold);
+        spawn_sphere(&mut self.world, Vec3::new(3.0, 5.0, -1.0), blue);
+        spawn_sphere(&mut self.world, Vec3::new(-3.0, 9.0, 2.0), red);
 
         // Light
         self.world.spawn(DirectionalLight {
@@ -150,7 +183,7 @@ impl EditorApp {
         }
 
         self.world.resource_mut::<Time>().unwrap().update();
-        let elapsed = self.world.resource::<Time>().unwrap().elapsed as f32;
+        let _elapsed = self.world.resource::<Time>().unwrap().elapsed as f32;
 
         // Tick simulation when playing
         if self.editor_state.should_tick() {
@@ -158,11 +191,28 @@ impl EditorApp {
         }
         euca_scene::transform_propagation_system(&mut self.world);
 
-        // Orbit camera
+        // User-controlled camera (orbit/pan/zoom)
+        if self.right_mouse_down {
+            self.cam_yaw += self.mouse_delta[0] * 0.005;
+            self.cam_pitch = (self.cam_pitch - self.mouse_delta[1] * 0.005).clamp(0.05, 1.5);
+        }
+        if self.middle_mouse_down {
+            let right = Vec3::new(self.cam_yaw.cos(), 0.0, -self.cam_yaw.sin());
+            let up = Vec3::Y;
+            self.cam_target =
+                self.cam_target + right * (-self.mouse_delta[0] * 0.01 * self.cam_distance * 0.1);
+            self.cam_target =
+                self.cam_target + up * (self.mouse_delta[1] * 0.01 * self.cam_distance * 0.1);
+        }
+        self.mouse_delta = [0.0, 0.0];
+
         let cam = self.world.resource_mut::<Camera>().unwrap();
-        let angle = elapsed * 0.2;
-        let radius = 12.0;
-        cam.eye = Vec3::new(angle.cos() * radius, 6.0, angle.sin() * radius);
+        cam.eye = Vec3::new(
+            self.cam_target.x + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
+            self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
+            self.cam_target.z + self.cam_yaw.cos() * self.cam_pitch.cos() * self.cam_distance,
+        );
+        cam.target = self.cam_target;
 
         // Get surface texture
         let gpu = self.gpu.as_ref().unwrap();
@@ -250,7 +300,12 @@ impl EditorApp {
         let raw_input = egui_winit.take_egui_input(window);
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            toolbar_panel(ctx, &mut self.editor_state, &self.world);
+            let dt = self
+                .world
+                .resource::<Time>()
+                .map(|t| t.delta)
+                .unwrap_or(0.0);
+            toolbar_panel(ctx, &mut self.editor_state, &self.world, dt);
             hierarchy_panel(ctx, &mut self.editor_state, &self.world);
             inspector_panel(ctx, &mut self.editor_state, &mut self.world);
             // Central panel is transparent — 3D scene shows through
@@ -376,15 +431,36 @@ impl ApplicationHandler for EditorApp {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.mouse_pos = [position.x as f32, position.y as f32];
+                let new_pos = [position.x as f32, position.y as f32];
+                self.mouse_delta = [
+                    new_pos[0] - self.mouse_pos[0],
+                    new_pos[1] - self.mouse_pos[1],
+                ];
+                self.mouse_pos = new_pos;
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: winit::event::MouseButton::Left,
-                ..
-            } => {
-                // Viewport click-to-select via raycasting
-                self.pick_entity_at_cursor();
+            WindowEvent::MouseInput { state, button, .. } => {
+                let pressed = state == ElementState::Pressed;
+                match button {
+                    winit::event::MouseButton::Left => {
+                        if pressed {
+                            self.pick_entity_at_cursor();
+                        }
+                    }
+                    winit::event::MouseButton::Right => {
+                        self.right_mouse_down = pressed;
+                    }
+                    winit::event::MouseButton::Middle => {
+                        self.middle_mouse_down = pressed;
+                    }
+                    _ => {}
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.1,
+                };
+                self.cam_distance = (self.cam_distance - scroll * 0.5).clamp(1.0, 50.0);
             }
             _ => {}
         }
