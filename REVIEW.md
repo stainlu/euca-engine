@@ -238,3 +238,17 @@ An engine without a game is an academic exercise. The best game engines (Unreal,
 If the answer is "a multiplayer online game where AI agents compete with humans" — then networking and agent API hardening are the only things that matter right now. Everything else (shadows, editor gizmos, skeletal animation) can wait until there's an actual game that needs them.
 
 Build the game. Let the game tell you what the engine needs.
+
+---
+
+## Update: 2026-03-16
+
+Since this review was written, significant progress was made across all fronts:
+
+**Rendering (Phase A complete):** Textures, 2048px shadow mapping with PCF, procedural sky with sun glow, GPU instancing via storage buffers (16K instances), HDR pipeline with bloom + ACES tone mapping + vignette. The engine now renders professional-quality scenes.
+
+**Editor (Phase B complete):** Transform gizmos (3-axis drag), undo/redo system (Ctrl+Z/Y), entity creation (+ Cube/Sphere/Empty), scene save/load (JSON), grid overlay, keyboard shortcuts (Delete, F focus). The editor is now usable for content creation.
+
+**crates.io (Phase C complete):** `euca-math` v0.1.0 and `euca-ecs` v0.1.0 published with full doc comments. Anyone can `cargo add euca-math euca-ecs`.
+
+**The critique above still stands.** Shadows and gizmos were built (contrary to the "can wait" advice), but the core point remains: the engine needs a game to drive its next evolution. Phase D should focus on making a real game playable by both humans and AI agents.

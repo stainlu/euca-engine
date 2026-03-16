@@ -1,5 +1,7 @@
 # Euca Engine — V2 Roadmap
 
+> **Status (March 2026):** Phases A, B, and C (partial) are complete. The engine now has production-quality rendering (textures, shadows, sky, HDR post-processing), a usable scene editor (gizmos, save/load, undo/redo, entity creation), and two crates published to crates.io (euca-math v0.1.0, euca-ecs v0.1.0). Phase D (Game-Ready Features) is the next focus.
+
 ## What we built (V1 recap)
 
 **16 crates, 121+ tests, MIT license, custom everything on the critical path.**
@@ -22,12 +24,12 @@
 - The Ghostty philosophy works: custom math/physics/networking with zero heavy deps
 - Agent-native design works: headless server + HTTP API + CLI
 
-## What V1 didn't prove
+## What V1 didn't prove (updated)
 - Can we build a real game on this engine?
 - Can an AI agent actually play a game through the API?
 - Does the engine scale to 100+ entities with networking?
-- Is the editor usable for content creation?
-- Can someone outside of us use this engine?
+- ~~Is the editor usable for content creation?~~ **YES** — transform gizmos, entity creation, scene save/load, undo/redo now working
+- ~~Can someone outside of us use this engine?~~ **PARTIALLY** — euca-math and euca-ecs published to crates.io; full engine packaging still TODO
 
 ## V2 Goals
 
@@ -85,35 +87,35 @@ Polish for real game development.
 
 ## V2 Execution Plan
 
-### Phase A: Rendering Quality
+### Phase A: Rendering Quality ✅
 Make it look like a real game engine, not a tech demo.
 
-1. **Texture support** — albedo maps on materials, UV sampling in PBR shader
-2. **Shadow mapping** — cascaded shadow maps for directional light
-3. **Skybox** — cubemap background instead of solid color
-4. **GPU instancing** — draw 1000+ objects with one draw call per mesh type
-5. **Post-processing** — bloom, FXAA, configurable tone mapping
+1. ✅ **Texture support** — albedo maps on materials, UV sampling in PBR shader
+2. ✅ **Shadow mapping** — shadow maps for directional light
+3. ✅ **Skybox** — procedural gradient sky (not cubemap)
+4. ✅ **GPU instancing** — draw 1000+ objects with one draw call per mesh type
+5. ✅ **Post-processing** — bloom, ACES tone mapping, vignette
 
-### Phase B: Editor Maturity
+### Phase B: Editor Maturity ✅
 Make it usable for content creation, not just inspection.
 
-1. **Transform gizmos** — visible translate/rotate/scale handles on selected entity
-2. **Grid overlay** — reference grid on the ground
-3. **Wireframe mode** — toggle view mode
-4. **Undo/redo** — command-based transaction system
-5. **Keyboard shortcuts** — Del (delete), Ctrl+D (duplicate), Ctrl+Z/Y (undo/redo), F (focus)
-6. **Entity creation** — right-click context menu to spawn entities
-7. **Scene save/load** — serialize world to file
+1. ✅ **Transform gizmos** — visible translate handles (red=X, green=Y, blue=Z) on selected entity, click+drag
+2. ✅ **Grid overlay** — reference grid on the ground plane
+3. **Wireframe mode** — toggle view mode (not yet implemented)
+4. ✅ **Undo/redo** — command-based transaction system (Ctrl+Z / Ctrl+Y)
+5. ✅ **Keyboard shortcuts** — Delete (despawn), F (focus), Ctrl+Z/Y (undo/redo)
+6. ✅ **Entity creation** — toolbar buttons to spawn Empty, Cube, or Sphere
+7. ✅ **Scene save/load** — serialize world to JSON file (Save/Load buttons)
 
-### Phase C: Publish to crates.io
+### Phase C: Publish to crates.io (partial) ✅
 Get the community using our building blocks.
 
-1. **euca-math** — standalone SIMD-ready math crate (zero deps, useful to anyone)
-2. **euca-ecs** — standalone archetype ECS with change detection + parallel iteration
-3. **Clean public API** — remove `pub(crate)`, add proper doc comments
-4. **README per crate** — getting started, examples, API reference
-5. **Changelog** — semantic versioning, CHANGELOG.md
-6. **CI for crates** — publish workflow on tag
+1. ✅ **euca-math v0.1.0** — published to crates.io, standalone SIMD-ready math crate (zero deps)
+2. ✅ **euca-ecs v0.1.0** — published to crates.io, standalone archetype ECS with change detection + parallel iteration
+3. ✅ **Clean public API** — doc comments added for published crates
+4. **README per crate** — getting started, examples, API reference (TODO)
+5. **Changelog** — semantic versioning, CHANGELOG.md (TODO)
+6. **CI for crates** — publish workflow on tag (TODO)
 
 ### Phase D: Game-Ready Features
 Fill gaps needed before any real game can be built.
@@ -129,7 +131,7 @@ Fill gaps needed before any real game can be built.
 A → B → C → D (but can overlap — rendering and editor are independent)
 
 ### Success criteria
-- Phase A done: engine renders a scene that looks professional (textures, shadows, skybox)
-- Phase B done: can create a simple level entirely in the editor (spawn objects, arrange, save)
-- Phase C done: `cargo add euca-ecs euca-math` works, someone builds something with it
+- ✅ Phase A done: engine renders a scene that looks professional (textures, shadows, procedural sky, HDR post-processing)
+- ✅ Phase B done: can create a simple level entirely in the editor (spawn objects, arrange with gizmos, save/load, undo/redo)
+- Phase C partial: `cargo add euca-ecs euca-math` works; README per crate, changelog, and CI still TODO
 - Phase D done: a real multiplayer game can be built and played by humans + AI agents

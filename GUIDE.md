@@ -79,9 +79,28 @@ cargo run -p euca-asset --example gltf_viewer -- box.glb
 
 ---
 
-## 4. Editor — Visual Scene Inspector
+## 4. Texture Demo — Textures, Shadows & Sky
 
-The visual editor with entity hierarchy, component inspector, and simulation controls.
+Demonstrates texture mapping, shadow mapping, and the procedural sky.
+
+```bash
+cargo run -p euca-render --example texture_demo
+```
+
+**What you'll see:** Textured objects lit by a directional light with real-time shadows, against a procedural gradient sky. GPU instancing is used for efficient rendering.
+
+**What's happening:**
+- Albedo texture maps sampled in the PBR shader
+- Shadow mapping from directional light
+- Procedural sky background (gradient, not a cubemap)
+- HDR post-processing: bloom, ACES tone mapping, vignette
+- GPU instancing for batched draw calls
+
+---
+
+## 5. Editor — Visual Scene Editor
+
+The visual editor with 3D viewport, entity hierarchy, component inspector, and full content-creation tools.
 
 ```bash
 cargo run -p euca-editor --example editor
@@ -90,19 +109,34 @@ cargo run -p euca-editor --example editor
 **What you'll see:** Three-panel layout:
 - **Left:** Entity hierarchy — click an entity to select it
 - **Right:** Inspector — shows all components on the selected entity (transform, physics body, collider)
-- **Top toolbar:** Play / Pause / Step buttons + entity count + tick counter
+- **Top toolbar:** Play / Pause / Step / Stop buttons, entity creation buttons (+ Empty, + Cube, + Sphere), Save / Load buttons, entity count + tick counter
+- **3D viewport:** PBR rendering with shadows, procedural sky, ground grid overlay
+
+**Features:**
+- **PBR rendering** with shadows and procedural sky in the 3D viewport
+- **Grid overlay** on the ground plane for spatial reference
+- **Transform gizmos** — red (X), green (Y), blue (Z) axis handles on the selected entity; click and drag to move
+- **Click-to-select** with raycasting in the 3D viewport
+- **Selection outline** — orange highlight around selected entity
+- **Entity creation** — toolbar buttons to spawn Empty, Cube, or Sphere entities
+- **Scene save/load** — Save and Load buttons in the toolbar, persists to `scene.json`
+- **Undo/redo** — full command-based transaction system (Ctrl+Z / Ctrl+Y)
+- **Play/Pause/Step/Stop** simulation controls
 
 **How to use:**
-1. Click an entity in the left panel (e.g., "Entity 0v0")
-2. Inspector shows its LocalTransform position, PhysicsBody type, PhysicsCollider shape
-3. Click **Play** — physics starts, entities fall under gravity
-4. Click **Pause** — simulation freezes
-5. Click **Step** — advance exactly one physics tick
-6. Watch the position values change in the inspector as entities move
+1. Click an entity in the left panel or click directly in the 3D viewport to select
+2. Use the transform gizmo handles to move the entity along X/Y/Z axes
+3. Click **+ Cube** or **+ Sphere** to spawn new entities
+4. Arrange your scene, then click **Save** to persist to `scene.json`
+5. Click **Load** to restore a previously saved scene
+6. Click **Play** — physics starts, entities fall under gravity
+7. Click **Pause** — simulation freezes
+8. Click **Step** — advance exactly one physics tick
+9. Use **Ctrl+Z** to undo and **Ctrl+Y** to redo any action
 
 ---
 
-## 5. Headless Server — For AI Agents
+## 6. Headless Server — For AI Agents
 
 Run the engine without a window. AI agents control the simulation via HTTP API and CLI.
 
@@ -220,9 +254,10 @@ eucaengine/
 ├── examples/
 │   ├── hello_cubes.rs     # Spinning PBR cubes
 │   ├── physics_demo.rs    # Cubes falling with gravity
+│   ├── texture_demo.rs    # Textures, shadows, procedural sky
 │   ├── gltf_viewer.rs     # Load and render .glb files
 │   ├── headless_server.rs # AI agent HTTP server
-│   └── editor.rs          # Visual editor
+│   └── editor.rs          # Visual scene editor
 ├── DESIGN.md              # System design document
 ├── README.md              # Quick start
 └── GUIDE.md               # This file
@@ -235,6 +270,15 @@ eucaengine/
 | Key | Action | Where |
 |-----|--------|-------|
 | Escape | Quit | All examples |
+| Delete | Despawn selected entity | Editor |
+| F | Focus camera on selected entity | Editor |
+| Ctrl+Z | Undo | Editor |
+| Ctrl+Y | Redo | Editor |
+| Right mouse + drag | Orbit camera | Editor / examples |
+| Middle mouse + drag | Pan camera | Editor / examples |
+| Scroll wheel | Zoom in/out | Editor / examples |
+| Left click | Select entity / interact with gizmo | Editor |
 | Play button | Start simulation | Editor |
 | Pause button | Freeze simulation | Editor |
 | Step button | Advance one tick | Editor |
+| Stop button | Stop simulation | Editor |

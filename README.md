@@ -41,13 +41,13 @@ cargo test --workspace
 | `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info |
 | `euca-scene` | Transform hierarchy (LocalTransform, GlobalTransform, Parent/Children BFS propagation) |
 | `euca-core` | App lifecycle, Plugin trait, Time resource, winit event loop |
-| `euca-render` | wgpu PBR renderer (Cook-Torrance BRDF, materials, lights, meshes) |
+| `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures (albedo/UV/procedural), shadow mapping (2048px, PCF), procedural sky, GPU instancing (16K instances), HDR post-processing (bloom, ACES tone mapping, vignette) |
 | `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero external deps) |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) |
 | `euca-input` | InputState, ActionMap, InputSnapshot (humans + AI agents) |
 | `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, state replication protocol |
 | `euca-agent` | HTTP API server for external AI agents (axum + tokio) |
-| `euca-editor` | egui editor with 3D viewport, hierarchy, inspector, play/pause/stop |
+| `euca-editor` | egui editor: 3D viewport, hierarchy panel, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load (JSON), entity creation (+Empty/Cube/Sphere), grid overlay, keyboard shortcuts (Delete/F/Ctrl+Z/Ctrl+Y) |
 | `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) |
 
 ## Agent Interface
@@ -76,9 +76,9 @@ External AI Agents (Claude Code, RL agents, etc.)
 +--------------------------------------+
         |
 +-- Engine Core ----+
-| ECS Runtime       |  Render (wgpu)    Physics (rapier3d)
-| World > Archetype |  PBR + Forward+   RigidBody + Collider
-| Query + Schedule  |  Material + Light  Gravity + Collision
+| ECS Runtime       |  Render (wgpu)    Physics (custom)
+| World > Archetype |  PBR + Forward+   AABB + Sphere
+| Query + Schedule  |  Material + Light  Gravity + Raycast
 +-------------------+
         |
 +-- Editor (egui) --+
@@ -86,6 +86,20 @@ External AI Agents (Claude Code, RL agents, etc.)
 | Inspector panel    |
 | Play/Pause/Step    |
 +--------------------+
+```
+
+## Published Crates
+
+The following crates are available on [crates.io](https://crates.io):
+
+| Crate | Description |
+|-------|-------------|
+| [`euca-math`](https://crates.io/crates/euca-math) | SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) |
+| [`euca-ecs`](https://crates.io/crates/euca-ecs) | Archetype-based ECS with Query, Schedule, Change Detection, Snapshots |
+
+```bash
+cargo add euca-math
+cargo add euca-ecs
 ```
 
 ## License

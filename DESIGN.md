@@ -43,15 +43,15 @@ External AI Agents (Claude Code, RL agents, etc.)
 | Crate | Purpose | Status | Tests |
 |-------|---------|--------|-------|
 | `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query, Resource, Event, Command, Schedule, Snapshot, Change Detection, par_for_each | Done | 51 |
-| `euca-math` | Custom SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) | Done | 26 |
+| `euca-math` | Custom SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) | Done | 28 |
 | `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info | Done | 1 |
 | `euca-scene` | Transform hierarchy, Parent/Children BFS propagation | Done | 3 |
 | `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
-| `euca-render` | wgpu PBR renderer (Cook-Torrance BRDF, materials, lights) | Done | 8 |
+| `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing (bloom, ACES, vignette) | Done | 10 |
 | `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero deps) | Done | 12 |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
 | `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 0 |
-| `euca-editor` | egui editor with 3D viewport, hierarchy, inspector, play/pause/stop | Done | 4 |
+| `euca-editor` | egui editor: 3D viewport, hierarchy, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load, entity creation, grid, keyboard shortcuts | Done | 11 |
 | `euca-input` | InputState, ActionMap, InputSnapshot for humans + AI agents | Done | 4 |
 | `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, protocol | Done | 11 |
 | `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) | Done | 0 |
@@ -143,20 +143,32 @@ Entity { index: u32, generation: u32 }
 - Events swapped each tick (double-buffered, persist 2 frames)
 - Commands: deferred spawn/despawn/insert/remove, applied between systems
 
-## Rendering Pipeline (Phase 2)
+## Rendering Pipeline
 
-### Current: Basic vertex-colored meshes
+### 4-Pass Architecture
 ```
-CPU: Build vertex/index buffers → Upload to GPU → Record draw calls
-GPU: Vertex shader (MVP transform) → Fragment shader (vertex color) → Present
-```
+Pass 1 — Shadow Map
+  Directional light depth pass → 2048×2048 depth texture
+  Depth bias to reduce shadow acne
+  Used by PBR pass for shadow sampling (3×3 PCF soft shadows)
 
-### Target: Forward+ PBR
-```
-1. Depth prepass
-2. Light culling (compute: assign lights to screen-space clusters)
-3. Forward pass (PBR: albedo, metallic, roughness, normal, AO)
-4. Post-processing (bloom, tone mapping, FXAA)
+Pass 2 — Procedural Sky
+  Full-screen quad, no depth write
+  Gradient horizon→zenith, sun disk + glow, atmospheric scattering
+
+Pass 3 — PBR Forward (HDR)
+  Renders to offscreen Rgba16Float target (HDR color space)
+  Cook-Torrance BRDF (GGX distribution, Smith geometry, Fresnel-Schlick)
+  Texture sampling: albedo maps, UV coordinates, procedural textures (checkerboard)
+  Shadow sampling from Pass 1 depth map
+  GPU instancing via storage buffers — batched draws by mesh+material (up to 16K instances)
+
+Pass 4 — Post-Processing
+  Reads HDR target from Pass 3
+  13-tap Gaussian bloom (bright extraction → blur → composite)
+  ACES filmic tone mapping (HDR → LDR)
+  Vignette
+  Outputs to swapchain (final present)
 ```
 
 ## Agent Interface Protocol
@@ -214,3 +226,6 @@ POST /reset                        → reset to initial state
 | 2026-03-16 | 8 | GHOSTTY REFACTOR: removed glam → custom SIMD-ready math from scratch |
 | 2026-03-16 | 8 | GHOSTTY REFACTOR: removed rapier3d/nalgebra → custom AABB/sphere/raycast physics |
 | 2026-03-16 | 8 | GHOSTTY REFACTOR: removed quinn/rustls/tokio(net) → raw UDP with PacketHeader |
+| 2026-03-16 | A | Rendering Quality: texture support (albedo maps, UV sampling, procedural textures), shadow mapping (2048px, 3×3 PCF, depth bias), procedural sky (gradient, sun disk, atmospheric scattering), GPU instancing (storage buffers, 16K instances), HDR post-processing (Rgba16Float, 13-tap bloom, ACES tone mapping, vignette) |
+| 2026-03-16 | B | Editor Maturity: grid overlay, keyboard shortcuts (Delete/F/Ctrl+Z/Ctrl+Y), entity creation (+Empty/Cube/Sphere), scene save/load (JSON SceneFile), transform gizmos (3 axis handles, click+drag translate), undo/redo (stack-based UndoHistory, typed UndoAction, drag debouncing) |
+| 2026-03-16 | C | Published to crates.io: euca-math v0.1.0, euca-ecs v0.1.0 — full doc comments, metadata (description, keywords, categories, license, repository) |
