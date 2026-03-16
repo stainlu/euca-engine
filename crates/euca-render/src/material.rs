@@ -1,9 +1,12 @@
+use crate::texture::TextureHandle;
+
 /// PBR material properties.
 #[derive(Clone, Debug)]
 pub struct Material {
-    pub albedo: [f32; 4], // Base color RGBA
-    pub metallic: f32,    // 0.0 = dielectric, 1.0 = metal
-    pub roughness: f32,   // 0.0 = mirror smooth, 1.0 = fully rough
+    pub albedo: [f32; 4],                      // Base color RGBA
+    pub metallic: f32,                         // 0.0 = dielectric, 1.0 = metal
+    pub roughness: f32,                        // 0.0 = mirror smooth, 1.0 = fully rough
+    pub albedo_texture: Option<TextureHandle>, // Optional albedo texture (sampled × color)
 }
 
 impl Material {
@@ -12,7 +15,14 @@ impl Material {
             albedo,
             metallic,
             roughness,
+            albedo_texture: None,
         }
+    }
+
+    /// Set the albedo texture for this material.
+    pub fn with_texture(mut self, texture: TextureHandle) -> Self {
+        self.albedo_texture = Some(texture);
+        self
     }
 
     /// Matte red plastic.
@@ -49,6 +59,19 @@ impl Material {
 impl Default for Material {
     fn default() -> Self {
         Self::new([0.8, 0.8, 0.8, 1.0], 0.0, 0.5)
+    }
+}
+
+/// Builder-style texture assignment.
+impl Material {
+    /// Create a material with a texture (color acts as tint multiplier).
+    pub fn textured(texture: TextureHandle) -> Self {
+        Self {
+            albedo: [1.0, 1.0, 1.0, 1.0], // white tint = pure texture color
+            metallic: 0.0,
+            roughness: 0.5,
+            albedo_texture: Some(texture),
+        }
     }
 }
 

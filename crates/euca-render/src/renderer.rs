@@ -3,6 +3,7 @@ use crate::gpu::GpuContext;
 use crate::light::{AmbientLight, DirectionalLight};
 use crate::material::{Material, MaterialHandle};
 use crate::mesh::{Mesh, MeshHandle};
+use crate::texture::{TextureHandle, TextureStore};
 use crate::vertex::Vertex;
 use euca_math::Mat4;
 
@@ -48,8 +49,13 @@ struct SceneUniforms {
     ambient_color: [f32; 4],   // rgb + intensity
 }
 
+/// Per-material GPU resources: uniform buffer + bind group (with texture + sampler).
+struct GpuMaterial {
+    bind_group: wgpu::BindGroup,
+    _buffer: wgpu::Buffer, // kept alive for the bind group
+}
+
 const MAX_DRAW_CALLS: usize = 1024;
-const MAX_MATERIALS: usize = 256;
 
 pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
@@ -60,13 +66,13 @@ pub struct Renderer {
     // Group 1: per-frame scene data
     scene_buffer: wgpu::Buffer,
     scene_bind_group: wgpu::BindGroup,
-    // Group 2: per-material data (dynamic)
-    material_buffer: wgpu::Buffer,
-    material_bind_group: wgpu::BindGroup,
-    material_aligned_size: u64,
+    // Group 2: per-material (individual bind groups with texture + sampler)
+    material_bgl: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    materials: Vec<GpuMaterial>,
+    textures: TextureStore,
 
     meshes: Vec<GpuMesh>,
-    material_count: u32,
 
     depth_texture: wgpu::TextureView,
     depth_format: wgpu::TextureFormat,
@@ -84,8 +90,6 @@ impl Renderer {
         let min_align = gpu.device.limits().min_uniform_buffer_offset_alignment as u64;
         let object_size = std::mem::size_of::<ObjectUniforms>() as u64;
         let object_aligned = object_size.div_ceil(min_align) * min_align;
-        let material_size = std::mem::size_of::<MaterialUniforms>() as u64;
-        let material_aligned = material_size.div_ceil(min_align) * min_align;
 
         // Object transform buffer (dynamic)
         let object_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -99,14 +103,6 @@ impl Renderer {
         let scene_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Scene UBO"),
             size: std::mem::size_of::<SceneUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Material buffer (dynamic)
-        let material_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Material UBO"),
-            size: material_aligned * MAX_MATERIALS as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -146,20 +142,45 @@ impl Renderer {
                 }],
             });
 
+        // Material bind group layout: uniform + texture + sampler
         let material_bgl = gpu
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Material BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(material_size),
+                entries: &[
+                    // binding 0: material uniforms
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                MaterialUniforms,
+                            >()
+                                as u64),
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    // binding 1: albedo texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 2: sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
             });
 
         // Bind groups
@@ -185,18 +206,20 @@ impl Renderer {
             }],
         });
 
-        let material_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Material BG"),
-            layout: &material_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &material_buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(material_size),
-                }),
-            }],
+        // Shared sampler for all materials
+        let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Material Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
+
+        // Texture store with default white texture at index 0
+        let textures = TextureStore::new(&gpu.device, &gpu.queue);
 
         let pipeline_layout = gpu
             .device
@@ -256,11 +279,11 @@ impl Renderer {
             object_aligned_size: object_aligned,
             scene_buffer,
             scene_bind_group,
-            material_buffer,
-            material_bind_group,
-            material_aligned_size: material_aligned,
+            material_bgl,
+            sampler,
+            materials: Vec::new(),
+            textures,
             meshes: Vec::new(),
-            material_count: 0,
             depth_texture,
             depth_format,
         }
@@ -291,19 +314,86 @@ impl Renderer {
         handle
     }
 
+    /// Upload a texture from raw RGBA8 pixel data.
+    pub fn upload_texture(
+        &mut self,
+        gpu: &GpuContext,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> TextureHandle {
+        self.textures
+            .upload_rgba(&gpu.device, &gpu.queue, width, height, rgba)
+    }
+
+    /// Upload a texture from an encoded image (PNG, JPEG, etc.).
+    pub fn upload_texture_image(&mut self, gpu: &GpuContext, data: &[u8]) -> TextureHandle {
+        self.textures.upload_image(&gpu.device, &gpu.queue, data)
+    }
+
+    /// Generate a checkerboard test texture.
+    pub fn checkerboard_texture(
+        &mut self,
+        gpu: &GpuContext,
+        size: u32,
+        tile: u32,
+    ) -> TextureHandle {
+        self.textures
+            .checkerboard(&gpu.device, &gpu.queue, size, tile)
+    }
+
     /// Upload a material's PBR properties to the GPU, returning a handle.
+    /// If the material has an albedo_texture, it will be sampled and multiplied by the color.
     pub fn upload_material(&mut self, gpu: &GpuContext, mat: &Material) -> MaterialHandle {
-        let handle = MaterialHandle(self.material_count);
+        use wgpu::util::DeviceExt;
+
+        let handle = MaterialHandle(self.materials.len() as u32);
+
         let uniforms = MaterialUniforms {
             albedo: mat.albedo,
             metallic: mat.metallic,
             roughness: mat.roughness,
             _pad: [0.0; 2],
         };
-        let offset = handle.0 as u64 * self.material_aligned_size;
-        gpu.queue
-            .write_buffer(&self.material_buffer, offset, bytemuck::bytes_of(&uniforms));
-        self.material_count += 1;
+
+        let buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Material UBO"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        // Use albedo texture if specified, otherwise default white (texture × color = color)
+        let tex_handle = mat
+            .albedo_texture
+            .unwrap_or_else(TextureStore::default_white);
+        let tex_view = self.textures.view(tex_handle);
+
+        let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material BG"),
+            layout: &self.material_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        self.materials.push(GpuMaterial {
+            bind_group,
+            _buffer: buffer,
+        });
+
         handle
     }
 
@@ -438,10 +528,11 @@ impl Renderer {
 
             for (i, cmd) in commands.iter().enumerate() {
                 let obj_offset = (i as u64 * self.object_aligned_size) as u32;
-                let mat_offset = (cmd.material.0 as u64 * self.material_aligned_size) as u32;
-
                 pass.set_bind_group(0, &self.object_bind_group, &[obj_offset]);
-                pass.set_bind_group(2, &self.material_bind_group, &[mat_offset]);
+
+                // Per-material bind group (uniform + texture + sampler)
+                let gpu_mat = &self.materials[cmd.material.0 as usize];
+                pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
 
                 let mesh = &self.meshes[cmd.mesh.0 as usize];
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -474,7 +565,7 @@ impl Renderer {
     }
 }
 
-/// PBR shader implementing Cook-Torrance BRDF with a single directional light.
+/// PBR shader implementing Cook-Torrance BRDF with texture support.
 const PBR_SHADER: &str = r#"
 // ── Bind Group 0: Per-object transforms ──
 struct ObjectUniforms {
@@ -493,13 +584,15 @@ struct SceneUniforms {
 };
 @group(1) @binding(0) var<uniform> scene: SceneUniforms;
 
-// ── Bind Group 2: Per-material data ──
+// ── Bind Group 2: Per-material data (uniform + texture + sampler) ──
 struct MaterialUniforms {
     albedo: vec4<f32>,
     metallic: f32,
     roughness: f32,
 };
 @group(2) @binding(0) var<uniform> material: MaterialUniforms;
+@group(2) @binding(1) var albedo_tex: texture_2d<f32>;
+@group(2) @binding(2) var albedo_sampler: sampler;
 
 // ── Vertex ──
 struct VertexInput {
@@ -561,7 +654,9 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 // ── Fragment ──
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let albedo = material.albedo.rgb;
+    // Sample albedo texture and multiply by material color
+    let tex_color = textureSample(albedo_tex, albedo_sampler, in.uv);
+    let albedo = material.albedo.rgb * tex_color.rgb;
     let metallic = material.metallic;
     let roughness = max(material.roughness, 0.04); // clamp to avoid division by zero
 
