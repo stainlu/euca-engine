@@ -309,13 +309,17 @@ impl EditorApp {
                         self.world.get::<GlobalTransform>(entity),
                         self.world.get::<MeshRenderer>(entity),
                     ) {
-                        let mut t = gt.0;
-                        t.scale = t.scale * 1.06;
-                        draw_commands.push(DrawCommand {
-                            mesh: mr.mesh,
-                            material: outline_mat,
-                            model_matrix: t.to_matrix(),
-                        });
+                        // Skip outline for large objects (avoids z-fighting on ground plane)
+                        let max_scale = gt.0.scale.x.max(gt.0.scale.y).max(gt.0.scale.z);
+                        if max_scale < 5.0 {
+                            let mut t = gt.0;
+                            t.scale = t.scale * 1.06;
+                            draw_commands.push(DrawCommand {
+                                mesh: mr.mesh,
+                                material: outline_mat,
+                                model_matrix: t.to_matrix(),
+                            });
+                        }
                     }
                     break;
                 }
