@@ -823,6 +823,21 @@ impl Renderer {
         ambient: &AmbientLight,
         commands: &[DrawCommand],
     ) {
+        self.draw_with_lights(gpu, camera, light, ambient, commands, &[], &[]);
+    }
+
+    /// Draw with full lighting: directional + point + spot lights.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_lights(
+        &self,
+        gpu: &GpuContext,
+        camera: &Camera,
+        light: &DirectionalLight,
+        ambient: &AmbientLight,
+        commands: &[DrawCommand],
+        point_lights: &[(euca_math::Vec3, &crate::light::PointLight)],
+        spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
+    ) {
         let output = match gpu.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return,
@@ -839,7 +854,17 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-        self.render_to_view(gpu, camera, light, ambient, commands, &view, &mut encoder);
+        self.render_to_view_with_lights(
+            gpu,
+            camera,
+            light,
+            ambient,
+            commands,
+            point_lights,
+            spot_lights,
+            &view,
+            &mut encoder,
+        );
         gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
@@ -852,6 +877,32 @@ impl Renderer {
         light: &DirectionalLight,
         ambient: &AmbientLight,
         commands: &[DrawCommand],
+        color_view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        self.render_to_view_with_lights(
+            gpu,
+            camera,
+            light,
+            ambient,
+            commands,
+            &[],
+            &[],
+            color_view,
+            encoder,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_to_view_with_lights(
+        &self,
+        gpu: &GpuContext,
+        camera: &Camera,
+        light: &DirectionalLight,
+        ambient: &AmbientLight,
+        commands: &[DrawCommand],
+        point_lights: &[(euca_math::Vec3, &crate::light::PointLight)],
+        spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
         color_view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) {
@@ -941,10 +992,35 @@ impl Renderer {
             camera_vp: vp.to_cols_array_2d(),
             light_vp: light_vp.to_cols_array_2d(),
             inv_vp: vp.inverse().to_cols_array_2d(),
-            point_lights: [GpuPointLight::default(); MAX_POINT_LIGHTS],
-            spot_lights: [GpuSpotLight::default(); MAX_SPOT_LIGHTS],
-            num_point_lights: [0.0, 0.0, 0.0, 0.0],
-            num_spot_lights: [0.0, 0.0, 0.0, 0.0],
+            point_lights: {
+                let mut arr = [GpuPointLight::default(); MAX_POINT_LIGHTS];
+                for (i, (pos, pl)) in point_lights.iter().take(MAX_POINT_LIGHTS).enumerate() {
+                    arr[i] = GpuPointLight {
+                        position: [pos.x, pos.y, pos.z, pl.range],
+                        color: [pl.color[0], pl.color[1], pl.color[2], pl.intensity],
+                    };
+                }
+                arr
+            },
+            spot_lights: {
+                let mut arr = [GpuSpotLight::default(); MAX_SPOT_LIGHTS];
+                for (i, (pos, sl)) in spot_lights.iter().take(MAX_SPOT_LIGHTS).enumerate() {
+                    arr[i] = GpuSpotLight {
+                        position: [pos.x, pos.y, pos.z, sl.range],
+                        direction: [sl.direction[0], sl.direction[1], sl.direction[2], 0.0],
+                        color: [sl.color[0], sl.color[1], sl.color[2], sl.intensity],
+                        cone: [sl.inner_cone.cos(), sl.outer_cone.cos(), 0.0, 0.0],
+                    };
+                }
+                arr
+            },
+            num_point_lights: [
+                point_lights.len().min(MAX_POINT_LIGHTS) as f32,
+                0.0,
+                0.0,
+                0.0,
+            ],
+            num_spot_lights: [spot_lights.len().min(MAX_SPOT_LIGHTS) as f32, 0.0, 0.0, 0.0],
         };
         gpu.queue
             .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
@@ -1126,6 +1202,18 @@ struct InstanceData {
     normal_matrix: mat4x4<f32>,
 };
 
+struct PointLightData {
+    position: vec4<f32>,  // xyz = position, w = range
+    color: vec4<f32>,     // rgb = color, a = intensity
+};
+
+struct SpotLightData {
+    position: vec4<f32>,   // xyz = position, w = range
+    direction: vec4<f32>,  // xyz = direction
+    color: vec4<f32>,      // rgb = color, a = intensity
+    cone: vec4<f32>,       // x = inner_cos, y = outer_cos
+};
+
 struct SceneUniforms {
     camera_pos: vec4<f32>,
     light_direction: vec4<f32>,
@@ -1134,6 +1222,10 @@ struct SceneUniforms {
     camera_vp: mat4x4<f32>,
     light_vp: mat4x4<f32>,
     inv_vp: mat4x4<f32>,
+    point_lights: array<PointLightData, 4>,
+    spot_lights: array<SpotLightData, 2>,
+    num_point_lights: vec4<f32>,  // x = count
+    num_spot_lights: vec4<f32>,   // x = count
 };
 
 struct MaterialUniforms {
@@ -1274,7 +1366,52 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
 
     let shadow = shadow_factor(in.world_pos);
-    let Lo = (kD * albedo / PI + specular) * radiance * NdotL * shadow;
+    var Lo = (kD * albedo / PI + specular) * radiance * NdotL * shadow;
+
+    // ── Point lights ──
+    let n_point = i32(scene.num_point_lights.x);
+    for (var pi = 0; pi < n_point; pi++) {
+        let pl = scene.point_lights[pi];
+        let pl_pos = pl.position.xyz;
+        let pl_range = pl.position.w;
+        let pl_color = pl.color.rgb;
+        let pl_intensity = pl.color.a;
+
+        let pl_dir = pl_pos - in.world_pos;
+        let pl_dist = length(pl_dir);
+        if pl_dist > pl_range { continue; }
+        let pl_L = pl_dir / pl_dist;
+        let pl_NdotL = max(dot(N, pl_L), 0.0);
+        let pl_attenuation = 1.0 / (pl_dist * pl_dist + 0.01);
+        let pl_falloff = saturate(1.0 - pl_dist / pl_range);
+        let pl_radiance = pl_color * pl_intensity * pl_attenuation * pl_falloff;
+        Lo += (kD * albedo / PI) * pl_radiance * pl_NdotL;
+    }
+
+    // ── Spot lights ──
+    let n_spot = i32(scene.num_spot_lights.x);
+    for (var si = 0; si < n_spot; si++) {
+        let sl = scene.spot_lights[si];
+        let sl_pos = sl.position.xyz;
+        let sl_range = sl.position.w;
+        let sl_dir_norm = normalize(sl.direction.xyz);
+        let sl_color = sl.color.rgb;
+        let sl_intensity = sl.color.a;
+        let sl_inner_cos = sl.cone.x;
+        let sl_outer_cos = sl.cone.y;
+
+        let sl_to_frag = in.world_pos - sl_pos;
+        let sl_dist = length(sl_to_frag);
+        if sl_dist > sl_range { continue; }
+        let sl_L = -normalize(sl_to_frag);
+        let sl_NdotL = max(dot(N, sl_L), 0.0);
+        let sl_cos_theta = dot(normalize(sl_to_frag), sl_dir_norm);
+        let sl_cone_atten = saturate((sl_cos_theta - sl_outer_cos) / (sl_inner_cos - sl_outer_cos));
+        let sl_dist_atten = 1.0 / (sl_dist * sl_dist + 0.01);
+        let sl_falloff = saturate(1.0 - sl_dist / sl_range);
+        let sl_radiance = sl_color * sl_intensity * sl_dist_atten * sl_falloff * sl_cone_atten;
+        Lo += (kD * albedo / PI) * sl_radiance * sl_NdotL;
+    }
 
     let ambient_intensity = scene.ambient_color.w;
     let ambient = scene.ambient_color.rgb * ambient_intensity * albedo;
