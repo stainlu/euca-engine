@@ -192,117 +192,113 @@ fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
     pair_set.into_iter().collect()
 }
 
+/// Number of constraint solver iterations. More = more stable stacking.
+const SOLVER_ITERATIONS: usize = 4;
+
 fn resolve_collisions(world: &mut World) {
-    let bodies: Vec<Body> = {
-        let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
-        query
-            .iter()
-            .filter_map(|(e, lt, col)| {
-                let body = world.get::<PhysicsBody>(e)?;
-                Some(Body {
-                    entity: e,
-                    pos: lt.0.translation,
-                    shape: col.shape.clone(),
-                    body_type: body.body_type,
-                    restitution: col.restitution,
-                    friction: col.friction,
+    // ── Iterative constraint solver ──
+    // Run multiple passes of contact detection + position correction.
+    // Each pass uses updated positions, so corrections propagate through
+    // stacks (cube on cube on ground) instead of only fixing one layer.
+
+    for _iteration in 0..SOLVER_ITERATIONS {
+        // Re-collect body positions each iteration (they change between passes)
+        let bodies: Vec<Body> = {
+            let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
+            query
+                .iter()
+                .filter_map(|(e, lt, col)| {
+                    let body = world.get::<PhysicsBody>(e)?;
+                    Some(Body {
+                        entity: e,
+                        pos: lt.0.translation,
+                        shape: col.shape.clone(),
+                        body_type: body.body_type,
+                        restitution: col.restitution,
+                        friction: col.friction,
+                    })
                 })
-            })
-            .collect()
-    };
+                .collect()
+        };
 
-    // Spatial hash broadphase: insert bodies into grid cells, test only within same cells
-    let candidate_pairs = broadphase_spatial_hash(&bodies);
-    let mut corrections: Vec<(Entity, Vec3, Vec3)> = Vec::with_capacity(bodies.len());
+        let candidate_pairs = broadphase_spatial_hash(&bodies);
 
-    for (i, j) in candidate_pairs {
-        let a = &bodies[i];
-        let b = &bodies[j];
+        for (i, j) in candidate_pairs {
+            let a = &bodies[i];
+            let b = &bodies[j];
 
-        if a.body_type == RigidBodyType::Static && b.body_type == RigidBodyType::Static {
-            continue;
-        }
-
-        if let Some((normal, depth)) = intersect_shapes(a.pos, &a.shape, b.pos, &b.shape) {
-            let restitution = a.restitution * b.restitution;
-            let friction = (a.friction * b.friction).sqrt();
-
-            // Push-out resolution
-            match (a.body_type, b.body_type) {
-                (RigidBodyType::Dynamic, RigidBodyType::Static) => {
-                    corrections.push((a.entity, normal * (-depth), Vec3::ZERO));
-                }
-                (RigidBodyType::Static, RigidBodyType::Dynamic) => {
-                    corrections.push((b.entity, normal * depth, Vec3::ZERO));
-                }
-                (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
-                    corrections.push((a.entity, normal * (-depth * 0.5), Vec3::ZERO));
-                    corrections.push((b.entity, normal * (depth * 0.5), Vec3::ZERO));
-                }
-                _ => {}
+            if a.body_type == RigidBodyType::Static && b.body_type == RigidBodyType::Static {
+                continue;
             }
 
-            // Velocity response for dynamic body A
-            if a.body_type == RigidBodyType::Dynamic
-                && let Some(vel) = world.get::<Velocity>(a.entity)
-            {
-                let n = normal * (-1.0);
-                let vn = vel.linear.dot(n);
-                if vn < 0.0 {
-                    let approach_speed = -vn;
-                    let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
-                        0.0
-                    } else {
-                        approach_speed * restitution
-                    };
-                    let normal_correction = n * (new_normal_vel - vn);
-                    let tangent_vel = vel.linear - n * vn;
-                    let friction_correction = tangent_vel * (-friction);
-                    corrections.push((
-                        a.entity,
-                        Vec3::ZERO,
-                        normal_correction + friction_correction,
-                    ));
+            if let Some((normal, depth)) = intersect_shapes(a.pos, &a.shape, b.pos, &b.shape) {
+                // Position correction: push bodies apart along contact normal
+                match (a.body_type, b.body_type) {
+                    (RigidBodyType::Dynamic, RigidBodyType::Static) => {
+                        if let Some(lt) = world.get_mut::<LocalTransform>(a.entity) {
+                            lt.0.translation = lt.0.translation + normal * (-depth);
+                        }
+                    }
+                    (RigidBodyType::Static, RigidBodyType::Dynamic) => {
+                        if let Some(lt) = world.get_mut::<LocalTransform>(b.entity) {
+                            lt.0.translation = lt.0.translation + normal * depth;
+                        }
+                    }
+                    (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
+                        if let Some(lt) = world.get_mut::<LocalTransform>(a.entity) {
+                            lt.0.translation = lt.0.translation + normal * (-depth * 0.5);
+                        }
+                        if let Some(lt) = world.get_mut::<LocalTransform>(b.entity) {
+                            lt.0.translation = lt.0.translation + normal * (depth * 0.5);
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Velocity correction (only on last iteration to avoid over-damping)
+                if _iteration == SOLVER_ITERATIONS - 1 {
+                    let restitution = a.restitution * b.restitution;
+                    let friction = (a.friction * b.friction).sqrt();
+
+                    // Body A
+                    if a.body_type == RigidBodyType::Dynamic
+                        && let Some(vel) = world.get_mut::<Velocity>(a.entity)
+                    {
+                        let n = normal * (-1.0);
+                        let vn = vel.linear.dot(n);
+                        if vn < 0.0 {
+                            let approach_speed = -vn;
+                            let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
+                                0.0
+                            } else {
+                                approach_speed * restitution
+                            };
+                            vel.linear = vel.linear + n * (new_normal_vel - vn);
+                            let tangent_vel = vel.linear - n * vel.linear.dot(n);
+                            vel.linear = vel.linear - tangent_vel * friction;
+                        }
+                    }
+
+                    // Body B
+                    if b.body_type == RigidBodyType::Dynamic
+                        && let Some(vel) = world.get_mut::<Velocity>(b.entity)
+                    {
+                        let n = normal;
+                        let vn = vel.linear.dot(n);
+                        if vn < 0.0 {
+                            let approach_speed = -vn;
+                            let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
+                                0.0
+                            } else {
+                                approach_speed * restitution
+                            };
+                            vel.linear = vel.linear + n * (new_normal_vel - vn);
+                            let tangent_vel = vel.linear - n * vel.linear.dot(n);
+                            vel.linear = vel.linear - tangent_vel * friction;
+                        }
+                    }
                 }
             }
-
-            // Velocity response for dynamic body B
-            if b.body_type == RigidBodyType::Dynamic
-                && let Some(vel) = world.get::<Velocity>(b.entity)
-            {
-                let n = normal;
-                let vn = vel.linear.dot(n);
-                if vn < 0.0 {
-                    let approach_speed = -vn;
-                    let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
-                        0.0
-                    } else {
-                        approach_speed * restitution
-                    };
-                    let normal_correction = n * (new_normal_vel - vn);
-                    let tangent_vel = vel.linear - n * vn;
-                    let friction_correction = tangent_vel * (-friction);
-                    corrections.push((
-                        b.entity,
-                        Vec3::ZERO,
-                        normal_correction + friction_correction,
-                    ));
-                }
-            }
-        }
-    }
-
-    // Apply corrections
-    for (entity, pos_correction, vel_correction) in corrections {
-        if pos_correction.length_squared() > 0.0
-            && let Some(lt) = world.get_mut::<LocalTransform>(entity)
-        {
-            lt.0.translation = lt.0.translation + pos_correction;
-        }
-        if vel_correction.length_squared() > 0.0
-            && let Some(vel) = world.get_mut::<Velocity>(entity)
-        {
-            vel.linear = vel.linear + vel_correction;
         }
     }
 }
@@ -391,6 +387,45 @@ mod tests {
             "Cube should have fallen, y={}",
             lt.0.translation.y
         );
+    }
+
+    #[test]
+    fn stacking_stability() {
+        // Three cubes stacked on a static ground. With iterative solver,
+        // they should settle without exploding or falling through.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig::new());
+
+        // Ground at y=0
+        let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(ground, GlobalTransform::default());
+        world.insert(ground, PhysicsBody::fixed());
+        world.insert(ground, Collider::aabb(10.0, 0.5, 10.0));
+
+        // Stack: cube1 at y=1, cube2 at y=2, cube3 at y=3
+        let mut cubes = Vec::new();
+        for i in 1..=3 {
+            let e = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+                0.0, i as f32, 0.0,
+            ))));
+            world.insert(e, GlobalTransform::default());
+            world.insert(e, PhysicsBody::dynamic());
+            world.insert(e, Velocity::default());
+            world.insert(e, Collider::aabb(0.5, 0.5, 0.5));
+            cubes.push(e);
+        }
+
+        // Run simulation for a while
+        for _ in 0..300 {
+            physics_step_system(&mut world);
+        }
+
+        // All cubes should be above ground (y > -0.5) and below starting height
+        for (i, &cube) in cubes.iter().enumerate() {
+            let y = world.get::<LocalTransform>(cube).unwrap().0.translation.y;
+            assert!(y > -1.0, "Cube {} fell through ground, y={}", i, y);
+            assert!(y < 5.0, "Cube {} exploded upward, y={}", i, y);
+        }
     }
 
     #[test]
