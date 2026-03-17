@@ -23,6 +23,14 @@ pub struct With<T: Component>(PhantomData<T>);
 /// A filter that requires an entity to NOT have a specific component.
 pub struct Without<T: Component>(PhantomData<T>);
 
+/// Marker for change-detection queries. Use with `World::changed_entities::<T>(since_tick)`
+/// for efficient iteration of only modified entities.
+///
+/// Per-entity change detection is available via `world.get_change_tick::<T>(entity)`.
+/// Field-level granularity requires wrapper types (future work).
+#[allow(dead_code)]
+pub struct Changed<T: Component>(PhantomData<T>);
+
 /// Trait for query filters.
 pub trait QueryFilter {
     /// Check if an archetype matches this filter.
@@ -60,6 +68,9 @@ impl<T: Component> QueryFilter for Without<T> {
 /// Panics at creation time if the same component is accessed both mutably and immutably.
 pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
     world: &'w World,
+    /// Cached matching archetype indices, valid when `cache_generation` matches world.
+    cached_archetypes: Vec<usize>,
+    cache_generation: u64,
     _marker: PhantomData<(Q, F)>,
 }
 
@@ -85,17 +96,42 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
             seen.insert(access.component_id, access.mutable);
         }
 
+        let cached_archetypes = Self::compute_matching(world);
+        let cache_generation = world.archetype_generation;
+
         Self {
             world,
+            cached_archetypes,
+            cache_generation,
             _marker: PhantomData,
         }
     }
 
+    /// Compute matching archetype indices (includes empty — they may gain entities later in the same borrow).
+    fn compute_matching(world: &World) -> Vec<usize> {
+        world
+            .archetypes
+            .iter()
+            .enumerate()
+            .filter(|(_, arch)| Q::matches_archetype(world, arch) && F::matches(world, arch))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// Iterate over all matching entities.
+    ///
+    /// Uses cached archetype indices. The cache is valid as long as no new
+    /// archetypes were created since the Query was built (asserted in debug).
     pub fn iter(&self) -> QueryIter<'w, Q, F> {
+        debug_assert!(
+            self.cache_generation == self.world.archetype_generation,
+            "Query cache stale: create a new Query after structural world changes"
+        );
         QueryIter {
             world: self.world,
-            archetype_index: 0,
+            // Clone is O(matching_archetypes) — typically small (< 10 archetypes)
+            matching_archetypes: self.cached_archetypes.clone(),
+            arch_cursor: 0,
             row_index: 0,
             _marker: PhantomData,
         }
@@ -103,20 +139,18 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
 
     /// Count matching entities without iterating component data.
     pub fn count(&self) -> usize {
-        let mut total = 0;
-        for archetype in &self.world.archetypes {
-            if Q::matches_archetype(self.world, archetype) && F::matches(self.world, archetype) {
-                total += archetype.len();
-            }
-        }
-        total
+        self.cached_archetypes
+            .iter()
+            .map(|&i| self.world.archetypes[i].len())
+            .sum()
     }
 }
 
-/// Iterator over query results.
+/// Iterator over query results. Uses cached archetype indices to skip non-matching archetypes.
 pub struct QueryIter<'w, Q: WorldQuery, F: QueryFilter> {
     world: &'w World,
-    archetype_index: usize,
+    matching_archetypes: Vec<usize>,
+    arch_cursor: usize,
     row_index: usize,
     _marker: PhantomData<(Q, F)>,
 }
@@ -126,23 +160,16 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.archetype_index >= self.world.archetypes.len() {
+            if self.arch_cursor >= self.matching_archetypes.len() {
                 return None;
             }
 
-            let archetype = &self.world.archetypes[self.archetype_index];
+            let arch_idx = self.matching_archetypes[self.arch_cursor];
+            let archetype = &self.world.archetypes[arch_idx];
 
-            if !Q::matches_archetype(self.world, archetype)
-                || !F::matches(self.world, archetype)
-                || archetype.is_empty()
-            {
-                self.archetype_index += 1;
-                self.row_index = 0;
-                continue;
-            }
-
-            if self.row_index >= archetype.len() {
-                self.archetype_index += 1;
+            // Skip empty archetypes (entities may have been despawned since cache was built)
+            if archetype.is_empty() || self.row_index >= archetype.len() {
+                self.arch_cursor += 1;
                 self.row_index = 0;
                 continue;
             }
@@ -150,7 +177,8 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
             let row = self.row_index;
             self.row_index += 1;
 
-            // SAFETY: We verified the archetype matches and the row is valid.
+            // SAFETY: Archetype matching was verified at cache build time.
+            // Row is within bounds (checked above).
             let item = unsafe { Q::fetch(self.world, archetype, row) };
             return Some(item);
         }

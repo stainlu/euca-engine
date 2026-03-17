@@ -11,7 +11,7 @@ mod vertex;
 
 pub use wgpu;
 
-pub use camera::Camera;
+pub use camera::{Camera, Frustum};
 pub use gpu::GpuContext;
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};

@@ -84,6 +84,79 @@ impl Camera {
     }
 }
 
+/// A frustum defined by 6 planes (left, right, bottom, top, near, far).
+/// Each plane is `(nx, ny, nz, d)` where `nx*x + ny*y + nz*z + d >= 0` is inside.
+#[derive(Clone, Debug)]
+pub struct Frustum {
+    pub planes: [[f32; 4]; 6],
+}
+
+impl Frustum {
+    /// Extract frustum planes from a view-projection matrix.
+    /// Uses the Gribb/Hartmann method.
+    pub fn from_view_projection(vp: &Mat4) -> Self {
+        let m = vp.to_cols_array_2d();
+        // Row extraction from column-major matrix
+        let row = |r: usize| -> [f32; 4] { [m[0][r], m[1][r], m[2][r], m[3][r]] };
+        let r0 = row(0);
+        let r1 = row(1);
+        let r2 = row(2);
+        let r3 = row(3);
+
+        let mut planes = [[0.0f32; 4]; 6];
+        // Left:   row3 + row0
+        // Right:  row3 - row0
+        // Bottom: row3 + row1
+        // Top:    row3 - row1
+        // Near:   row3 + row2
+        // Far:    row3 - row2
+        for i in 0..4 {
+            planes[0][i] = r3[i] + r0[i]; // left
+            planes[1][i] = r3[i] - r0[i]; // right
+            planes[2][i] = r3[i] + r1[i]; // bottom
+            planes[3][i] = r3[i] - r1[i]; // top
+            planes[4][i] = r3[i] + r2[i]; // near
+            planes[5][i] = r3[i] - r2[i]; // far
+        }
+
+        // Normalize each plane
+        for plane in &mut planes {
+            let len = (plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]).sqrt();
+            if len > 1e-8 {
+                plane[0] /= len;
+                plane[1] /= len;
+                plane[2] /= len;
+                plane[3] /= len;
+            }
+        }
+
+        Self { planes }
+    }
+
+    /// Test if an AABB (center + half-extents) is at least partially inside the frustum.
+    pub fn intersects_aabb(&self, center: Vec3, half_extents: Vec3) -> bool {
+        for plane in &self.planes {
+            let nx = plane[0];
+            let ny = plane[1];
+            let nz = plane[2];
+            let d = plane[3];
+
+            // Compute the effective radius of the AABB projected onto the plane normal
+            let r =
+                half_extents.x * nx.abs() + half_extents.y * ny.abs() + half_extents.z * nz.abs();
+
+            // Distance from center to plane
+            let dist = nx * center.x + ny * center.y + nz * center.z + d;
+
+            // If the AABB is entirely outside this plane, it's outside the frustum
+            if dist < -r {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 impl Default for Camera {
     fn default() -> Self {
         Self::new(Vec3::new(0.0, 2.0, -5.0), Vec3::ZERO)

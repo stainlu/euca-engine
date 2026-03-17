@@ -20,6 +20,8 @@ pub struct World {
     archetype_index: HashMap<Vec<ComponentId>, ArchetypeId>,
     pub(crate) entity_locations: Vec<Option<EntityLocation>>,
     pub(crate) tick: u64,
+    /// Increments whenever a new archetype is created. Used by Query for cache invalidation.
+    pub(crate) archetype_generation: u64,
     resources: Resources,
     events: Events,
 }
@@ -34,6 +36,7 @@ impl World {
             archetype_index: HashMap::new(),
             entity_locations: Vec::new(),
             tick: 0,
+            archetype_generation: 0,
             resources: Resources::new(),
             events: Events::new(),
         }
@@ -272,6 +275,13 @@ impl World {
         self.tick
     }
 
+    /// Returns the archetype generation counter (increments on new archetype creation).
+    /// Used by Query for cache invalidation.
+    #[inline]
+    pub fn archetype_generation(&self) -> u64 {
+        self.archetype_generation
+    }
+
     // ── Resources ──
 
     /// Insert a singleton resource into the world. Overwrites if already present.
@@ -350,6 +360,7 @@ impl World {
         let archetype = Archetype::new(id, &infos);
         self.archetypes.push(archetype);
         self.archetype_index.insert(sorted, id);
+        self.archetype_generation += 1;
         id
     }
 
