@@ -39,7 +39,10 @@ impl Stage {
     fn rebuild_batches(&mut self) {
         self.batches.clear();
 
-        for sys_idx in 0..self.systems.len() {
+        // Topological sort: respect after() dependencies
+        let order = self.topological_order();
+
+        for &sys_idx in &order {
             let sys_accesses = self.systems[sys_idx].accesses();
 
             // Systems with no declared accesses are conservative — own batch
@@ -78,6 +81,60 @@ impl Stage {
         }
 
         self.dirty = false;
+    }
+
+    /// Topological sort of systems respecting after() dependencies.
+    /// Returns indices in execution order.
+    fn topological_order(&self) -> Vec<usize> {
+        use std::collections::HashMap;
+
+        // Build label → index map
+        let mut label_to_idx: HashMap<&str, usize> = HashMap::new();
+        for (i, sys) in self.systems.iter().enumerate() {
+            if let Some(label) = sys.label() {
+                label_to_idx.insert(label, i);
+            }
+        }
+
+        // Build adjacency list (edges: dep → dependent)
+        let n = self.systems.len();
+        let mut in_degree = vec![0u32; n];
+        let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+        for (i, sys) in self.systems.iter().enumerate() {
+            for &dep_label in sys.after() {
+                if let Some(&dep_idx) = label_to_idx.get(dep_label) {
+                    dependents[dep_idx].push(i);
+                    in_degree[i] += 1;
+                }
+            }
+        }
+
+        // Kahn's algorithm (FIFO queue for stable ordering)
+        let mut queue: std::collections::VecDeque<usize> =
+            (0..n).filter(|&i| in_degree[i] == 0).collect();
+        let mut order = Vec::with_capacity(n);
+
+        while let Some(idx) = queue.pop_front() {
+            order.push(idx);
+            for &dep in &dependents[idx] {
+                in_degree[dep] -= 1;
+                if in_degree[dep] == 0 {
+                    queue.push_back(dep);
+                }
+            }
+        }
+
+        // If cycle detected, just append missing systems at the end
+        if order.len() < n {
+            for i in 0..n {
+                if !order.contains(&i) {
+                    order.push(i);
+                }
+            }
+        }
+
+        order
     }
 
     fn run(&mut self, world: &mut World) {

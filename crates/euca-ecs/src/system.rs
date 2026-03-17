@@ -19,6 +19,16 @@ pub trait System: Send + Sync {
     fn accesses(&self) -> &[SystemAccess] {
         &[]
     }
+
+    /// Optional label for ordering dependencies (e.g., "physics", "movement").
+    fn label(&self) -> Option<&str> {
+        None
+    }
+
+    /// Systems that must run before this one (by label).
+    fn after(&self) -> &[&str] {
+        &[]
+    }
 }
 
 /// Wrapper that converts a closure into a System.
@@ -84,6 +94,48 @@ impl<S: System> AccessSystem<S> {
     /// Wrap a system with explicit access declarations.
     pub fn new(system: S, accesses: Vec<SystemAccess>) -> Self {
         Self { system, accesses }
+    }
+}
+
+/// A system with a label and ordering dependencies.
+pub struct LabeledSystem<S: System> {
+    system: S,
+    label_str: &'static str,
+    after_labels: Vec<&'static str>,
+}
+
+impl<S: System> System for LabeledSystem<S> {
+    fn run(&mut self, world: &mut World) {
+        self.system.run(world);
+    }
+    fn name(&self) -> &str {
+        self.system.name()
+    }
+    fn accesses(&self) -> &[SystemAccess] {
+        self.system.accesses()
+    }
+    fn label(&self) -> Option<&str> {
+        Some(self.label_str)
+    }
+    fn after(&self) -> &[&str] {
+        &self.after_labels
+    }
+}
+
+impl<S: System> LabeledSystem<S> {
+    /// Create a labeled system.
+    pub fn new(system: S, label: &'static str) -> Self {
+        Self {
+            system,
+            label_str: label,
+            after_labels: Vec::new(),
+        }
+    }
+
+    /// Declare that this system must run after another labeled system.
+    pub fn after(mut self, label: &'static str) -> Self {
+        self.after_labels.push(label);
+        self
     }
 }
 

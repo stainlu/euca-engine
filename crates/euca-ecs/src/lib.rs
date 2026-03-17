@@ -25,6 +25,6 @@ pub use query::{ComponentAccess, Query, QueryFilter, With, Without, WorldQuery};
 pub use resource::Resources;
 pub use schedule::Schedule;
 pub use snapshot::{EntitySnapshot, WorldSnapshot};
-pub use system::{AccessSystem, IntoSystem, System};
+pub use system::{AccessSystem, IntoSystem, LabeledSystem, System};
 pub use system_param::{Res, ResMut, SystemAccess};
 pub use world::World;
