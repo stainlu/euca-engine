@@ -42,10 +42,10 @@ External AI Agents (Claude Code, RL agents, etc.)
 
 | Crate | Purpose | Status | Tests |
 |-------|---------|--------|-------|
-| `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query, Resource, Event, Command, Schedule, Snapshot, Change Detection, par_for_each | Done | 51 |
+| `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query (&T + &mut T), Resource, Event, Command, Schedule (parallel batching), Snapshot, Change Detection, par_for_each, SystemAccess | Done | 69 |
 | `euca-math` | Custom SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) | Done | 28 |
 | `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info | Done (unused) | 1 |
-| `euca-scene` | Transform hierarchy, Parent/Children BFS propagation | Done | 3 |
+| `euca-scene` | Transform hierarchy, Parent/Children BFS propagation, dirty-flag optimization | Done | 5 |
 | `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
 | `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing, hardware survey | Done | 16 |
 | `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero deps) | Done | 12 |
@@ -232,3 +232,9 @@ POST /reset                        → reset to initial state
 | 2026-03-16 | C | Published to crates.io: euca-math v0.1.0, euca-ecs v0.1.0 — full doc comments, metadata (description, keywords, categories, license, repository) |
 | 2026-03-17 | — | Hybrid GPU strategy: HardwareSurvey at startup (enumerate all adapters, vendor detection, single Instance reuse), RenderBackend enum, metal-native feature flag, re-export wgpu from euca-render |
 | 2026-03-17 | — | Full UE5 comparison review: 79 issues identified (11 CRITICAL, 22 HIGH, 28 MEDIUM, 8 LOW). Phase E roadmap added. |
+| 2026-03-17 | E | CRITICAL #1: Mutable queries (`Query<&mut T>`), tuple expansion to 8, ComponentAccess tracking, aliasing validation at Query::new() |
+| 2026-03-17 | E | CRITICAL #2: SystemAccess enum, validate_no_conflicts(), System::accesses(), AccessSystem wrapper, UnsafeWorldCell, Res/ResMut wrappers, IntoSystem<Marker> |
+| 2026-03-17 | E | CRITICAL #3: Parallel system scheduling — greedy batch algorithm, std::thread::scope parallel execution, SystemJob Send wrapper |
+| 2026-03-17 | E | CRITICAL #11: Transform dirty flags — PropagationState resource, tick-based change detection, skip unchanged subtrees O(N)→O(moved) |
+| 2026-03-17 | — | Physics fixes: restitution multiply, friction geometric mean, per-entity gravity override, pre-allocated corrections Vec |
+| 2026-03-17 | — | Editor: improved showcase scene (pedestal, pillars, material showcase, warm lighting) |
