@@ -102,6 +102,7 @@ struct SentPacket {
     data: Vec<u8>,
     addr: SocketAddr,
     send_time: std::time::Instant,
+    retries: u32,
 }
 
 /// Wrapper providing reliable delivery over `UdpTransport`.
@@ -144,6 +145,7 @@ impl ReliableTransport {
             data: buf,
             addr,
             send_time: std::time::Instant::now(),
+            retries: 0,
         });
         Ok(())
     }
@@ -162,20 +164,19 @@ impl ReliableTransport {
             true // keep — not yet acknowledged
         });
 
-        // Retransmit timed-out packets
+        // Retransmit timed-out packets (count-based, not just time-based)
         let now = std::time::Instant::now();
         let rto = std::time::Duration::from_secs_f32(self.rto);
         for pkt in &mut self.sent_queue {
-            if now.duration_since(pkt.send_time) >= rto {
+            if pkt.retries < self.max_retries && now.duration_since(pkt.send_time) >= rto {
                 let _ = self.transport.send_to(&pkt.data, pkt.addr);
-                pkt.send_time = now; // reset timer
+                pkt.send_time = now;
+                pkt.retries += 1;
             }
         }
 
-        // Drop packets that exceeded max retries (too old)
-        let max_age = std::time::Duration::from_secs_f32(self.rto * self.max_retries as f32);
-        self.sent_queue
-            .retain(|pkt| now.duration_since(pkt.send_time) < max_age);
+        // Drop packets that exceeded max retries
+        self.sent_queue.retain(|pkt| pkt.retries < self.max_retries);
     }
 }
 

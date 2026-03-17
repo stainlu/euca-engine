@@ -280,72 +280,66 @@ const SOLVER_ITERATIONS: usize = 4;
 
 fn resolve_collisions(world: &mut World) {
     // ── Iterative constraint solver ──
-    // Run multiple passes of contact detection + position correction.
-    // Each pass uses updated positions, so corrections propagate through
-    // stacks (cube on cube on ground) instead of only fixing one layer.
+    // Collect bodies once, iterate position corrections in-place,
+    // write back to world at the end.
+
+    let mut bodies: Vec<Body> = {
+        let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
+        query
+            .iter()
+            .filter_map(|(e, lt, col)| {
+                let body = world.get::<PhysicsBody>(e)?;
+                Some(Body {
+                    entity: e,
+                    pos: lt.0.translation,
+                    shape: col.shape.clone(),
+                    body_type: body.body_type,
+                    restitution: col.restitution,
+                    friction: col.friction,
+                })
+            })
+            .collect()
+    };
 
     for _iteration in 0..SOLVER_ITERATIONS {
-        // Re-collect body positions each iteration (they change between passes)
-        let bodies: Vec<Body> = {
-            let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
-            query
-                .iter()
-                .filter_map(|(e, lt, col)| {
-                    let body = world.get::<PhysicsBody>(e)?;
-                    Some(Body {
-                        entity: e,
-                        pos: lt.0.translation,
-                        shape: col.shape.clone(),
-                        body_type: body.body_type,
-                        restitution: col.restitution,
-                        friction: col.friction,
-                    })
-                })
-                .collect()
-        };
-
+        // Recompute broadphase each iteration (positions change)
         let candidate_pairs = broadphase_spatial_hash(&bodies);
 
         for (i, j) in candidate_pairs {
-            let a = &bodies[i];
-            let b = &bodies[j];
-
-            if a.body_type == RigidBodyType::Static && b.body_type == RigidBodyType::Static {
+            if bodies[i].body_type == RigidBodyType::Static
+                && bodies[j].body_type == RigidBodyType::Static
+            {
                 continue;
             }
 
-            if let Some((normal, depth)) = intersect_shapes(a.pos, &a.shape, b.pos, &b.shape) {
-                // Position correction: push bodies apart along contact normal
-                match (a.body_type, b.body_type) {
+            if let Some((normal, depth)) = intersect_shapes(
+                bodies[i].pos,
+                &bodies[i].shape,
+                bodies[j].pos,
+                &bodies[j].shape,
+            ) {
+                // Position correction in local bodies array (not world yet)
+                match (bodies[i].body_type, bodies[j].body_type) {
                     (RigidBodyType::Dynamic, RigidBodyType::Static) => {
-                        if let Some(lt) = world.get_mut::<LocalTransform>(a.entity) {
-                            lt.0.translation = lt.0.translation + normal * (-depth);
-                        }
+                        bodies[i].pos = bodies[i].pos + normal * (-depth);
                     }
                     (RigidBodyType::Static, RigidBodyType::Dynamic) => {
-                        if let Some(lt) = world.get_mut::<LocalTransform>(b.entity) {
-                            lt.0.translation = lt.0.translation + normal * depth;
-                        }
+                        bodies[j].pos = bodies[j].pos + normal * depth;
                     }
                     (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
-                        if let Some(lt) = world.get_mut::<LocalTransform>(a.entity) {
-                            lt.0.translation = lt.0.translation + normal * (-depth * 0.5);
-                        }
-                        if let Some(lt) = world.get_mut::<LocalTransform>(b.entity) {
-                            lt.0.translation = lt.0.translation + normal * (depth * 0.5);
-                        }
+                        bodies[i].pos = bodies[i].pos + normal * (-depth * 0.5);
+                        bodies[j].pos = bodies[j].pos + normal * (depth * 0.5);
                     }
                     _ => {}
                 }
 
                 // Velocity correction (only on last iteration to avoid over-damping)
                 if _iteration == SOLVER_ITERATIONS - 1 {
-                    let restitution = a.restitution * b.restitution;
-                    let friction = (a.friction * b.friction).sqrt();
+                    let restitution = bodies[i].restitution * bodies[j].restitution;
+                    let friction = (bodies[i].friction * bodies[j].friction).sqrt();
 
-                    // Body A
-                    if a.body_type == RigidBodyType::Dynamic
-                        && let Some(vel) = world.get_mut::<Velocity>(a.entity)
+                    if bodies[i].body_type == RigidBodyType::Dynamic
+                        && let Some(vel) = world.get_mut::<Velocity>(bodies[i].entity)
                     {
                         let n = normal * (-1.0);
                         let vn = vel.linear.dot(n);
@@ -362,9 +356,8 @@ fn resolve_collisions(world: &mut World) {
                         }
                     }
 
-                    // Body B
-                    if b.body_type == RigidBodyType::Dynamic
-                        && let Some(vel) = world.get_mut::<Velocity>(b.entity)
+                    if bodies[j].body_type == RigidBodyType::Dynamic
+                        && let Some(vel) = world.get_mut::<Velocity>(bodies[j].entity)
                     {
                         let n = normal;
                         let vn = vel.linear.dot(n);
@@ -382,6 +375,15 @@ fn resolve_collisions(world: &mut World) {
                     }
                 }
             }
+        }
+    }
+
+    // Write solved positions back to world
+    for body in &bodies {
+        if body.body_type == RigidBodyType::Dynamic
+            && let Some(lt) = world.get_mut::<LocalTransform>(body.entity)
+        {
+            lt.0.translation = body.pos;
         }
     }
 }

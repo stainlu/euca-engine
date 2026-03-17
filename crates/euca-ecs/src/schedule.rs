@@ -125,8 +125,18 @@ impl Stage {
             }
         }
 
-        // If cycle detected, just append missing systems at the end
+        // Cycle detection: if not all systems were ordered, there's a dependency cycle
         if order.len() < n {
+            let unresolved: Vec<_> = (0..n)
+                .filter(|i| !order.contains(i))
+                .map(|i| self.systems[i].name().to_string())
+                .collect();
+            eprintln!(
+                "[WARN] System dependency cycle detected involving: {:?}. \
+                 These systems will run in declaration order.",
+                unresolved
+            );
+            // Append in declaration order as fallback (deterministic, but not ideal)
             for i in 0..n {
                 if !order.contains(&i) {
                     order.push(i);
