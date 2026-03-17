@@ -245,3 +245,6 @@ POST /reset                        → reset to initial state
 | 2026-03-17 | E | CRITICAL #9: Multi-world pool (RwLock<WorldPool>, create_world(), per-world access) |
 | 2026-03-17 | E | CRITICAL #10: Entity ownership (Owner component, agent_id on spawn/despawn/patch, permission checks) |
 | 2026-03-17 | E | CRITICAL #4: Reflection integration — Reflect derived/implemented on 7 component types, generic reflect_component<T>() inspector, replaced hardcoded display |
+| 2026-03-18 | — | HIGH #26: Tangent vectors in vertex format (32→44 bytes), computed for cube/sphere/plane/glTF |
+| 2026-03-18 | — | HIGH #20: Normal map support — Material.normal_texture, TBN matrix in PBR shader, has_normal_map flag |
+| 2026-03-18 | — | HIGH #21: PointLight + SpotLight component types, GpuPointLight/GpuSpotLight structs, SceneUniforms extended |
