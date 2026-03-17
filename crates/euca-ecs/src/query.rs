@@ -60,6 +60,8 @@ impl<T: Component> QueryFilter for Without<T> {
 /// Panics at creation time if the same component is accessed both mutably and immutably.
 pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
     world: &'w World,
+    /// Cached indices of archetypes matching this query.
+    matching_archetypes: Vec<usize>,
     _marker: PhantomData<(Q, F)>,
 }
 
@@ -85,8 +87,20 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
             seen.insert(access.component_id, access.mutable);
         }
 
+        // Cache matching archetype indices
+        let matching_archetypes: Vec<usize> = world
+            .archetypes
+            .iter()
+            .enumerate()
+            .filter(|(_, arch)| {
+                Q::matches_archetype(world, arch) && F::matches(world, arch) && !arch.is_empty()
+            })
+            .map(|(i, _)| i)
+            .collect();
+
         Self {
             world,
+            matching_archetypes,
             _marker: PhantomData,
         }
     }
@@ -95,7 +109,8 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     pub fn iter(&self) -> QueryIter<'w, Q, F> {
         QueryIter {
             world: self.world,
-            archetype_index: 0,
+            matching_archetypes: self.matching_archetypes.clone(),
+            arch_cursor: 0,
             row_index: 0,
             _marker: PhantomData,
         }
@@ -103,20 +118,18 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
 
     /// Count matching entities without iterating component data.
     pub fn count(&self) -> usize {
-        let mut total = 0;
-        for archetype in &self.world.archetypes {
-            if Q::matches_archetype(self.world, archetype) && F::matches(self.world, archetype) {
-                total += archetype.len();
-            }
-        }
-        total
+        self.matching_archetypes
+            .iter()
+            .map(|&i| self.world.archetypes[i].len())
+            .sum()
     }
 }
 
-/// Iterator over query results.
+/// Iterator over query results. Uses cached archetype indices for O(1) lookup.
 pub struct QueryIter<'w, Q: WorldQuery, F: QueryFilter> {
     world: &'w World,
-    archetype_index: usize,
+    matching_archetypes: Vec<usize>,
+    arch_cursor: usize,
     row_index: usize,
     _marker: PhantomData<(Q, F)>,
 }
@@ -126,24 +139,15 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.archetype_index >= self.world.archetypes.len() {
+            if self.arch_cursor >= self.matching_archetypes.len() {
                 return None;
             }
 
-            let archetype = &self.world.archetypes[self.archetype_index];
-
-            // Check if this archetype matches
-            if !Q::matches_archetype(self.world, archetype)
-                || !F::matches(self.world, archetype)
-                || archetype.is_empty()
-            {
-                self.archetype_index += 1;
-                self.row_index = 0;
-                continue;
-            }
+            let arch_idx = self.matching_archetypes[self.arch_cursor];
+            let archetype = &self.world.archetypes[arch_idx];
 
             if self.row_index >= archetype.len() {
-                self.archetype_index += 1;
+                self.arch_cursor += 1;
                 self.row_index = 0;
                 continue;
             }
@@ -151,7 +155,7 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
             let row = self.row_index;
             self.row_index += 1;
 
-            // SAFETY: We verified the archetype matches and the row is valid.
+            // SAFETY: Archetype was verified at Query::new() time, row is in bounds.
             let item = unsafe { Q::fetch(self.world, archetype, row) };
             return Some(item);
         }
