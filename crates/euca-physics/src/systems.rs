@@ -63,16 +63,88 @@ fn integrate_positions(world: &mut World, dt: f32) {
 /// Minimum approach speed for a bounce to occur. Below this, the object comes to rest.
 const REST_VELOCITY_THRESHOLD: f32 = 0.5;
 
-fn resolve_collisions(world: &mut World) {
-    // Collect all collidable entities (copy scalars, borrow shapes via index)
-    struct Body {
-        entity: Entity,
-        pos: Vec3,
-        shape: ColliderShape,
-        body_type: RigidBodyType,
-        restitution: f32,
-        friction: f32,
+/// Spatial hash cell size. Bodies are inserted into all cells their AABB overlaps.
+const BROADPHASE_CELL_SIZE: f32 = 4.0;
+
+/// Compute the AABB extents for any collider shape.
+fn shape_extent(shape: &ColliderShape) -> f32 {
+    match shape {
+        ColliderShape::Aabb { hx, hy, hz } => hx.max(*hy).max(*hz),
+        ColliderShape::Sphere { radius } => *radius,
+        ColliderShape::Capsule {
+            radius,
+            half_height,
+        } => radius + half_height,
     }
+}
+
+/// Collectable body data for broadphase + narrowphase.
+struct Body {
+    entity: Entity,
+    pos: Vec3,
+    shape: ColliderShape,
+    body_type: RigidBodyType,
+    restitution: f32,
+    friction: f32,
+}
+
+/// Spatial hash broadphase: returns candidate pairs (indices into bodies slice).
+/// Only pairs sharing at least one grid cell are returned. Eliminates most
+/// non-colliding pairs for O(n * avg_neighbors) instead of O(n²).
+fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
+    use std::collections::{HashMap, HashSet};
+
+    if bodies.len() < 20 {
+        // For small body counts, O(n²) is faster than hashing overhead
+        let mut pairs = Vec::new();
+        for i in 0..bodies.len() {
+            for j in (i + 1)..bodies.len() {
+                pairs.push((i, j));
+            }
+        }
+        return pairs;
+    }
+
+    let inv_cell = 1.0 / BROADPHASE_CELL_SIZE;
+
+    // Map: cell_key → list of body indices
+    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+
+    for (idx, body) in bodies.iter().enumerate() {
+        let ext = shape_extent(&body.shape);
+        let min_x = ((body.pos.x - ext) * inv_cell).floor() as i32;
+        let max_x = ((body.pos.x + ext) * inv_cell).floor() as i32;
+        let min_y = ((body.pos.y - ext) * inv_cell).floor() as i32;
+        let max_y = ((body.pos.y + ext) * inv_cell).floor() as i32;
+        let min_z = ((body.pos.z - ext) * inv_cell).floor() as i32;
+        let max_z = ((body.pos.z + ext) * inv_cell).floor() as i32;
+
+        for cx in min_x..=max_x {
+            for cy in min_y..=max_y {
+                for cz in min_z..=max_z {
+                    grid.entry((cx, cy, cz)).or_default().push(idx);
+                }
+            }
+        }
+    }
+
+    // Collect unique pairs from cells
+    let mut pair_set: HashSet<(usize, usize)> = HashSet::new();
+    for cell_bodies in grid.values() {
+        for i in 0..cell_bodies.len() {
+            for j in (i + 1)..cell_bodies.len() {
+                let a = cell_bodies[i];
+                let b = cell_bodies[j];
+                let pair = if a < b { (a, b) } else { (b, a) };
+                pair_set.insert(pair);
+            }
+        }
+    }
+
+    pair_set.into_iter().collect()
+}
+
+fn resolve_collisions(world: &mut World) {
     let bodies: Vec<Body> = {
         let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
         query
@@ -91,83 +163,82 @@ fn resolve_collisions(world: &mut World) {
             .collect()
     };
 
-    // O(n²) broadphase — TODO: replace with spatial hash or BVH (#5 in review)
+    // Spatial hash broadphase: insert bodies into grid cells, test only within same cells
+    let candidate_pairs = broadphase_spatial_hash(&bodies);
     let mut corrections: Vec<(Entity, Vec3, Vec3)> = Vec::with_capacity(bodies.len());
 
-    for i in 0..bodies.len() {
-        for j in (i + 1)..bodies.len() {
-            let a = &bodies[i];
-            let b = &bodies[j];
+    for (i, j) in candidate_pairs {
+        let a = &bodies[i];
+        let b = &bodies[j];
 
-            if a.body_type == RigidBodyType::Static && b.body_type == RigidBodyType::Static {
-                continue;
+        if a.body_type == RigidBodyType::Static && b.body_type == RigidBodyType::Static {
+            continue;
+        }
+
+        if let Some((normal, depth)) = intersect_shapes(a.pos, &a.shape, b.pos, &b.shape) {
+            let restitution = a.restitution * b.restitution;
+            let friction = (a.friction * b.friction).sqrt();
+
+            // Push-out resolution
+            match (a.body_type, b.body_type) {
+                (RigidBodyType::Dynamic, RigidBodyType::Static) => {
+                    corrections.push((a.entity, normal * (-depth), Vec3::ZERO));
+                }
+                (RigidBodyType::Static, RigidBodyType::Dynamic) => {
+                    corrections.push((b.entity, normal * depth, Vec3::ZERO));
+                }
+                (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
+                    corrections.push((a.entity, normal * (-depth * 0.5), Vec3::ZERO));
+                    corrections.push((b.entity, normal * (depth * 0.5), Vec3::ZERO));
+                }
+                _ => {}
             }
 
-            if let Some((normal, depth)) = intersect_shapes(a.pos, &a.shape, b.pos, &b.shape) {
-                let restitution = a.restitution * b.restitution;
-                let friction = (a.friction * b.friction).sqrt();
-
-                // Push-out resolution
-                match (a.body_type, b.body_type) {
-                    (RigidBodyType::Dynamic, RigidBodyType::Static) => {
-                        corrections.push((a.entity, normal * (-depth), Vec3::ZERO));
-                    }
-                    (RigidBodyType::Static, RigidBodyType::Dynamic) => {
-                        corrections.push((b.entity, normal * depth, Vec3::ZERO));
-                    }
-                    (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
-                        corrections.push((a.entity, normal * (-depth * 0.5), Vec3::ZERO));
-                        corrections.push((b.entity, normal * (depth * 0.5), Vec3::ZERO));
-                    }
-                    _ => {}
+            // Velocity response for dynamic body A
+            if a.body_type == RigidBodyType::Dynamic
+                && let Some(vel) = world.get::<Velocity>(a.entity)
+            {
+                let n = normal * (-1.0);
+                let vn = vel.linear.dot(n);
+                if vn < 0.0 {
+                    let approach_speed = -vn;
+                    let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
+                        0.0
+                    } else {
+                        approach_speed * restitution
+                    };
+                    let normal_correction = n * (new_normal_vel - vn);
+                    let tangent_vel = vel.linear - n * vn;
+                    let friction_correction = tangent_vel * (-friction);
+                    corrections.push((
+                        a.entity,
+                        Vec3::ZERO,
+                        normal_correction + friction_correction,
+                    ));
                 }
+            }
 
-                // Velocity response for dynamic body A
-                if a.body_type == RigidBodyType::Dynamic
-                    && let Some(vel) = world.get::<Velocity>(a.entity)
-                {
-                    let n = normal * (-1.0);
-                    let vn = vel.linear.dot(n);
-                    if vn < 0.0 {
-                        let approach_speed = -vn;
-                        let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
-                            0.0
-                        } else {
-                            approach_speed * restitution
-                        };
-                        let normal_correction = n * (new_normal_vel - vn);
-                        let tangent_vel = vel.linear - n * vn;
-                        let friction_correction = tangent_vel * (-friction);
-                        corrections.push((
-                            a.entity,
-                            Vec3::ZERO,
-                            normal_correction + friction_correction,
-                        ));
-                    }
-                }
-
-                // Velocity response for dynamic body B
-                if b.body_type == RigidBodyType::Dynamic
-                    && let Some(vel) = world.get::<Velocity>(b.entity)
-                {
-                    let n = normal;
-                    let vn = vel.linear.dot(n);
-                    if vn < 0.0 {
-                        let approach_speed = -vn;
-                        let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
-                            0.0
-                        } else {
-                            approach_speed * restitution
-                        };
-                        let normal_correction = n * (new_normal_vel - vn);
-                        let tangent_vel = vel.linear - n * vn;
-                        let friction_correction = tangent_vel * (-friction);
-                        corrections.push((
-                            b.entity,
-                            Vec3::ZERO,
-                            normal_correction + friction_correction,
-                        ));
-                    }
+            // Velocity response for dynamic body B
+            if b.body_type == RigidBodyType::Dynamic
+                && let Some(vel) = world.get::<Velocity>(b.entity)
+            {
+                let n = normal;
+                let vn = vel.linear.dot(n);
+                if vn < 0.0 {
+                    let approach_speed = -vn;
+                    let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
+                        0.0
+                    } else {
+                        approach_speed * restitution
+                    };
+                    let normal_correction = n * (new_normal_vel - vn);
+                    let tangent_vel = vel.linear - n * vn;
+                    let friction_correction = tangent_vel * (-friction);
+                    corrections.push((
+                        b.entity,
+                        Vec3::ZERO,
+                        normal_correction + friction_correction,
+                    ));
                 }
             }
         }
