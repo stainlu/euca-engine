@@ -5,4 +5,4 @@ mod state;
 
 pub use bridge::AgentBridge;
 pub use server::AgentServer;
-pub use state::SharedWorld;
+pub use state::{AgentId, Owner, SharedWorld};

@@ -8,7 +8,7 @@ use euca_math::Vec3;
 use euca_physics::{Collider, ColliderShape, PhysicsBody, RigidBodyType, Velocity};
 use euca_scene::{GlobalTransform, LocalTransform};
 
-use crate::state::SharedWorld;
+use crate::state::{Owner, SharedWorld};
 
 // ── Serializable component representations ──
 
@@ -142,6 +142,9 @@ pub struct StepResponse {
 
 #[derive(Deserialize)]
 pub struct SpawnRequest {
+    /// Agent that owns this entity. If set, only this agent can despawn/modify it.
+    #[serde(default)]
+    pub agent_id: Option<u32>,
     #[serde(default)]
     pub position: Option<[f32; 3]>,
     #[serde(default)]
@@ -164,6 +167,9 @@ pub struct SpawnResponse {
 pub struct DespawnRequest {
     pub entity_id: u32,
     pub entity_generation: u32,
+    /// Agent requesting despawn. Must match entity's Owner if set.
+    #[serde(default)]
+    pub agent_id: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -175,6 +181,9 @@ pub struct MessageResponse {
 
 #[derive(Deserialize)]
 pub struct ComponentPatch {
+    /// Agent requesting the patch. Must match entity's Owner if set.
+    #[serde(default)]
+    pub agent_id: Option<u32>,
     #[serde(default)]
     pub transform: Option<TransformData>,
     #[serde(default)]
@@ -300,6 +309,19 @@ pub async fn patch_entity(
             None => return Err(StatusCode::NOT_FOUND),
         };
 
+        // Ownership check
+        if let Some(owner) = w.get::<Owner>(entity) {
+            match patch.agent_id {
+                Some(aid) if aid == owner.0 => {}
+                _ => {
+                    return Ok(Json(MessageResponse {
+                        ok: false,
+                        message: Some("Permission denied: entity owned by another agent".into()),
+                    }));
+                }
+            }
+        }
+
         if let Some(t) = &patch.transform
             && let Some(lt) = w.get_mut::<LocalTransform>(entity)
         {
@@ -357,6 +379,11 @@ pub async fn spawn(
         let entity = w.spawn(LocalTransform(transform));
         w.insert(entity, GlobalTransform::default());
 
+        // Track ownership if agent_id provided
+        if let Some(agent_id) = req.agent_id {
+            w.insert(entity, Owner(agent_id));
+        }
+
         if let Some(v) = &req.velocity {
             apply_velocity(w, entity, v);
         }
@@ -382,6 +409,20 @@ pub async fn despawn(
 ) -> Json<MessageResponse> {
     let resp = world.with(|w, _| {
         let entity = Entity::from_raw(req.entity_id, req.entity_generation);
+
+        // Ownership check: if entity has an Owner, agent_id must match
+        if let Some(owner) = w.get::<Owner>(entity) {
+            match req.agent_id {
+                Some(aid) if aid == owner.0 => {} // authorized
+                _ => {
+                    return MessageResponse {
+                        ok: false,
+                        message: Some("Permission denied: entity owned by another agent".into()),
+                    };
+                }
+            }
+        }
+
         if w.despawn(entity) {
             MessageResponse {
                 ok: true,
