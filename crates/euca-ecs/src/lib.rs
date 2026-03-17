@@ -12,6 +12,8 @@ mod query;
 mod resource;
 mod schedule;
 mod snapshot;
+#[allow(unsafe_op_in_unsafe_fn)]
+pub mod sparse;
 mod system;
 mod system_param;
 mod world;

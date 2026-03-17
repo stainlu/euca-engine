@@ -37,6 +37,9 @@ pub struct ComponentInfo {
     pub type_id: TypeId,
     /// Function pointer to drop a component value in place.
     pub(crate) drop_fn: Option<unsafe fn(*mut u8)>,
+    /// If true, this component is stored in a SparseSet instead of archetype columns.
+    /// Avoids archetype explosion for rarely-used components.
+    pub sparse: bool,
 }
 
 /// Type-erased function to drop a component.
@@ -80,8 +83,18 @@ impl ComponentStorage {
             } else {
                 None
             },
+            sparse: false,
         });
         self.type_to_id.insert(type_id, id);
+        id
+    }
+
+    /// Register a component type as sparse storage.
+    /// Sparse components are stored in a HashMap<Entity, T> instead of archetype columns.
+    /// Use for rarely-attached components (tags, network IDs, debug markers).
+    pub fn register_sparse<T: Component>(&mut self) -> ComponentId {
+        let id = self.register::<T>();
+        self.infos[id.0 as usize].sparse = true;
         id
     }
 

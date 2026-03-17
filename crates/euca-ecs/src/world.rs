@@ -22,6 +22,8 @@ pub struct World {
     pub(crate) tick: u64,
     /// Increments whenever a new archetype is created. Used by Query for cache invalidation.
     pub(crate) archetype_generation: u64,
+    /// Sparse component storage — HashMap<Entity, T> for rarely-used components.
+    pub(crate) sparse_storage: HashMap<ComponentId, crate::sparse::SparseSet>,
     resources: Resources,
     events: Events,
 }
@@ -37,6 +39,7 @@ impl World {
             entity_locations: Vec::new(),
             tick: 0,
             archetype_generation: 0,
+            sparse_storage: HashMap::new(),
             resources: Resources::new(),
             events: Events::new(),
         }
@@ -85,6 +88,12 @@ impl World {
         if !self.entities.is_alive(entity) {
             return false;
         }
+
+        // Clean up any sparse components attached to this entity
+        for sparse_set in self.sparse_storage.values_mut() {
+            sparse_set.remove(entity);
+        }
+
         let loc = match self.entity_locations[entity.index as usize] {
             Some(loc) => loc,
             None => return false,
@@ -111,8 +120,18 @@ impl World {
 
     /// Get an immutable reference to a component on an entity.
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&T> {
-        let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
+
+        // Sparse path: component stored in SparseSet
+        if self.components.info(comp_id).sparse {
+            return self
+                .sparse_storage
+                .get(&comp_id)
+                .and_then(|ss| unsafe { ss.get::<T>(entity) });
+        }
+
+        // Dense path: component stored in archetype column
+        let loc = self.locate(entity)?;
         let arch = &self.archetypes[loc.archetype_id.0 as usize];
         if !arch.has_component(comp_id) {
             return None;
@@ -122,25 +141,60 @@ impl World {
 
     /// Get a mutable reference to a component, marking it as changed at the current tick.
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
-        let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
+
+        // Sparse path
+        if self.components.info(comp_id).sparse {
+            let tick = self.tick as u32;
+            return self
+                .sparse_storage
+                .get_mut(&comp_id)
+                .and_then(|ss| unsafe { ss.get_mut::<T>(entity, tick) });
+        }
+
+        // Dense path
+        let loc = self.locate(entity)?;
         let arch = &mut self.archetypes[loc.archetype_id.0 as usize];
         if !arch.has_component(comp_id) {
             return None;
         }
-        // Mark as changed at current tick
         arch.set_change_tick(comp_id, loc.row, self.tick as u32);
         Some(unsafe { arch.get_mut::<T>(comp_id, loc.row) })
     }
 
     /// Add or overwrite a component on an entity. Returns `false` if the entity is dead.
     pub fn insert<T: Component>(&mut self, entity: Entity, component: T) -> bool {
+        if !self.entities.is_alive(entity) {
+            return false;
+        }
+
+        let comp_id = self.components.register::<T>();
+
+        // Sparse path: store in SparseSet, no archetype movement
+        if self.components.info(comp_id).sparse {
+            let info = self.components.info(comp_id);
+            let sparse_set = self
+                .sparse_storage
+                .entry(comp_id)
+                .or_insert_with(|| crate::sparse::SparseSet::new(info.layout, info.drop_fn));
+
+            unsafe {
+                sparse_set.insert(
+                    entity,
+                    &component as *const T as *const u8,
+                    self.tick as u32,
+                );
+            }
+            std::mem::forget(component);
+            return true;
+        }
+
+        // Dense path: archetype column storage
         let loc = match self.locate(entity) {
             Some(loc) => loc,
             None => return false,
         };
 
-        let comp_id = self.components.register::<T>();
         let old_arch = &self.archetypes[loc.archetype_id.0 as usize];
 
         if old_arch.has_component(comp_id) {
@@ -168,8 +222,22 @@ impl World {
 
     /// Remove a component from an entity, returning it if present.
     pub fn remove<T: Component>(&mut self, entity: Entity) -> Option<T> {
-        let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
+
+        // Sparse path
+        if self.components.info(comp_id).sparse
+            && let Some(sparse_set) = self.sparse_storage.get_mut(&comp_id)
+            && sparse_set.contains(entity)
+        {
+            let value = unsafe { std::ptr::read(sparse_set.get::<T>(entity)? as *const T) };
+            sparse_set.remove(entity);
+            return Some(value);
+        } else if self.components.info(comp_id).sparse {
+            return None;
+        }
+
+        // Dense path
+        let loc = self.locate(entity)?;
         let old_arch = &self.archetypes[loc.archetype_id.0 as usize];
         if !old_arch.has_component(comp_id) {
             return None;
@@ -260,13 +328,30 @@ impl World {
 
     /// Get the change tick for a specific component on an entity.
     pub fn get_change_tick<T: Component>(&self, entity: Entity) -> Option<u32> {
-        let loc = self.locate(entity)?;
         let comp_id = self.components.id_of::<T>()?;
+
+        // Sparse path
+        if self.components.info(comp_id).sparse {
+            return self
+                .sparse_storage
+                .get(&comp_id)
+                .and_then(|ss| ss.get_change_tick(entity));
+        }
+
+        // Dense path
+        let loc = self.locate(entity)?;
         let arch = &self.archetypes[loc.archetype_id.0 as usize];
         if !arch.has_component(comp_id) {
             return None;
         }
         Some(arch.get_change_tick(comp_id, loc.row))
+    }
+
+    /// Register a component type as sparse. Sparse components are stored in
+    /// a HashMap instead of archetype columns — use for rarely-attached
+    /// components to avoid archetype explosion.
+    pub fn register_sparse<T: Component>(&mut self) {
+        self.components.register_sparse::<T>();
     }
 
     /// Returns the current world tick.
