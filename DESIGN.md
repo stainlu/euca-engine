@@ -262,3 +262,9 @@ POST /reset                        → reset to initial state
 | 2026-03-18 | — | HIGH #13: Query caching with archetype generation tracking (cache invalidation on archetype creation) |
 | 2026-03-18 | — | HIGH #22: Frustum culling (Frustum struct, Gribb/Hartmann plane extraction, AABB-frustum test) |
 | 2026-03-18 | — | HIGH #12: Change detection (Changed<T> marker, per-entity get_change_tick, changed_entities iterator) |
+| 2026-03-18 | — | Quality review: reverted broken query cache, fixed solver body collection, fixed transport retry logic |
+| 2026-03-18 | E | HIGH #14: Sparse set storage (SparseSet, ComponentInfo.sparse flag, transparent routing in World) |
+| 2026-03-18 | E | HIGH #28: Joint constraints (distance, ball-and-socket, revolute, integrated into constraint solver) |
+| 2026-03-18 | E | HIGH #33: Client prediction (ClientPrediction, reconciliation, smooth corrections, input replay) |
+| 2026-03-18 | E | HIGH #24: Compressed texture upload (upload_compressed with explicit wgpu format) |
+| 2026-03-18 | E | HIGH #19: Deferred rendering infrastructure (GBuffer, RenderPath enum, coexists with forward) |
