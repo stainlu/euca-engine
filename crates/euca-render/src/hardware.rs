@@ -15,14 +15,35 @@ pub enum GpuVendor {
 }
 
 impl GpuVendor {
-    pub fn from_id(id: u32) -> Self {
+    /// Identify vendor from PCI vendor ID and adapter name.
+    ///
+    /// The Metal backend reports `vendor: 0` — it doesn't expose PCI IDs.
+    /// In that case, we fall back to matching the adapter name string.
+    pub fn from_id_and_name(id: u32, name: &str) -> Self {
+        // Try PCI vendor ID first
         match id {
-            0x106B => Self::Apple,
-            0x10DE => Self::Nvidia,
-            0x1002 => Self::Amd,
-            0x8086 => Self::Intel,
-            0x5143 => Self::Qualcomm,
-            other => Self::Unknown(other),
+            0x106B => return Self::Apple,
+            0x10DE => return Self::Nvidia,
+            0x1002 => return Self::Amd,
+            0x8086 => return Self::Intel,
+            0x5143 => return Self::Qualcomm,
+            _ => {}
+        }
+
+        // Fallback: match adapter name (Metal backend reports vendor=0)
+        let lower = name.to_lowercase();
+        if lower.starts_with("apple") {
+            Self::Apple
+        } else if lower.contains("nvidia") || lower.contains("geforce") || lower.contains("rtx") {
+            Self::Nvidia
+        } else if lower.contains("amd") || lower.contains("radeon") {
+            Self::Amd
+        } else if lower.contains("intel") {
+            Self::Intel
+        } else if lower.contains("qualcomm") || lower.contains("adreno") {
+            Self::Qualcomm
+        } else {
+            Self::Unknown(id)
         }
     }
 
@@ -101,9 +122,10 @@ impl HardwareSurvey {
             .into_iter()
             .map(|adapter| {
                 let info = adapter.get_info();
+                let vendor = GpuVendor::from_id_and_name(info.vendor, &info.name);
                 AdapterInfo {
                     name: info.name,
-                    vendor: GpuVendor::from_id(info.vendor),
+                    vendor,
                     vendor_id: info.vendor,
                     device_type: info.device_type,
                     wgpu_backend: info.backend,
@@ -218,9 +240,10 @@ impl HardwareSurvey {
 /// Build an `AdapterInfo` from a wgpu adapter (reused by both survey and GpuContext).
 pub(crate) fn adapter_info_from_wgpu(adapter: &wgpu::Adapter) -> AdapterInfo {
     let info = adapter.get_info();
+    let vendor = GpuVendor::from_id_and_name(info.vendor, &info.name);
     AdapterInfo {
         name: info.name,
-        vendor: GpuVendor::from_id(info.vendor),
+        vendor,
         vendor_id: info.vendor,
         device_type: info.device_type,
         wgpu_backend: info.backend,
@@ -237,12 +260,36 @@ mod tests {
 
     #[test]
     fn vendor_from_known_ids() {
-        assert_eq!(GpuVendor::from_id(0x106B), GpuVendor::Apple);
-        assert_eq!(GpuVendor::from_id(0x10DE), GpuVendor::Nvidia);
-        assert_eq!(GpuVendor::from_id(0x1002), GpuVendor::Amd);
-        assert_eq!(GpuVendor::from_id(0x8086), GpuVendor::Intel);
-        assert_eq!(GpuVendor::from_id(0x5143), GpuVendor::Qualcomm);
-        assert_eq!(GpuVendor::from_id(0xFFFF), GpuVendor::Unknown(0xFFFF));
+        assert_eq!(GpuVendor::from_id_and_name(0x106B, ""), GpuVendor::Apple);
+        assert_eq!(GpuVendor::from_id_and_name(0x10DE, ""), GpuVendor::Nvidia);
+        assert_eq!(GpuVendor::from_id_and_name(0x1002, ""), GpuVendor::Amd);
+        assert_eq!(GpuVendor::from_id_and_name(0x8086, ""), GpuVendor::Intel);
+        assert_eq!(GpuVendor::from_id_and_name(0x5143, ""), GpuVendor::Qualcomm);
+        assert_eq!(
+            GpuVendor::from_id_and_name(0xFFFF, ""),
+            GpuVendor::Unknown(0xFFFF)
+        );
+    }
+
+    #[test]
+    fn vendor_from_name_fallback() {
+        // Metal backend reports vendor=0, so we fall back to name matching
+        assert_eq!(
+            GpuVendor::from_id_and_name(0, "Apple M4 Pro"),
+            GpuVendor::Apple
+        );
+        assert_eq!(
+            GpuVendor::from_id_and_name(0, "NVIDIA GeForce RTX 4090"),
+            GpuVendor::Nvidia
+        );
+        assert_eq!(
+            GpuVendor::from_id_and_name(0, "AMD Radeon RX 7900"),
+            GpuVendor::Amd
+        );
+        assert_eq!(
+            GpuVendor::from_id_and_name(0, "Intel UHD 770"),
+            GpuVendor::Intel
+        );
     }
 
     #[test]
