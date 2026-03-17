@@ -3,10 +3,11 @@ use crate::texture::TextureHandle;
 /// PBR material properties.
 #[derive(Clone, Debug)]
 pub struct Material {
-    pub albedo: [f32; 4],                      // Base color RGBA
-    pub metallic: f32,                         // 0.0 = dielectric, 1.0 = metal
-    pub roughness: f32,                        // 0.0 = mirror smooth, 1.0 = fully rough
-    pub albedo_texture: Option<TextureHandle>, // Optional albedo texture (sampled × color)
+    pub albedo: [f32; 4],                       // Base color RGBA
+    pub metallic: f32,                          // 0.0 = dielectric, 1.0 = metal
+    pub roughness: f32,                         // 0.0 = mirror smooth, 1.0 = fully rough
+    pub albedo_texture: Option<TextureHandle>,  // Optional albedo texture (sampled × color)
+    pub normal_texture: Option<TextureHandle>,  // Optional normal map (tangent-space)
 }
 
 impl Material {
@@ -16,7 +17,14 @@ impl Material {
             metallic,
             roughness,
             albedo_texture: None,
+            normal_texture: None,
         }
+    }
+
+    /// Set the normal map texture for this material.
+    pub fn with_normal_map(mut self, texture: TextureHandle) -> Self {
+        self.normal_texture = Some(texture);
+        self
     }
 
     /// Set the albedo texture for this material.
@@ -71,6 +79,7 @@ impl Material {
             metallic: 0.0,
             roughness: 0.5,
             albedo_texture: Some(texture),
+            normal_texture: None,
         }
     }
 }

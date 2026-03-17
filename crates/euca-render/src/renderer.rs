@@ -20,7 +20,8 @@ struct MaterialUniforms {
     albedo: [f32; 4],
     metallic: f32,
     roughness: f32,
-    _pad: [f32; 2],
+    has_normal_map: f32, // 1.0 = yes, 0.0 = no (using f32 for alignment)
+    _pad: f32,
 }
 
 /// A draw command: mesh + material + model transform.
@@ -258,6 +259,17 @@ impl Renderer {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // Normal map texture (binding 3)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
                 ],
@@ -651,7 +663,12 @@ impl Renderer {
             albedo: mat.albedo,
             metallic: mat.metallic,
             roughness: mat.roughness,
-            _pad: [0.0; 2],
+            has_normal_map: if mat.normal_texture.is_some() {
+                1.0
+            } else {
+                0.0
+            },
+            _pad: 0.0,
         };
         let buffer = gpu
             .device
@@ -660,10 +677,17 @@ impl Renderer {
                 contents: bytemuck::bytes_of(&uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-        let tex_handle = mat
+        let albedo_handle = mat
             .albedo_texture
             .unwrap_or_else(TextureStore::default_white);
-        let tex_view = self.textures.view(tex_handle);
+        let albedo_view = self.textures.view(albedo_handle);
+
+        // Normal map: use a default flat normal (0.5, 0.5, 1.0) if none provided
+        let normal_handle = mat
+            .normal_texture
+            .unwrap_or_else(TextureStore::default_white);
+        let normal_view = self.textures.view(normal_handle);
+
         let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material BG"),
             layout: &self.material_bgl,
@@ -674,11 +698,15 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(tex_view),
+                    resource: wgpu::BindingResource::TextureView(albedo_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
                 },
             ],
         });
@@ -1082,6 +1110,7 @@ struct MaterialUniforms {
     albedo: vec4<f32>,
     metallic: f32,
     roughness: f32,
+    has_normal_map: f32,
 };
 
 @group(0) @binding(0) var<storage, read> instances: array<InstanceData>;
@@ -1091,6 +1120,8 @@ struct MaterialUniforms {
 @group(2) @binding(0) var<uniform> material: MaterialUniforms;
 @group(2) @binding(1) var albedo_tex: texture_2d<f32>;
 @group(2) @binding(2) var albedo_sampler: sampler;
+@group(2) @binding(3) var normal_tex: texture_2d<f32>;
+// Normal map uses the same sampler as albedo (binding 2)
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -1177,7 +1208,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let metallic = material.metallic;
     let roughness = max(material.roughness, 0.04);
 
-    let N = normalize(in.world_normal);
+    // Normal: use normal map if available, otherwise vertex normal
+    var N: vec3<f32>;
+    if material.has_normal_map > 0.5 {
+        // Sample normal map (tangent-space, [0,1] → [-1,1])
+        let sampled = textureSample(normal_tex, albedo_sampler, in.uv).rgb;
+        let tangent_normal = sampled * 2.0 - 1.0;
+        // Construct TBN matrix
+        let T = normalize(in.world_tangent);
+        let N_vert = normalize(in.world_normal);
+        let B = cross(N_vert, T);
+        N = normalize(T * tangent_normal.x + B * tangent_normal.y + N_vert * tangent_normal.z);
+    } else {
+        N = normalize(in.world_normal);
+    }
     let V = normalize(scene.camera_pos.xyz - in.world_pos);
     let F0 = mix(vec3<f32>(0.04), albedo, metallic);
 
