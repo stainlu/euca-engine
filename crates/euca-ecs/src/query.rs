@@ -74,13 +74,13 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
         let accesses = Q::component_access(world);
         let mut seen: HashMap<ComponentId, bool> = HashMap::new();
         for access in &accesses {
-            if let Some(&prev_mutable) = seen.get(&access.component_id) {
-                if access.mutable || prev_mutable {
-                    panic!(
-                        "Query has conflicting access to the same component: \
-                         cannot have both mutable and immutable (or two mutable) accesses"
-                    );
-                }
+            if let Some(&prev_mutable) = seen.get(&access.component_id)
+                && (access.mutable || prev_mutable)
+            {
+                panic!(
+                    "Query has conflicting access to the same component: \
+                     cannot have both mutable and immutable (or two mutable) accesses"
+                );
             }
             seen.insert(access.component_id, access.mutable);
         }
