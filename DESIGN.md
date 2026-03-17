@@ -50,7 +50,7 @@ External AI Agents (Claude Code, RL agents, etc.)
 | `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing, hardware survey | Done | 16 |
 | `euca-physics` | Custom AABB/sphere/capsule collision, spatial hash broadphase, CCD, iterative solver, raycasting, gravity (zero deps) | Done | 23 |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
-| `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 3 |
+| `euca-agent` | HTTP API server for external AI agents (axum + tokio), multi-world pool, entity ownership | Done | 3 |
 | `euca-editor` | egui editor: 3D viewport, hierarchy, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load, entity creation, grid, keyboard shortcuts | Done | 11 |
 | `euca-input` | InputState, ActionMap, InputSnapshot for humans + AI agents | Done | 4 |
 | `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, protocol | Done | 11 |
@@ -242,3 +242,5 @@ POST /reset                        → reset to initial state
 | 2026-03-17 | E | CRITICAL #5: Spatial hash broadphase (replaces O(n²), cell size 4.0, falls back for <20 bodies) |
 | 2026-03-17 | E | CRITICAL #6: Continuous collision detection (sweep-test fast bodies against statics) |
 | 2026-03-17 | E | CRITICAL #8: Iterative constraint solver (4-iteration position-based, stable stacking) |
+| 2026-03-17 | E | CRITICAL #9: Multi-world pool (RwLock<WorldPool>, create_world(), per-world access) |
+| 2026-03-17 | E | CRITICAL #10: Entity ownership (Owner component, agent_id on spawn/despawn/patch, permission checks) |
