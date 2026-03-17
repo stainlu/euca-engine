@@ -48,7 +48,7 @@ External AI Agents (Claude Code, RL agents, etc.)
 | `euca-scene` | Transform hierarchy, Parent/Children BFS propagation, dirty-flag optimization | Done | 5 |
 | `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
 | `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing, hardware survey | Done | 16 |
-| `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero deps) | Done | 12 |
+| `euca-physics` | Custom AABB/sphere/capsule collision, spatial hash broadphase, CCD, iterative solver, raycasting, gravity (zero deps) | Done | 23 |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
 | `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 3 |
 | `euca-editor` | egui editor: 3D viewport, hierarchy, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load, entity creation, grid, keyboard shortcuts | Done | 11 |
@@ -238,3 +238,7 @@ POST /reset                        → reset to initial state
 | 2026-03-17 | E | CRITICAL #11: Transform dirty flags — PropagationState resource, tick-based change detection, skip unchanged subtrees O(N)→O(moved) |
 | 2026-03-17 | — | Physics fixes: restitution multiply, friction geometric mean, per-entity gravity override, pre-allocated corrections Vec |
 | 2026-03-17 | — | Editor: improved showcase scene (pedestal, pillars, material showcase, warm lighting) |
+| 2026-03-17 | E | CRITICAL #7: Capsule collider (capsule-capsule, capsule-sphere, capsule-AABB, raycast) |
+| 2026-03-17 | E | CRITICAL #5: Spatial hash broadphase (replaces O(n²), cell size 4.0, falls back for <20 bodies) |
+| 2026-03-17 | E | CRITICAL #6: Continuous collision detection (sweep-test fast bodies against statics) |
+| 2026-03-17 | E | CRITICAL #8: Iterative constraint solver (4-iteration position-based, stable stacking) |
