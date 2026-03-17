@@ -3,6 +3,10 @@ name = "euca-render"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+metal-native = []  # Future: metal-rs, objc2 for native Metal rendering
+
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }

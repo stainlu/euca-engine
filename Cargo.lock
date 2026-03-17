@@ -944,9 +944,14 @@ name = "euca-agent"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bincode",
  "env_logger",
  "euca-ecs",
+ "euca-game",
+ "euca-input",
  "euca-math",
+ "euca-net",
+ "euca-physics",
  "euca-scene",
  "log",
  "reqwest",

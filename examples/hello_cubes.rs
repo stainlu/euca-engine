@@ -17,6 +17,7 @@ struct Spin {
 
 struct HelloCubesApp {
     world: World,
+    survey: HardwareSurvey,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
     window_attrs: WindowAttributes,
@@ -24,6 +25,8 @@ struct HelloCubesApp {
 
 impl HelloCubesApp {
     fn new() -> Self {
+        let survey = HardwareSurvey::detect();
+
         let mut world = World::new();
         world.insert_resource(Time::new());
         world.insert_resource(Camera::new(Vec3::new(3.0, 3.0, 3.0), Vec3::ZERO));
@@ -31,6 +34,7 @@ impl HelloCubesApp {
 
         Self {
             world,
+            survey,
             gpu: None,
             renderer: None,
             window_attrs: WindowAttributes::default()
@@ -117,7 +121,7 @@ impl ApplicationHandler for HelloCubesApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
-            let gpu = GpuContext::new(window);
+            let gpu = GpuContext::new(window, &self.survey);
             let renderer = Renderer::new(&gpu);
             self.gpu = Some(gpu);
             self.renderer = Some(renderer);

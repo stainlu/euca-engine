@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use winit::window::Window;
 
+use crate::hardware::{adapter_info_from_wgpu, AdapterInfo, HardwareSurvey, RenderBackend};
+
 /// Owns the wgpu device, queue, surface — everything needed to talk to the GPU.
 pub struct GpuContext {
     pub device: wgpu::Device,
@@ -8,11 +10,18 @@ pub struct GpuContext {
     pub surface: wgpu::Surface<'static>,
     pub surface_config: wgpu::SurfaceConfiguration,
     pub window: Arc<Window>,
+    /// Info about the adapter actually in use (from surface-compatible selection).
+    pub adapter_info: AdapterInfo,
+    /// Rendering backend chosen by the hardware survey.
+    pub render_backend: RenderBackend,
 }
 
 impl GpuContext {
-    /// Initialize wgpu from a winit window. Blocking (polls the async init).
-    pub fn new(window: Window) -> Self {
+    /// Initialize wgpu from a winit window and a pre-computed hardware survey.
+    ///
+    /// The survey must be created first via `HardwareSurvey::detect()` (before window creation).
+    /// This function selects a surface-compatible adapter and verifies it against the survey.
+    pub fn new(window: Window, survey: &HardwareSurvey) -> Self {
         let window = Arc::new(window);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -29,6 +38,17 @@ impl GpuContext {
             force_fallback_adapter: false,
         }))
         .expect("No suitable GPU adapter found");
+
+        let adapter_info = adapter_info_from_wgpu(&adapter);
+
+        // Verify surface-compatible adapter matches survey selection
+        if adapter_info.name != survey.selected().name {
+            log::warn!(
+                "Surface-compatible adapter '{}' differs from survey selection '{}'",
+                adapter_info.name,
+                survey.selected().name,
+            );
+        }
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Euca GPU Device"),
@@ -65,6 +85,8 @@ impl GpuContext {
             surface,
             surface_config,
             window,
+            adapter_info,
+            render_backend: survey.render_backend,
         }
     }
 

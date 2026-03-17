@@ -13,6 +13,7 @@ use winit::window::{WindowAttributes, WindowId};
 
 struct PhysicsDemoApp {
     world: World,
+    survey: HardwareSurvey,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
     cube_mesh: Option<MeshHandle>,
@@ -23,6 +24,8 @@ struct PhysicsDemoApp {
 
 impl PhysicsDemoApp {
     fn new() -> Self {
+        let survey = HardwareSurvey::detect();
+
         let mut world = World::new();
         world.insert_resource(Time::new());
         world.insert_resource(Camera::new(
@@ -37,6 +40,7 @@ impl PhysicsDemoApp {
 
         Self {
             world,
+            survey,
             gpu: None,
             renderer: None,
             cube_mesh: None,
@@ -201,7 +205,7 @@ impl ApplicationHandler for PhysicsDemoApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
-            let gpu = GpuContext::new(window);
+            let gpu = GpuContext::new(window, &self.survey);
             let renderer = Renderer::new(&gpu);
             self.gpu = Some(gpu);
             self.renderer = Some(renderer);

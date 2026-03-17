@@ -20,6 +20,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 struct EditorApp {
     world: World,
+    survey: HardwareSurvey,
     editor_state: EditorState,
     window: Option<Arc<Window>>,
     gpu: Option<GpuContext>,
@@ -48,6 +49,8 @@ struct EditorApp {
 
 impl EditorApp {
     fn new() -> Self {
+        let survey = HardwareSurvey::detect();
+
         let mut world = World::new();
         world.insert_resource(Time::new());
         world.insert_resource(Camera::new(
@@ -62,6 +65,7 @@ impl EditorApp {
 
         Self {
             world,
+            survey,
             editor_state: EditorState::new(),
             window: None,
             gpu: None,
@@ -528,7 +532,7 @@ impl ApplicationHandler for EditorApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
-            let gpu = GpuContext::new(window);
+            let gpu = GpuContext::new(window, &self.survey);
             let renderer = Renderer::new(&gpu);
 
             let egui_winit = egui_winit::State::new(

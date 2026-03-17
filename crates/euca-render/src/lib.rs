@@ -1,5 +1,6 @@
 mod camera;
 mod gpu;
+mod hardware;
 mod light;
 mod material;
 mod mesh;
@@ -10,6 +11,7 @@ mod vertex;
 
 pub use camera::Camera;
 pub use gpu::GpuContext;
+pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
 pub use light::{AmbientLight, DirectionalLight};
 pub use material::{Material, MaterialHandle, MaterialRef};
 pub use mesh::{Mesh, MeshHandle, MeshRenderer};
