@@ -39,6 +39,27 @@ struct InstanceData {
     normal_matrix: [[f32; 4]; 4],
 }
 
+const MAX_POINT_LIGHTS: usize = 4;
+const MAX_SPOT_LIGHTS: usize = 2;
+
+/// GPU-side point light data.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+struct GpuPointLight {
+    position: [f32; 4], // xyz = position, w = range
+    color: [f32; 4],    // rgb = color, a = intensity
+}
+
+/// GPU-side spot light data.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+struct GpuSpotLight {
+    position: [f32; 4],  // xyz = position, w = range
+    direction: [f32; 4], // xyz = direction, w = unused
+    color: [f32; 4],     // rgb = color, a = intensity
+    cone: [f32; 4],      // x = inner_cos, y = outer_cos, zw = unused
+}
+
 /// Per-frame scene uniforms.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -50,6 +71,11 @@ struct SceneUniforms {
     camera_vp: [[f32; 4]; 4],
     light_vp: [[f32; 4]; 4],
     inv_vp: [[f32; 4]; 4],
+    // Point + spot light arrays
+    point_lights: [GpuPointLight; MAX_POINT_LIGHTS],
+    spot_lights: [GpuSpotLight; MAX_SPOT_LIGHTS],
+    num_point_lights: [f32; 4], // x = count (using vec4 for alignment)
+    num_spot_lights: [f32; 4],  // x = count
 }
 
 /// Per-material GPU resources.
@@ -915,6 +941,10 @@ impl Renderer {
             camera_vp: vp.to_cols_array_2d(),
             light_vp: light_vp.to_cols_array_2d(),
             inv_vp: vp.inverse().to_cols_array_2d(),
+            point_lights: [GpuPointLight::default(); MAX_POINT_LIGHTS],
+            spot_lights: [GpuSpotLight::default(); MAX_SPOT_LIGHTS],
+            num_point_lights: [0.0, 0.0, 0.0, 0.0],
+            num_spot_lights: [0.0, 0.0, 0.0, 0.0],
         };
         gpu.queue
             .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
