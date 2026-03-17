@@ -61,9 +61,12 @@ fn integrate_positions(world: &mut World, dt: f32) {
     }
 }
 
+/// Minimum approach speed for a bounce to occur. Below this, the object comes to rest.
+const REST_VELOCITY_THRESHOLD: f32 = 0.5;
+
 fn resolve_collisions(world: &mut World) {
-    // Collect all collidable entities (split into two queries since tuples max at 3)
-    let bodies: Vec<(Entity, Vec3, ColliderShape, RigidBodyType, f32)> = {
+    // Collect all collidable entities
+    let bodies: Vec<(Entity, Vec3, ColliderShape, RigidBodyType, f32, f32)> = {
         let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
         query
             .iter()
@@ -75,58 +78,90 @@ fn resolve_collisions(world: &mut World) {
                     col.shape.clone(),
                     body.body_type,
                     col.restitution,
+                    col.friction,
                 ))
             })
             .collect()
     };
 
-    // O(n²) broadphase — fine for <1000 entities, replace with spatial hash for more
-    let mut corrections: Vec<(Entity, Vec3, Vec3)> = Vec::new(); // entity, position_correction, velocity_correction
+    // O(n²) broadphase
+    let mut corrections: Vec<(Entity, Vec3, Vec3)> = Vec::new();
 
     for i in 0..bodies.len() {
         for j in (i + 1)..bodies.len() {
-            let (e_a, pos_a, shape_a, type_a, rest_a) = &bodies[i];
-            let (e_b, pos_b, shape_b, type_b, rest_b) = &bodies[j];
+            let (e_a, pos_a, shape_a, type_a, rest_a, fric_a) = &bodies[i];
+            let (e_b, pos_b, shape_b, type_b, rest_b, fric_b) = &bodies[j];
 
             if *type_a == RigidBodyType::Static && *type_b == RigidBodyType::Static {
-                continue; // Two statics can't collide meaningfully
+                continue;
             }
 
             if let Some((normal, depth)) = intersect_shapes(*pos_a, shape_a, *pos_b, shape_b) {
                 let restitution = (rest_a + rest_b) * 0.5;
+                let friction = (fric_a + fric_b) * 0.5;
 
                 // Push-out resolution
                 match (type_a, type_b) {
                     (RigidBodyType::Dynamic, RigidBodyType::Static) => {
-                        corrections.push((*e_a, normal * (-depth), normal * (-1.0)));
+                        corrections.push((*e_a, normal * (-depth), Vec3::ZERO));
                     }
                     (RigidBodyType::Static, RigidBodyType::Dynamic) => {
-                        corrections.push((*e_b, normal * depth, normal));
+                        corrections.push((*e_b, normal * depth, Vec3::ZERO));
                     }
                     (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
-                        corrections.push((*e_a, normal * (-depth * 0.5), normal * (-1.0)));
-                        corrections.push((*e_b, normal * (depth * 0.5), normal));
+                        corrections.push((*e_a, normal * (-depth * 0.5), Vec3::ZERO));
+                        corrections.push((*e_b, normal * (depth * 0.5), Vec3::ZERO));
                     }
                     _ => {}
                 }
 
-                // Velocity reflection for dynamic bodies
+                // Velocity response for dynamic body A
                 if *type_a == RigidBodyType::Dynamic
                     && let Some(vel) = world.get::<Velocity>(*e_a)
                 {
-                    let vn = vel.linear.dot(-normal);
-                    if vn > 0.0 {
-                        let reflect = vel.linear + normal * (vn * (1.0 + restitution));
-                        corrections.push((*e_a, Vec3::ZERO, reflect - vel.linear));
+                    let n = normal * (-1.0); // normal pointing away from A
+                    let vn = vel.linear.dot(n); // normal component (negative = approaching)
+                    if vn < 0.0 {
+                        let approach_speed = -vn;
+                        // Bounce or rest
+                        let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
+                            0.0 // come to rest
+                        } else {
+                            approach_speed * restitution // bounce with energy loss
+                        };
+                        let normal_correction = n * (new_normal_vel - vn);
+                        // Friction: damp tangential velocity
+                        let tangent_vel = vel.linear - n * vn;
+                        let friction_correction = tangent_vel * (-friction);
+                        corrections.push((
+                            *e_a,
+                            Vec3::ZERO,
+                            normal_correction + friction_correction,
+                        ));
                     }
                 }
+
+                // Velocity response for dynamic body B
                 if *type_b == RigidBodyType::Dynamic
                     && let Some(vel) = world.get::<Velocity>(*e_b)
                 {
-                    let vn = vel.linear.dot(normal);
-                    if vn > 0.0 {
-                        let reflect = vel.linear + normal * (-vn * (1.0 + restitution));
-                        corrections.push((*e_b, Vec3::ZERO, reflect - vel.linear));
+                    let n = normal; // normal already points away from B toward A
+                    let vn = vel.linear.dot(n);
+                    if vn < 0.0 {
+                        let approach_speed = -vn;
+                        let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
+                            0.0
+                        } else {
+                            approach_speed * restitution
+                        };
+                        let normal_correction = n * (new_normal_vel - vn);
+                        let tangent_vel = vel.linear - n * vn;
+                        let friction_correction = tangent_vel * (-friction);
+                        corrections.push((
+                            *e_b,
+                            Vec3::ZERO,
+                            normal_correction + friction_correction,
+                        ));
                     }
                 }
             }
