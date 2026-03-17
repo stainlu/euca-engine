@@ -48,8 +48,18 @@ pub fn physics_step_system(world: &mut World) {
 fn physics_step_single(world: &mut World, dt: f32, gravity: Vec3) {
     apply_gravity(world, gravity, dt);
     integrate_positions(world, dt);
-    resolve_collisions(world);
+    resolve_collisions_and_joints(world);
     update_sleep_states(world);
+}
+
+fn resolve_collisions_and_joints(world: &mut World) {
+    // Collect joints (if any)
+    let joints = world
+        .resource::<crate::world::Joints>()
+        .map(|j| j.joints.clone())
+        .unwrap_or_default();
+
+    resolve_collisions_with_joints(world, &joints);
 }
 
 fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
@@ -278,7 +288,7 @@ fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
 /// Number of constraint solver iterations. More = more stable stacking.
 const SOLVER_ITERATIONS: usize = 4;
 
-fn resolve_collisions(world: &mut World) {
+fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Joint]) {
     // ── Iterative constraint solver ──
     // Collect bodies once, iterate position corrections in-place,
     // write back to world at the end.
@@ -373,6 +383,41 @@ fn resolve_collisions(world: &mut World) {
                             vel.linear = vel.linear - tangent_vel * friction;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // ── Solve joint constraints (using body positions from the solver) ──
+    if !joints.is_empty() {
+        // Build entity → body index map for fast lookup
+        let entity_to_idx: std::collections::HashMap<Entity, usize> = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.entity, i))
+            .collect();
+
+        for _iter in 0..SOLVER_ITERATIONS {
+            for joint in joints {
+                let idx_a = entity_to_idx.get(&joint.entity_a).copied();
+                let idx_b = entity_to_idx.get(&joint.entity_b).copied();
+
+                let (pos_a, is_a_dyn) = match idx_a {
+                    Some(i) => (bodies[i].pos, bodies[i].body_type == RigidBodyType::Dynamic),
+                    None => continue,
+                };
+                let (pos_b, is_b_dyn) = match idx_b {
+                    Some(i) => (bodies[i].pos, bodies[i].body_type == RigidBodyType::Dynamic),
+                    None => continue,
+                };
+
+                let (ca, cb) = joint.solve(pos_a, pos_b, is_a_dyn, is_b_dyn);
+
+                if let Some(i) = idx_a {
+                    bodies[i].pos = bodies[i].pos + ca;
+                }
+                if let Some(i) = idx_b {
+                    bodies[i].pos = bodies[i].pos + cb;
                 }
             }
         }

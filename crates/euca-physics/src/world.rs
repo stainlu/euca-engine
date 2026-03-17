@@ -36,3 +36,15 @@ impl Default for PhysicsConfig {
         Self::new()
     }
 }
+
+/// Collection of joint constraints. Insert as a resource.
+#[derive(Clone, Debug, Default)]
+pub struct Joints {
+    pub joints: Vec<crate::joints::Joint>,
+}
+
+impl Joints {
+    pub fn add(&mut self, joint: crate::joints::Joint) {
+        self.joints.push(joint);
+    }
+}
