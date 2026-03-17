@@ -205,11 +205,7 @@ impl HardwareSurvey {
         log::info!("GPU adapters found: {}", self.adapters.len());
 
         for (i, adapter) in self.adapters.iter().enumerate() {
-            let marker = if i == self.selected_adapter {
-                " *"
-            } else {
-                ""
-            };
+            let marker = if i == self.selected_adapter { " *" } else { "" };
             log::info!(
                 "  [{}]{} {} ({:?})",
                 i,

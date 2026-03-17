@@ -9,6 +9,8 @@ mod renderer;
 mod texture;
 mod vertex;
 
+pub use wgpu;
+
 pub use camera::Camera;
 pub use gpu::GpuContext;
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};

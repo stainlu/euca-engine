@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use winit::window::Window;
 
-use crate::hardware::{adapter_info_from_wgpu, AdapterInfo, HardwareSurvey, RenderBackend};
+use crate::hardware::{AdapterInfo, HardwareSurvey, RenderBackend, adapter_info_from_wgpu};
 
 /// Owns the wgpu device, queue, surface — everything needed to talk to the GPU.
 pub struct GpuContext {
