@@ -1,11 +1,10 @@
+use crate::system_param::SystemAccess;
 use crate::world::World;
 
 /// A system that operates on the world.
 ///
 /// Systems are the "S" in ECS — they contain the logic that operates on
-/// entities and components. For now, systems are simple closures that
-/// take `&mut World`. Parallel execution and parameter extraction will
-/// be added in a later iteration.
+/// entities and components.
 pub trait System: Send + Sync {
     /// Execute this system.
     fn run(&mut self, world: &mut World);
@@ -13,6 +12,12 @@ pub trait System: Send + Sync {
     /// Optional name for debugging/profiling.
     fn name(&self) -> &str {
         std::any::type_name::<Self>()
+    }
+
+    /// Declare what this system reads/writes, for parallel scheduling.
+    /// Returns empty by default (conservative: assumed to access everything).
+    fn accesses(&self) -> &[SystemAccess] {
+        &[]
     }
 }
 
@@ -33,13 +38,16 @@ impl<F: FnMut(&mut World) + Send + Sync> System for FunctionSystem<F> {
 }
 
 /// Trait for converting things into systems.
-pub trait IntoSystem {
+///
+/// The `Marker` type parameter disambiguates between different function
+/// signatures. Currently only `()` is used (for `fn(&mut World)`).
+pub trait IntoSystem<Marker = ()> {
     type System: System;
     fn into_system(self) -> Self::System;
 }
 
 /// Any `FnMut(&mut World) + Send + Sync` can become a system.
-impl<F: FnMut(&mut World) + Send + Sync + 'static> IntoSystem for F {
+impl<F: FnMut(&mut World) + Send + Sync + 'static> IntoSystem<()> for F {
     type System = FunctionSystem<F>;
 
     fn into_system(self) -> Self::System {
@@ -47,6 +55,35 @@ impl<F: FnMut(&mut World) + Send + Sync + 'static> IntoSystem for F {
             func: self,
             name: std::any::type_name::<F>(),
         }
+    }
+}
+
+/// A system with explicitly declared access metadata.
+///
+/// Wraps any system and attaches access information for the parallel scheduler.
+pub struct AccessSystem<S: System> {
+    system: S,
+    accesses: Vec<SystemAccess>,
+}
+
+impl<S: System> System for AccessSystem<S> {
+    fn run(&mut self, world: &mut World) {
+        self.system.run(world);
+    }
+
+    fn name(&self) -> &str {
+        self.system.name()
+    }
+
+    fn accesses(&self) -> &[SystemAccess] {
+        &self.accesses
+    }
+}
+
+impl<S: System> AccessSystem<S> {
+    /// Wrap a system with explicit access declarations.
+    pub fn new(system: S, accesses: Vec<SystemAccess>) -> Self {
+        Self { system, accesses }
     }
 }
 
@@ -71,5 +108,21 @@ mod tests {
         sys.run(&mut world);
 
         assert_eq!(world.resource::<Counter>().unwrap().0, 2);
+    }
+
+    #[test]
+    fn access_system_metadata() {
+        use std::any::TypeId;
+
+        let sys = (|_w: &mut World| {}).into_system();
+        let access_sys = AccessSystem::new(
+            sys,
+            vec![
+                SystemAccess::ResourceRead(TypeId::of::<Counter>()),
+                SystemAccess::ComponentWrite(crate::ComponentId::from_raw(0)),
+            ],
+        );
+
+        assert_eq!(access_sys.accesses().len(), 2);
     }
 }

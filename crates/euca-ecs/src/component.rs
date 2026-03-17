@@ -20,6 +20,12 @@ impl ComponentId {
     pub fn index(self) -> u32 {
         self.0
     }
+
+    /// Create a ComponentId from a raw index (for tests and access metadata).
+    #[inline]
+    pub fn from_raw(index: u32) -> Self {
+        Self(index)
+    }
 }
 
 /// Runtime metadata about a component type.

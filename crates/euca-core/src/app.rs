@@ -35,7 +35,7 @@ impl App {
     }
 
     /// Add a system to the schedule.
-    pub fn add_system<S: IntoSystem + 'static>(&mut self, system: S) -> &mut Self
+    pub fn add_system<M: 'static, S: IntoSystem<M> + 'static>(&mut self, system: S) -> &mut Self
     where
         S::System: 'static,
     {

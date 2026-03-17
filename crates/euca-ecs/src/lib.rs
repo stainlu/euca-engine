@@ -13,6 +13,7 @@ mod resource;
 mod schedule;
 mod snapshot;
 mod system;
+mod system_param;
 mod world;
 
 pub use archetype::{Archetype, ArchetypeId};
@@ -24,5 +25,6 @@ pub use query::{ComponentAccess, Query, QueryFilter, With, Without, WorldQuery};
 pub use resource::Resources;
 pub use schedule::Schedule;
 pub use snapshot::{EntitySnapshot, WorldSnapshot};
-pub use system::{IntoSystem, System};
+pub use system::{AccessSystem, IntoSystem, System};
+pub use system_param::{Res, ResMut, SystemAccess};
 pub use world::World;

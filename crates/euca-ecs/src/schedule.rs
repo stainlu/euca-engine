@@ -29,7 +29,9 @@ impl Schedule {
     }
 
     /// Add a system to the default (first) stage.
-    pub fn add_system<S: IntoSystem + 'static>(&mut self, system: S) -> &mut Self
+    ///
+    /// Accepts both old-style `fn(&mut World)` and new-style typed-param systems.
+    pub fn add_system<M: 'static, S: IntoSystem<M> + 'static>(&mut self, system: S) -> &mut Self
     where
         S::System: 'static,
     {
@@ -47,7 +49,7 @@ impl Schedule {
     }
 
     /// Add a system to a specific stage.
-    pub fn add_system_to_stage<S: IntoSystem + 'static>(
+    pub fn add_system_to_stage<M: 'static, S: IntoSystem<M> + 'static>(
         &mut self,
         stage: usize,
         system: S,

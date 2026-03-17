@@ -464,6 +464,72 @@ impl Default for World {
     }
 }
 
+// ── UnsafeWorldCell: split-borrow of World for system parameter extraction ──
+
+use std::marker::PhantomData;
+
+#[allow(dead_code)] // Infrastructure for future system parameter extraction (#2) and parallel scheduling (#3)
+/// Unsafe view into a [`World`] that bypasses borrow checking.
+///
+/// Created from `&mut World` during system execution. Allows multiple
+/// system parameters to borrow disjoint parts of the world simultaneously.
+///
+/// # Safety
+/// The caller must ensure that no two users access the same resource or
+/// component column mutably at the same time.
+#[derive(Copy, Clone)]
+pub struct UnsafeWorldCell<'w> {
+    world: *mut World,
+    _marker: PhantomData<(&'w World, &'w mut World)>,
+}
+
+// SAFETY: Created from &mut World (which is Send+Sync).
+// Access safety is the caller's responsibility via SystemAccess validation.
+unsafe impl Send for UnsafeWorldCell<'_> {}
+unsafe impl Sync for UnsafeWorldCell<'_> {}
+
+#[allow(dead_code)]
+impl<'w> UnsafeWorldCell<'w> {
+    /// Create from `&mut World`.
+    ///
+    /// # Safety
+    /// Caller must not use the original `&mut World` while this cell exists.
+    #[inline]
+    pub(crate) unsafe fn new(world: &'w mut World) -> Self {
+        Self {
+            world: world as *mut World,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get an immutable reference to the world.
+    ///
+    /// # Safety
+    /// Caller must ensure no mutable references to world data are live.
+    #[inline]
+    pub unsafe fn world(self) -> &'w World {
+        unsafe { &*self.world }
+    }
+
+    /// Get an immutable reference to a resource.
+    ///
+    /// # Safety
+    /// Caller must ensure no mutable reference to this resource type exists.
+    #[inline]
+    pub unsafe fn resource<T: Send + Sync + 'static>(self) -> Option<&'w T> {
+        unsafe { (*self.world).resources.get::<T>() }
+    }
+
+    /// Get a mutable reference to a resource.
+    ///
+    /// # Safety
+    /// Caller must ensure exclusive access to this resource type.
+    #[inline]
+    pub unsafe fn resource_mut<T: Send + Sync + 'static>(self) -> Option<&'w mut T> {
+        unsafe { (*self.world).resources.get_mut::<T>() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
