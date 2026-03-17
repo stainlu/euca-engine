@@ -202,7 +202,6 @@ pub fn elimination_system(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use euca_math::Transform;
 
     #[test]
     fn health_system() {
