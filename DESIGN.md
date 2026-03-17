@@ -252,3 +252,9 @@ POST /reset                        → reset to initial state
 | 2026-03-18 | — | HIGH #25: Cascaded shadow maps (3 cascades, 2D array texture, per-fragment cascade selection) |
 | 2026-03-18 | — | HIGH #27: Angular velocity integration (axis-angle from angular vel → rotation) |
 | 2026-03-18 | — | HIGH #29: Body sleeping/deactivation (Sleeping component, velocity threshold, wake on collision) |
+| 2026-03-18 | — | HIGH #15: SAFETY documentation for archetype.rs unsafe blocks |
+| 2026-03-18 | — | HIGH #16: System ordering (labels + after() deps, topological sort in Stage) |
+| 2026-03-18 | — | HIGH #17: Lifecycle phases (startup/shutdown systems, App::tick(), App::shutdown()) |
+| 2026-03-18 | — | HIGH #18: Non-blocking tick (App::tick() for external event loop integration) |
+| 2026-03-18 | — | HIGH #31: Fixed timestep accumulation (PhysicsAccumulator, physics_step_with_dt, max_substeps) |
+| 2026-03-18 | — | HIGH #32: Packet retransmission (ReliableTransport, ack processing, timeout resend) |
