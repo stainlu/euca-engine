@@ -249,3 +249,6 @@ POST /reset                        → reset to initial state
 | 2026-03-18 | — | HIGH #20: Normal map support — Material.normal_texture, TBN matrix in PBR shader, has_normal_map flag |
 | 2026-03-18 | — | HIGH #21: PointLight + SpotLight types, PBR shader light loop (4 point + 2 spot), draw_with_lights() API |
 | 2026-03-18 | — | HIGH #23: Automatic mipmap generation on texture upload (CPU box filter, full mip chain) |
+| 2026-03-18 | — | HIGH #25: Cascaded shadow maps (3 cascades, 2D array texture, per-fragment cascade selection) |
+| 2026-03-18 | — | HIGH #27: Angular velocity integration (axis-angle from angular vel → rotation) |
+| 2026-03-18 | — | HIGH #29: Body sleeping/deactivation (Sleeping component, velocity threshold, wake on collision) |
