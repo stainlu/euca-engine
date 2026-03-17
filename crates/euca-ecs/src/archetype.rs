@@ -163,6 +163,14 @@ impl Column {
         }
     }
 
+    /// # Safety
+    /// Caller must ensure exclusive access to this tick slot.
+    #[inline]
+    unsafe fn set_change_tick_unchecked(&self, index: usize, tick: u32) {
+        let ptr = self.change_ticks.as_ptr() as *mut u32;
+        unsafe { *ptr.add(index) = tick };
+    }
+
     /// Copy raw bytes of element at `index` into `dst`.
     ///
     /// # Safety
@@ -341,6 +349,21 @@ impl Archetype {
     #[inline]
     pub(crate) fn set_change_tick(&mut self, component_id: ComponentId, row: usize, tick: u32) {
         self.columns.get_mut(&component_id).unwrap().change_ticks[row] = tick;
+    }
+
+    /// Set change tick via interior mutability (for mutable queries that hold `&self`).
+    ///
+    /// # Safety
+    /// Caller must ensure exclusive access to this component slot.
+    #[inline]
+    pub(crate) unsafe fn set_change_tick_unchecked(
+        &self,
+        component_id: ComponentId,
+        row: usize,
+        tick: u32,
+    ) {
+        let column = self.columns.get(&component_id).unwrap();
+        unsafe { column.set_change_tick_unchecked(row, tick) };
     }
 }
 
