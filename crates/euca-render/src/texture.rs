@@ -134,6 +134,58 @@ impl TextureStore {
         handle
     }
 
+    /// Upload a pre-compressed texture (BC7, BC5, etc.) with explicit format.
+    ///
+    /// For compressed formats, the data must already be block-compressed.
+    /// No mip generation is performed — provide all mip levels in `data`.
+    /// `bytes_per_row` must account for block size (e.g., BC7 = ceil(w/4)*16).
+    #[allow(clippy::too_many_arguments)]
+    pub fn upload_compressed(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        data: &[u8],
+        bytes_per_row: u32,
+    ) -> TextureHandle {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Compressed Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+            size,
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let handle = TextureHandle(self.textures.len() as u32);
+        self.textures.push(GpuTexture { view, texture });
+        handle
+    }
+
     /// Upload an image file (PNG, JPEG, etc.) as a texture.
     pub fn upload_image(
         &mut self,
