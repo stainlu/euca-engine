@@ -21,6 +21,7 @@ struct ClientApp {
 
     // Rendering
     survey: HardwareSurvey,
+    wgpu_instance: wgpu::Instance,
     window: Option<Arc<Window>>,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
@@ -39,7 +40,7 @@ struct ClientApp {
 
 impl ClientApp {
     fn new() -> Self {
-        let survey = HardwareSurvey::detect();
+        let (survey, wgpu_instance) = HardwareSurvey::detect();
         let server_addr: SocketAddr = SERVER_ADDR.parse().unwrap();
 
         Self {
@@ -47,6 +48,7 @@ impl ClientApp {
             client: GameClient::new(),
             server_addr,
             survey,
+            wgpu_instance,
             window: None,
             gpu: None,
             renderer: None,
@@ -188,7 +190,7 @@ impl ApplicationHandler for ClientApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
-            let gpu = GpuContext::new(window, &self.survey);
+            let gpu = GpuContext::new(window, &self.survey, &self.wgpu_instance);
             let mut renderer = Renderer::new(&gpu);
 
             let cube_mesh = renderer.upload_mesh(&gpu, &Mesh::cube());

@@ -102,8 +102,11 @@ pub struct HardwareSurvey {
 
 impl HardwareSurvey {
     /// Enumerate all GPUs and system info. No window needed.
-    /// Call this before creating `GpuContext`.
-    pub fn detect() -> Self {
+    ///
+    /// Returns the survey data and the wgpu Instance. Pass both to
+    /// `GpuContext::new()` so it reuses the same Instance (avoids
+    /// creating a second one that might see different adapters).
+    pub fn detect() -> (Self, wgpu::Instance) {
         let system = SystemInfo {
             os: std::env::consts::OS,
             arch: std::env::consts::ARCH,
@@ -147,7 +150,7 @@ impl HardwareSurvey {
             render_backend,
         };
         survey.log_results();
-        survey
+        (survey, instance)
     }
 
     /// Prefer DiscreteGpu > IntegratedGpu > VirtualGpu > Cpu > Other.

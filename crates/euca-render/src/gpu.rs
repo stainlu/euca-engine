@@ -17,16 +17,12 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
-    /// Initialize wgpu from a winit window and a pre-computed hardware survey.
+    /// Initialize wgpu from a winit window, hardware survey, and the wgpu Instance.
     ///
-    /// The survey must be created first via `HardwareSurvey::detect()` (before window creation).
-    /// This function selects a surface-compatible adapter and verifies it against the survey.
-    pub fn new(window: Window, survey: &HardwareSurvey) -> Self {
+    /// Both `survey` and `instance` come from `HardwareSurvey::detect()`.
+    /// Reusing the same Instance guarantees adapter consistency with the survey.
+    pub fn new(window: Window, survey: &HardwareSurvey, instance: &wgpu::Instance) -> Self {
         let window = Arc::new(window);
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
 
         let surface = instance
             .create_surface(window.clone())

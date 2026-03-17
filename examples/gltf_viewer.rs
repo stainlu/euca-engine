@@ -14,6 +14,7 @@ use winit::window::{WindowAttributes, WindowId};
 struct GltfViewerApp {
     world: World,
     survey: HardwareSurvey,
+    wgpu_instance: wgpu::Instance,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
     gltf_path: String,
@@ -22,7 +23,7 @@ struct GltfViewerApp {
 
 impl GltfViewerApp {
     fn new(gltf_path: String) -> Self {
-        let survey = HardwareSurvey::detect();
+        let (survey, wgpu_instance) = HardwareSurvey::detect();
 
         let mut world = World::new();
         world.insert_resource(Time::new());
@@ -35,6 +36,7 @@ impl GltfViewerApp {
         Self {
             world,
             survey,
+            wgpu_instance,
             gpu: None,
             renderer: None,
             gltf_path,
@@ -141,7 +143,7 @@ impl ApplicationHandler for GltfViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
-            let gpu = GpuContext::new(window, &self.survey);
+            let gpu = GpuContext::new(window, &self.survey, &self.wgpu_instance);
             let renderer = Renderer::new(&gpu);
             self.gpu = Some(gpu);
             self.renderer = Some(renderer);

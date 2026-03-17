@@ -18,6 +18,7 @@ struct Spin {
 struct TextureDemoApp {
     world: World,
     survey: HardwareSurvey,
+    wgpu_instance: wgpu::Instance,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
     window_attrs: WindowAttributes,
@@ -25,7 +26,7 @@ struct TextureDemoApp {
 
 impl TextureDemoApp {
     fn new() -> Self {
-        let survey = HardwareSurvey::detect();
+        let (survey, wgpu_instance) = HardwareSurvey::detect();
 
         let mut world = World::new();
         world.insert_resource(Time::new());
@@ -38,6 +39,7 @@ impl TextureDemoApp {
         Self {
             world,
             survey,
+            wgpu_instance,
             gpu: None,
             renderer: None,
             window_attrs: WindowAttributes::default()
@@ -187,7 +189,7 @@ impl ApplicationHandler for TextureDemoApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
-            let gpu = GpuContext::new(window, &self.survey);
+            let gpu = GpuContext::new(window, &self.survey, &self.wgpu_instance);
             let renderer = Renderer::new(&gpu);
             self.gpu = Some(gpu);
             self.renderer = Some(renderer);
