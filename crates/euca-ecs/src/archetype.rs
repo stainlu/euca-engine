@@ -1,3 +1,11 @@
+//! Archetype storage: type-erased columnar data for ECS components.
+//!
+//! # Safety invariants
+//! - Column data pointers are valid for `len` elements of `item_layout` size
+//! - Component type IDs must match when casting raw pointers via `get::<T>()`/`get_mut::<T>()`
+//! - `change_ticks` Vec is parallel to data (same length, indexed by row)
+//! - `set_change_tick_unchecked` uses interior mutability — caller must ensure exclusive access
+
 use std::alloc::{self, Layout};
 use std::collections::HashMap;
 use std::ptr;
@@ -59,6 +67,7 @@ impl Column {
         .expect("invalid layout");
 
         let new_data = if self.data.is_null() {
+            // SAFETY: new_layout has valid size and alignment (checked above).
             unsafe { alloc::alloc(new_layout) }
         } else {
             let old_layout = Layout::from_size_align(
@@ -66,6 +75,7 @@ impl Column {
                 self.item_layout.align(),
             )
             .unwrap();
+            // SAFETY: self.data was allocated with old_layout, new_layout has same alignment.
             unsafe { alloc::realloc(self.data, old_layout, new_layout.size()) }
         };
 

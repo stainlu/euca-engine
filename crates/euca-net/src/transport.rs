@@ -96,6 +96,89 @@ impl UdpTransport {
     }
 }
 
+/// Sent packet awaiting acknowledgment.
+struct SentPacket {
+    sequence: u32,
+    data: Vec<u8>,
+    addr: SocketAddr,
+    send_time: std::time::Instant,
+}
+
+/// Wrapper providing reliable delivery over `UdpTransport`.
+///
+/// Tracks sent packets and retransmits unacknowledged ones after a timeout.
+pub struct ReliableTransport {
+    pub transport: UdpTransport,
+    sent_queue: Vec<SentPacket>,
+    /// Retransmission timeout in seconds.
+    pub rto: f32,
+    /// Maximum retransmission attempts before dropping.
+    pub max_retries: u32,
+}
+
+impl ReliableTransport {
+    pub fn new(transport: UdpTransport) -> Self {
+        Self {
+            transport,
+            sent_queue: Vec::new(),
+            rto: 0.2, // 200ms default RTO
+            max_retries: 5,
+        }
+    }
+
+    /// Send a reliable packet. It will be retransmitted until acknowledged.
+    pub fn send_reliable(
+        &mut self,
+        header: &PacketHeader,
+        payload: &[u8],
+        addr: SocketAddr,
+    ) -> io::Result<()> {
+        let total = PacketHeader::SIZE + payload.len();
+        let mut buf = vec![0u8; total];
+        header.write(&mut buf[..PacketHeader::SIZE]);
+        buf[PacketHeader::SIZE..].copy_from_slice(payload);
+        self.transport.send_to(&buf, addr)?;
+
+        self.sent_queue.push(SentPacket {
+            sequence: header.sequence,
+            data: buf,
+            addr,
+            send_time: std::time::Instant::now(),
+        });
+        Ok(())
+    }
+
+    /// Process incoming ack and retransmit timed-out packets.
+    pub fn update(&mut self, remote_ack: u32, ack_bits: u32) {
+        // Remove acknowledged packets
+        self.sent_queue.retain(|pkt| {
+            if pkt.sequence == remote_ack {
+                return false; // acknowledged
+            }
+            let diff = remote_ack.wrapping_sub(pkt.sequence);
+            if diff > 0 && diff <= 32 && (ack_bits & (1 << (diff - 1))) != 0 {
+                return false; // acknowledged via ack_bits
+            }
+            true // keep — not yet acknowledged
+        });
+
+        // Retransmit timed-out packets
+        let now = std::time::Instant::now();
+        let rto = std::time::Duration::from_secs_f32(self.rto);
+        for pkt in &mut self.sent_queue {
+            if now.duration_since(pkt.send_time) >= rto {
+                let _ = self.transport.send_to(&pkt.data, pkt.addr);
+                pkt.send_time = now; // reset timer
+            }
+        }
+
+        // Drop packets that exceeded max retries (too old)
+        let max_age = std::time::Duration::from_secs_f32(self.rto * self.max_retries as f32);
+        self.sent_queue
+            .retain(|pkt| now.duration_since(pkt.send_time) < max_age);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

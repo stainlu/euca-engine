@@ -152,6 +152,9 @@ unsafe fn run_batch_parallel(
 /// Systems without declared accesses run sequentially (conservative default).
 pub struct Schedule {
     stages: Vec<Stage>,
+    startup_systems: Vec<Box<dyn System>>,
+    shutdown_systems: Vec<Box<dyn System>>,
+    started: bool,
 }
 
 impl Schedule {
@@ -159,6 +162,9 @@ impl Schedule {
     pub fn new() -> Self {
         Self {
             stages: vec![Stage::new()],
+            startup_systems: Vec::new(),
+            shutdown_systems: Vec::new(),
+            started: false,
         }
     }
 
@@ -193,16 +199,56 @@ impl Schedule {
         self
     }
 
+    /// Add a system that runs once on the first call to `run()`.
+    pub fn add_startup_system<M: 'static, S: IntoSystem<M> + 'static>(
+        &mut self,
+        system: S,
+    ) -> &mut Self
+    where
+        S::System: 'static,
+    {
+        self.startup_systems.push(Box::new(system.into_system()));
+        self
+    }
+
+    /// Add a system that runs when `shutdown()` is called.
+    pub fn add_shutdown_system<M: 'static, S: IntoSystem<M> + 'static>(
+        &mut self,
+        system: S,
+    ) -> &mut Self
+    where
+        S::System: 'static,
+    {
+        self.shutdown_systems.push(Box::new(system.into_system()));
+        self
+    }
+
     /// Run all stages in order, then advance the world tick.
     ///
+    /// On the first call, startup systems run before the main schedule.
     /// Within each stage, systems are grouped into batches. Systems in the same
     /// batch run in parallel via rayon. Batches run sequentially.
     pub fn run(&mut self, world: &mut World) {
+        // Run startup systems once
+        if !self.started {
+            self.started = true;
+            for sys in &mut self.startup_systems {
+                sys.run(world);
+            }
+        }
+
         for stage in &mut self.stages {
             stage.run(world);
         }
         world.update_events();
         world.tick();
+    }
+
+    /// Run shutdown systems. Call once when the application is exiting.
+    pub fn shutdown(&mut self, world: &mut World) {
+        for sys in &mut self.shutdown_systems {
+            sys.run(world);
+        }
     }
 
     /// Total number of systems across all stages.

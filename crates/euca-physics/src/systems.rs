@@ -6,25 +6,49 @@ use crate::collision::intersect_shapes;
 use crate::components::*;
 use crate::world::PhysicsConfig;
 
-/// Main physics system: apply gravity, integrate velocity, detect collisions, resolve.
+/// Physics system with fixed-timestep accumulation.
+///
+/// Call with your frame's delta time. Accumulates time and runs fixed-dt
+/// substeps as needed. Insert a `PhysicsAccumulator` resource to use this.
+/// Falls back to single-step if accumulator is not present.
+pub fn physics_step_with_dt(world: &mut World, frame_dt: f32) {
+    let config = world
+        .resource::<PhysicsConfig>()
+        .cloned()
+        .unwrap_or_default();
+
+    let accumulator = world
+        .resource::<crate::world::PhysicsAccumulator>()
+        .map(|a| a.accumulator)
+        .unwrap_or(0.0)
+        + frame_dt;
+
+    let mut remaining = accumulator;
+    let mut steps = 0u32;
+    while remaining >= config.fixed_dt && steps < config.max_substeps {
+        physics_step_single(world, config.fixed_dt, config.gravity);
+        remaining -= config.fixed_dt;
+        steps += 1;
+    }
+
+    if let Some(acc) = world.resource_mut::<crate::world::PhysicsAccumulator>() {
+        acc.accumulator = remaining;
+    }
+}
+
+/// Main physics system: single fixed-dt step. Use `physics_step_with_dt` for accumulation.
 pub fn physics_step_system(world: &mut World) {
     let config = world
         .resource::<PhysicsConfig>()
         .cloned()
         .unwrap_or_default();
-    let dt = config.fixed_dt;
-    let gravity = config.gravity;
+    physics_step_single(world, config.fixed_dt, config.gravity);
+}
 
-    // Step 1: Apply gravity to dynamic (non-sleeping) bodies
+fn physics_step_single(world: &mut World, dt: f32, gravity: Vec3) {
     apply_gravity(world, gravity, dt);
-
-    // Step 2: Integrate velocity → position (+ angular → rotation)
     integrate_positions(world, dt);
-
-    // Step 3: Detect and resolve collisions (wakes sleeping bodies on contact)
     resolve_collisions(world);
-
-    // Step 4: Put slow bodies to sleep, wake fast ones
     update_sleep_states(world);
 }
 
@@ -495,6 +519,7 @@ mod tests {
         world.insert_resource(PhysicsConfig {
             gravity: Vec3::ZERO, // no gravity for this test
             fixed_dt: 1.0 / 60.0,
+            max_substeps: 8,
         });
 
         // Thin wall at x=10 (AABB half-extent 0.1 in X)

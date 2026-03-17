@@ -64,6 +64,18 @@ impl App {
         }
     }
 
+    /// Run a single headless tick. Non-blocking — returns immediately.
+    /// Useful for integration with external event loops (Tokio, game servers).
+    pub fn tick(&mut self) {
+        self.world.resource_mut::<Time>().unwrap().update();
+        self.schedule.run(&mut self.world);
+    }
+
+    /// Run shutdown systems. Call when the application is exiting.
+    pub fn shutdown(&mut self) {
+        self.schedule.shutdown(&mut self.world);
+    }
+
     /// Run the app with a winit event loop (opens a window).
     ///
     /// This takes ownership because winit's event loop requires it on most platforms.

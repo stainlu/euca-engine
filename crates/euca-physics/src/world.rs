@@ -5,6 +5,15 @@ use euca_math::Vec3;
 pub struct PhysicsConfig {
     pub gravity: Vec3,
     pub fixed_dt: f32,
+    /// Maximum number of substeps per frame (prevents spiral of death).
+    pub max_substeps: u32,
+}
+
+/// Accumulator for fixed-timestep physics.
+/// Insert as a resource alongside PhysicsConfig.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicsAccumulator {
+    pub accumulator: f32,
 }
 
 impl PhysicsConfig {
@@ -12,6 +21,7 @@ impl PhysicsConfig {
         Self {
             gravity: Vec3::new(0.0, -9.81, 0.0),
             fixed_dt: 1.0 / 60.0,
+            max_substeps: 8,
         }
     }
 
