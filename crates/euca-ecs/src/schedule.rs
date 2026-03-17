@@ -399,7 +399,6 @@ mod tests {
     #[test]
     fn parallel_batch_no_conflict() {
         // Two systems reading different resources → same batch → parallel
-        use crate::component::ComponentId;
         use std::any::TypeId;
 
         let counter = std::sync::Arc::new(AtomicU32::new(0));

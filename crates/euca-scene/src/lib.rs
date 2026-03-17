@@ -52,9 +52,7 @@ pub fn transform_propagation_system(world: &mut World) {
         let dirty = changed_since::<LocalTransform>(world, *entity, last_tick)
             || changed_since::<Children>(world, *entity, last_tick);
 
-        if dirty
-            && let Some(gt) = world.get_mut::<GlobalTransform>(*entity)
-        {
+        if dirty && let Some(gt) = world.get_mut::<GlobalTransform>(*entity) {
             gt.0 = *local;
         }
 
@@ -81,9 +79,7 @@ pub fn transform_propagation_system(world: &mut World) {
 
         let global = parent_global.mul(local);
 
-        if needs_update
-            && let Some(gt) = world.get_mut::<GlobalTransform>(entity)
-        {
+        if needs_update && let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
             gt.0 = global;
         }
 
