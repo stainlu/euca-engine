@@ -47,6 +47,14 @@ pub struct Velocity {
 #[derive(Clone, Copy, Debug)]
 pub struct Gravity(pub Vec3);
 
+/// Marker component for sleeping (deactivated) physics bodies.
+/// Sleeping bodies skip gravity and integration until woken by a collision.
+#[derive(Clone, Copy, Debug)]
+pub struct Sleeping;
+
+/// Velocity threshold below which a body is put to sleep.
+pub const SLEEP_THRESHOLD: f32 = 0.05;
+
 /// Collider shape.
 #[derive(Clone, Debug)]
 pub enum ColliderShape {

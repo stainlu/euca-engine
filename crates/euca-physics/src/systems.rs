@@ -15,14 +15,17 @@ pub fn physics_step_system(world: &mut World) {
     let dt = config.fixed_dt;
     let gravity = config.gravity;
 
-    // Step 1: Apply gravity to dynamic bodies
+    // Step 1: Apply gravity to dynamic (non-sleeping) bodies
     apply_gravity(world, gravity, dt);
 
-    // Step 2: Integrate velocity → position
+    // Step 2: Integrate velocity → position (+ angular → rotation)
     integrate_positions(world, dt);
 
-    // Step 3: Detect and resolve collisions
+    // Step 3: Detect and resolve collisions (wakes sleeping bodies on contact)
     resolve_collisions(world);
+
+    // Step 4: Put slow bodies to sleep, wake fast ones
+    update_sleep_states(world);
 }
 
 fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
@@ -36,6 +39,10 @@ fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
     };
 
     for entity in entities {
+        // Skip sleeping bodies
+        if world.get::<Sleeping>(entity).is_some() {
+            continue;
+        }
         let g = world.get::<Gravity>(entity).map(|g| g.0).unwrap_or(gravity);
         if let Some(vel) = world.get_mut::<Velocity>(entity) {
             vel.linear = vel.linear + g * dt;
@@ -43,17 +50,59 @@ fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
     }
 }
 
+/// Put slow bodies to sleep, wake bodies involved in collisions.
+fn update_sleep_states(world: &mut World) {
+    let candidates: Vec<(Entity, f32)> = {
+        let query = Query::<(Entity, &PhysicsBody, &Velocity)>::new(world);
+        query
+            .iter()
+            .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
+            .map(|(e, _, vel)| {
+                (
+                    e,
+                    vel.linear.length_squared() + vel.angular.length_squared(),
+                )
+            })
+            .collect()
+    };
+
+    for (entity, speed_sq) in candidates {
+        if speed_sq < SLEEP_THRESHOLD * SLEEP_THRESHOLD {
+            // Put to sleep if not already
+            if world.get::<Sleeping>(entity).is_none() {
+                world.insert(entity, Sleeping);
+                // Zero out velocity to prevent drift
+                if let Some(vel) = world.get_mut::<Velocity>(entity) {
+                    vel.linear = Vec3::ZERO;
+                    vel.angular = Vec3::ZERO;
+                }
+            }
+        } else {
+            // Wake up if sleeping
+            world.remove::<Sleeping>(entity);
+        }
+    }
+}
+
 fn integrate_positions(world: &mut World, dt: f32) {
     use crate::raycast::{Ray, raycast_collider};
 
-    // Collect movers: entity, old position, velocity, collider extent
-    let movers: Vec<(Entity, Vec3, Vec3, f32)> = {
+    // Collect movers: entity, old position, linear vel, angular vel, collider extent
+    let movers: Vec<(Entity, Vec3, Vec3, Vec3, f32)> = {
         let query =
             Query::<(Entity, &PhysicsBody, &Velocity, &LocalTransform, &Collider)>::new(world);
         query
             .iter()
             .filter(|(_, body, _, _, _)| body.body_type == RigidBodyType::Dynamic)
-            .map(|(e, _, vel, lt, col)| (e, lt.0.translation, vel.linear, shape_extent(&col.shape)))
+            .map(|(e, _, vel, lt, col)| {
+                (
+                    e,
+                    lt.0.translation,
+                    vel.linear,
+                    vel.angular,
+                    shape_extent(&col.shape),
+                )
+            })
             .collect()
     };
 
@@ -67,9 +116,19 @@ fn integrate_positions(world: &mut World, dt: f32) {
             .collect()
     };
 
-    for (entity, old_pos, linear_vel, extent) in movers {
+    for (entity, old_pos, linear_vel, angular_vel, extent) in movers {
         let displacement = linear_vel * dt;
         let mut new_pos = old_pos + displacement;
+
+        // Apply angular velocity to rotation
+        if angular_vel.length_squared() > 1e-8 {
+            let angle = angular_vel.length() * dt;
+            let axis = angular_vel * (1.0 / angular_vel.length());
+            if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                let delta_rot = euca_math::Quat::from_axis_angle(axis, angle);
+                lt.0.rotation = delta_rot * lt.0.rotation;
+            }
+        }
 
         // CCD: if displacement > collider extent, sweep-test against statics
         let speed = displacement.length();
