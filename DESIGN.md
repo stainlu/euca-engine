@@ -257,4 +257,8 @@ POST /reset                        → reset to initial state
 | 2026-03-18 | — | HIGH #17: Lifecycle phases (startup/shutdown systems, App::tick(), App::shutdown()) |
 | 2026-03-18 | — | HIGH #18: Non-blocking tick (App::tick() for external event loop integration) |
 | 2026-03-18 | — | HIGH #31: Fixed timestep accumulation (PhysicsAccumulator, physics_step_with_dt, max_substeps) |
-| 2026-03-18 | — | HIGH #32: Packet retransmission (ReliableTransport, ack processing, timeout resend) |
+| 2026-03-18 | — | HIGH #32: Packet retransmission (ReliableTransport, count-based retry, ack processing) |
+| 2026-03-18 | — | Quality review: reverted broken query cache, fixed solver body collection (collect once), fixed transport retry logic |
+| 2026-03-18 | — | HIGH #13: Query caching with archetype generation tracking (cache invalidation on archetype creation) |
+| 2026-03-18 | — | HIGH #22: Frustum culling (Frustum struct, Gribb/Hartmann plane extraction, AABB-frustum test) |
+| 2026-03-18 | — | HIGH #12: Change detection (Changed<T> marker, per-entity get_change_tick, changed_entities iterator) |
