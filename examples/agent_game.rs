@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use euca_agent::bridge::{ActionRequest, AgentBridge, JoinRequest, JoinResponse, PlayerView};
 use euca_ecs::{Entity, Query, World};
-use euca_game::arena::{self, ArenaState, Health, Projectile};
+use euca_game::arena::{self, ArenaState, Health};
 use euca_math::{Transform, Vec3};
 use euca_net::{
     ClientMessage, EntityState, GameServer, NetworkId, PacketHeader, ServerMessage, UdpTransport,
