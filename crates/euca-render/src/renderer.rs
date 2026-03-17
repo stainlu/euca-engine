@@ -69,8 +69,10 @@ struct SceneUniforms {
     light_color: [f32; 4],
     ambient_color: [f32; 4],
     camera_vp: [[f32; 4]; 4],
-    light_vp: [[f32; 4]; 4],
+    light_vp: [[f32; 4]; 4], // Cascade 0 VP (kept for backward compat)
     inv_vp: [[f32; 4]; 4],
+    cascade_vps: [[[f32; 4]; 4]; 3], // VP matrices for each cascade
+    cascade_splits: [f32; 4],        // x,y,z = split distances, w = unused
     // Point + spot light arrays
     point_lights: [GpuPointLight; MAX_POINT_LIGHTS],
     spot_lights: [GpuSpotLight; MAX_SPOT_LIGHTS],
@@ -94,7 +96,9 @@ struct DrawBatch {
 
 const MAX_INSTANCES: usize = 16384;
 const SHADOW_MAP_SIZE: u32 = 2048;
-const SHADOW_ORTHO_SIZE: f32 = 20.0;
+const NUM_SHADOW_CASCADES: u32 = 3;
+/// Ortho sizes for each cascade (near, mid, far).
+const CASCADE_ORTHO_SIZES: [f32; 3] = [8.0, 20.0, 50.0];
 
 #[allow(dead_code)]
 pub struct Renderer {
@@ -117,7 +121,8 @@ pub struct Renderer {
 
     shadow_pipeline: wgpu::RenderPipeline,
     shadow_map: wgpu::Texture,
-    shadow_map_view: wgpu::TextureView,
+    shadow_map_view: wgpu::TextureView, // Array view for sampling all cascades
+    shadow_cascade_views: Vec<wgpu::TextureView>, // Per-layer views for rendering
     shadow_sampler: wgpu::Sampler,
     shadow_instance_buffer: wgpu::Buffer,
     shadow_instance_bind_group: wgpu::BindGroup,
@@ -175,13 +180,13 @@ impl Renderer {
             ..Default::default()
         });
 
-        // ── Shadow map ──
+        // ── Cascaded shadow map (2D array texture with NUM_SHADOW_CASCADES layers) ──
         let shadow_map = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Shadow Map"),
+            label: Some("Shadow Map Array"),
             size: wgpu::Extent3d {
                 width: SHADOW_MAP_SIZE,
                 height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: NUM_SHADOW_CASCADES,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -190,7 +195,22 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let shadow_map_view = shadow_map.create_view(&wgpu::TextureViewDescriptor::default());
+        // Array view for sampling all cascades in the PBR shader
+        let shadow_map_view = shadow_map.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        // Per-cascade views for rendering
+        let shadow_cascade_views: Vec<wgpu::TextureView> = (0..NUM_SHADOW_CASCADES)
+            .map(|i| {
+                shadow_map.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: i,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
 
         let shadow_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Shadow Sampler"),
@@ -239,7 +259,7 @@ impl Renderer {
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
                             multisampled: false,
                         },
                         count: None,
@@ -612,6 +632,7 @@ impl Renderer {
             shadow_pipeline,
             shadow_map,
             shadow_map_view,
+            shadow_cascade_views,
             shadow_sampler,
             shadow_instance_buffer,
             shadow_instance_bind_group,
@@ -757,14 +778,18 @@ impl Renderer {
         );
     }
 
-    fn light_vp(light: &DirectionalLight) -> Mat4 {
+    fn light_vp_for_cascade(light: &DirectionalLight, ortho_size: f32) -> Mat4 {
         use euca_math::Vec3;
         let dir = Vec3::new(light.direction[0], light.direction[1], light.direction[2]).normalize();
         let light_pos = dir * -30.0;
         let light_view = Mat4::look_at_lh(light_pos, Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0));
-        let s = SHADOW_ORTHO_SIZE;
+        let s = ortho_size;
         let light_proj = Mat4::orthographic_lh(-s, s, -s, s, 0.1, 60.0);
         light_proj * light_view
+    }
+
+    fn light_vp(light: &DirectionalLight) -> Mat4 {
+        Self::light_vp_for_cascade(light, CASCADE_ORTHO_SIZES[0])
     }
 
     /// Sort commands by (mesh, material) and build batches for instanced drawing.
@@ -916,18 +941,18 @@ impl Renderer {
                 .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
         }
 
-        // ── Shadow pass ──
-        {
-            // Bake light_vp * model into shadow instances (avoids binding scene group
-            // which references the shadow map texture — can't read + write same texture)
+        // ── Cascaded shadow passes (one per cascade layer) ──
+        for (cascade_idx, &cascade_ortho) in CASCADE_ORTHO_SIZES.iter().enumerate() {
+            let cascade_vp = Self::light_vp_for_cascade(light, cascade_ortho);
+
             let shadow_instances: Vec<InstanceData> = instances
                 .iter()
                 .map(|inst| {
                     let model = Mat4::from_cols_array_2d(&inst.model);
-                    let shadow_mvp = light_vp * model;
+                    let shadow_mvp = cascade_vp * model;
                     InstanceData {
                         model: shadow_mvp.to_cols_array_2d(),
-                        normal_matrix: [[0.0; 4]; 4], // unused in shadow pass
+                        normal_matrix: [[0.0; 4]; 4],
                     }
                 })
                 .collect();
@@ -944,7 +969,7 @@ impl Renderer {
                 label: Some("Shadow Pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_map_view,
+                    view: &self.shadow_cascade_views[cascade_idx],
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -992,6 +1017,17 @@ impl Renderer {
             camera_vp: vp.to_cols_array_2d(),
             light_vp: light_vp.to_cols_array_2d(),
             inv_vp: vp.inverse().to_cols_array_2d(),
+            cascade_vps: [
+                Self::light_vp_for_cascade(light, CASCADE_ORTHO_SIZES[0]).to_cols_array_2d(),
+                Self::light_vp_for_cascade(light, CASCADE_ORTHO_SIZES[1]).to_cols_array_2d(),
+                Self::light_vp_for_cascade(light, CASCADE_ORTHO_SIZES[2]).to_cols_array_2d(),
+            ],
+            cascade_splits: [
+                CASCADE_ORTHO_SIZES[0],
+                CASCADE_ORTHO_SIZES[1],
+                CASCADE_ORTHO_SIZES[2],
+                0.0,
+            ],
             point_lights: {
                 let mut arr = [GpuPointLight::default(); MAX_POINT_LIGHTS];
                 for (i, (pos, pl)) in point_lights.iter().take(MAX_POINT_LIGHTS).enumerate() {
@@ -1222,10 +1258,12 @@ struct SceneUniforms {
     camera_vp: mat4x4<f32>,
     light_vp: mat4x4<f32>,
     inv_vp: mat4x4<f32>,
+    cascade_vps: array<mat4x4<f32>, 3>,
+    cascade_splits: vec4<f32>,  // xyz = ortho sizes per cascade
     point_lights: array<PointLightData, 4>,
     spot_lights: array<SpotLightData, 2>,
-    num_point_lights: vec4<f32>,  // x = count
-    num_spot_lights: vec4<f32>,   // x = count
+    num_point_lights: vec4<f32>,
+    num_spot_lights: vec4<f32>,
 };
 
 struct MaterialUniforms {
@@ -1237,7 +1275,7 @@ struct MaterialUniforms {
 
 @group(0) @binding(0) var<storage, read> instances: array<InstanceData>;
 @group(1) @binding(0) var<uniform> scene: SceneUniforms;
-@group(1) @binding(1) var shadow_map: texture_depth_2d;
+@group(1) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(2) var shadow_sampler: sampler_comparison;
 @group(2) @binding(0) var<uniform> material: MaterialUniforms;
 @group(2) @binding(1) var albedo_tex: texture_2d<f32>;
@@ -1302,7 +1340,21 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 }
 
 fn shadow_factor(world_pos: vec3<f32>) -> f32 {
-    let light_clip = scene.light_vp * vec4<f32>(world_pos, 1.0);
+    // Select the tightest cascade that contains this fragment
+    var cascade_idx = 0i;
+    for (var ci = 0i; ci < 3; ci++) {
+        let vp = scene.cascade_vps[ci];
+        let clip = vp * vec4<f32>(world_pos, 1.0);
+        let ndc = clip.xyz / clip.w;
+        let uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+        if uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 {
+            cascade_idx = ci;
+            break;
+        }
+    }
+
+    let vp = scene.cascade_vps[cascade_idx];
+    let light_clip = vp * vec4<f32>(world_pos, 1.0);
     let ndc = light_clip.xyz / light_clip.w;
     let shadow_uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
     let current_depth = ndc.z;
@@ -1316,7 +1368,8 @@ fn shadow_factor(world_pos: vec3<f32>) -> f32 {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
             shadow += textureSampleCompare(
                 shadow_map, shadow_sampler,
-                shadow_uv + offset, current_depth
+                shadow_uv + offset, cascade_idx,
+                current_depth
             );
         }
     }
