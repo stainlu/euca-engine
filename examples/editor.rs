@@ -82,10 +82,10 @@ impl EditorApp {
             mouse_delta: [0.0, 0.0],
             right_mouse_down: false,
             middle_mouse_down: false,
-            cam_yaw: 0.5,
-            cam_pitch: 0.4,
-            cam_distance: 12.0,
-            cam_target: Vec3::new(0.0, 1.0, 0.0),
+            cam_yaw: 0.6,
+            cam_pitch: 0.35,
+            cam_distance: 14.0,
+            cam_target: Vec3::new(0.0, 1.5, 0.0),
             outline_material: None,
             cube_mesh: None,
             sphere_mesh: None,
@@ -145,13 +145,11 @@ impl EditorApp {
             w.insert(e, Collider::aabb(half, half, half).with_restitution(0.4));
         };
 
-        // Dynamic cubes (will fall when playing)
-        spawn(&mut self.world, Vec3::new(0.0, 4.0, 0.0), cube, red, 0.5);
-        spawn(&mut self.world, Vec3::new(1.5, 6.0, 0.5), cube, blue, 0.5);
-        spawn(&mut self.world, Vec3::new(-1.0, 8.0, -0.5), cube, gold, 0.5);
-        spawn(&mut self.world, Vec3::new(0.5, 10.0, 1.0), cube, green, 0.5);
+        let silver = renderer.upload_material(gpu, &Material::silver());
+        let gray = renderer.upload_material(gpu, &Material::gray());
 
-        // Static objects (decoration — won't fall)
+        // ── Static scene objects (arranged for visual appeal) ──
+
         let spawn_static =
             |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
                 let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
@@ -162,38 +160,50 @@ impl EditorApp {
                 w.insert(e, Collider::aabb(half, half, half));
             };
 
-        // Pillars
-        spawn_static(
-            &mut self.world,
-            Vec3::new(5.0, 1.0, 5.0),
-            cube,
-            grid_mat,
-            0.3,
-        );
-        spawn_static(
-            &mut self.world,
-            Vec3::new(-5.0, 1.0, 5.0),
-            cube,
-            grid_mat,
-            0.3,
-        );
-        spawn_static(
-            &mut self.world,
-            Vec3::new(5.0, 1.0, -5.0),
-            cube,
-            grid_mat,
-            0.3,
-        );
-        spawn_static(
-            &mut self.world,
-            Vec3::new(-5.0, 1.0, -5.0),
-            cube,
-            grid_mat,
-            0.3,
-        );
+        let spawn_sphere_static = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
+            let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
+            w.insert(e, GlobalTransform::default());
+            w.insert(e, MeshRenderer { mesh: sphere });
+            w.insert(e, MaterialRef { handle: mat });
+            w.insert(e, PhysicsBody::fixed());
+            w.insert(e, Collider::sphere(0.5));
+        };
 
-        // Spheres
-        let spawn_sphere = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
+        // Center pedestal (stacked cubes)
+        spawn_static(&mut self.world, Vec3::new(0.0, 0.5, 0.0), cube, gray, 0.5);
+        spawn_static(&mut self.world, Vec3::new(0.0, 1.5, 0.0), cube, silver, 0.4);
+        // Gold sphere on top of pedestal
+        spawn_sphere_static(&mut self.world, Vec3::new(0.0, 2.5, 0.0), gold);
+
+        // Four pillars in a square — taller
+        for &(x, z) in &[(4.0, 4.0), (-4.0, 4.0), (4.0, -4.0), (-4.0, -4.0)] {
+            spawn_static(&mut self.world, Vec3::new(x, 0.5, z), cube, gray, 0.35);
+            spawn_static(&mut self.world, Vec3::new(x, 1.5, z), cube, gray, 0.35);
+            spawn_static(&mut self.world, Vec3::new(x, 2.5, z), cube, gray, 0.35);
+            // Colored sphere caps
+            let mat = match (x > 0.0, z > 0.0) {
+                (true, true) => red,
+                (false, true) => blue,
+                (true, false) => green,
+                (false, false) => gold,
+            };
+            spawn_sphere_static(&mut self.world, Vec3::new(x, 3.5, z), mat);
+        }
+
+        // Front row — three material showcase cubes on small pedestals
+        for (i, mat) in [red, silver, blue].iter().enumerate() {
+            let x = (i as f32 - 1.0) * 2.5;
+            spawn_static(&mut self.world, Vec3::new(x, 0.3, -3.0), cube, gray, 0.3);
+            spawn_static(&mut self.world, Vec3::new(x, 0.9, -3.0), cube, *mat, 0.25);
+        }
+
+        // Dynamic objects (will fall when you press Play)
+        spawn(&mut self.world, Vec3::new(-1.5, 5.0, 1.0), cube, red, 0.5);
+        spawn(&mut self.world, Vec3::new(1.5, 7.0, -0.5), cube, blue, 0.5);
+        spawn(&mut self.world, Vec3::new(0.0, 9.0, 0.5), cube, green, 0.5);
+
+        // Floating gold spheres (dynamic — will drop on Play)
+        let spawn_sphere_dyn = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
             let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
             w.insert(e, GlobalTransform::default());
             w.insert(e, MeshRenderer { mesh: sphere });
@@ -203,15 +213,14 @@ impl EditorApp {
             w.insert(e, Collider::sphere(0.5).with_restitution(0.6));
         };
 
-        spawn_sphere(&mut self.world, Vec3::new(-2.0, 7.0, 1.0), gold);
-        spawn_sphere(&mut self.world, Vec3::new(3.0, 5.0, -1.0), blue);
-        spawn_sphere(&mut self.world, Vec3::new(-3.0, 9.0, 2.0), red);
+        spawn_sphere_dyn(&mut self.world, Vec3::new(2.5, 6.0, 2.0), gold);
+        spawn_sphere_dyn(&mut self.world, Vec3::new(-2.5, 8.0, -1.5), silver);
 
-        // Light
+        // Directional light — warm sunlight from upper-left
         self.world.spawn(DirectionalLight {
-            direction: [0.5, -1.0, 0.3],
-            color: [1.0, 0.98, 0.95],
-            intensity: 2.0,
+            direction: [0.4, -0.9, 0.25],
+            color: [1.0, 0.95, 0.88],
+            intensity: 2.5,
         });
     }
 
