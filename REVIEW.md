@@ -317,6 +317,32 @@ No SIMD in math (#72), no swizzling (#73), magic slerp threshold (#74), no GPU d
 - Code organization (16 crates, clear boundaries)
 - 145 tests, CI green
 
-### Verdict
+### Verdict (original, 2026-03-17 morning)
 
-~30% production-ready. Strong prototype with sound foundations. Next priorities: mutable queries, parallel scheduling, transform dirty flags, physics broadphase, agent mutex elimination.
+~30% production-ready. Strong prototype with sound foundations.
+
+---
+
+## Update: 2026-03-17 — All 11 CRITICALs Resolved
+
+All CRITICAL issues identified in the UE5 comparison have been addressed in a single session:
+
+| # | Issue | Resolution |
+|---|-------|-----------|
+| 1 | No mutable queries | `Query<&mut T>` + tuple expansion to 8 + aliasing validation |
+| 2 | No system params | SystemAccess enum, UnsafeWorldCell, Res/ResMut wrappers, IntoSystem\<Marker\> |
+| 3 | No parallel scheduling | Greedy batch algorithm, std::thread::scope parallel execution |
+| 4 | Reflection unused | Reflect derived on 7 components, generic reflect_component\<T\>() inspector |
+| 5 | O(n²) broadphase | Spatial hash grid (cell size 4.0), falls back for <20 bodies |
+| 6 | No CCD | Sweep-test fast bodies against statics, clamp position on hit |
+| 7 | Only AABB+Sphere | Capsule collider (capsule-capsule, capsule-sphere, capsule-AABB, raycast) |
+| 8 | No constraint solver | 4-iteration position-based solver, stable 3-cube stacking |
+| 9 | Mutex bottleneck | RwLock\<WorldPool\> with create_world() for independent environments |
+| 10 | No entity ownership | Owner(AgentId) component, permission checks on despawn/patch |
+| 11 | No dirty flags | PropagationState tick tracking, skip unchanged subtrees O(N)→O(moved) |
+
+**Additional fixes:** Physics restitution/friction formulas, per-entity gravity, pre-allocated Vecs, editor showcase scene, hardware survey.
+
+**Test count:** 170+ (was 145). CI green across all 4 jobs.
+
+**Revised verdict:** ~50% production-ready. All architectural blockers cleared. Remaining work is feature additions (22 HIGH, 28 MEDIUM, 8 LOW) — not foundational rewrites.

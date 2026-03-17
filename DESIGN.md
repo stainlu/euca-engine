@@ -44,7 +44,7 @@ External AI Agents (Claude Code, RL agents, etc.)
 |-------|---------|--------|-------|
 | `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query (&T + &mut T), Resource, Event, Command, Schedule (parallel batching), Snapshot, Change Detection, par_for_each, SystemAccess | Done | 69 |
 | `euca-math` | Custom SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) | Done | 28 |
-| `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info | Done (unused) | 1 |
+| `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info, integrated into editor inspector | Done | 1 |
 | `euca-scene` | Transform hierarchy, Parent/Children BFS propagation, dirty-flag optimization | Done | 5 |
 | `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
 | `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing, hardware survey | Done | 16 |
@@ -244,3 +244,4 @@ POST /reset                        → reset to initial state
 | 2026-03-17 | E | CRITICAL #8: Iterative constraint solver (4-iteration position-based, stable stacking) |
 | 2026-03-17 | E | CRITICAL #9: Multi-world pool (RwLock<WorldPool>, create_world(), per-world access) |
 | 2026-03-17 | E | CRITICAL #10: Entity ownership (Owner component, agent_id on spawn/despawn/patch, permission checks) |
+| 2026-03-17 | E | CRITICAL #4: Reflection integration — Reflect derived/implemented on 7 component types, generic reflect_component<T>() inspector, replaced hardcoded display |
