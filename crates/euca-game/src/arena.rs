@@ -120,6 +120,7 @@ pub fn projectile_system(world: &mut World) {
                     .map(|c| match &c.shape {
                         euca_physics::ColliderShape::Sphere { radius } => *radius,
                         euca_physics::ColliderShape::Aabb { hx, .. } => *hx,
+                        euca_physics::ColliderShape::Capsule { radius, .. } => *radius,
                     })
                     .unwrap_or(0.5);
                 Some((e, nid.0, gt.0.translation, radius))

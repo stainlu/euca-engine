@@ -53,6 +53,10 @@ pub enum ColliderShape {
     Aabb { hx: f32, hy: f32, hz: f32 },
     /// Sphere.
     Sphere { radius: f32 },
+    /// Capsule (two hemispheres connected by a cylinder, aligned to Y axis).
+    /// `radius` is the hemisphere/cylinder radius, `half_height` is the
+    /// half-length of the cylinder segment (total height = 2*(half_height + radius)).
+    Capsule { radius: f32, half_height: f32 },
 }
 
 /// ECS component defining collision shape.
@@ -75,6 +79,18 @@ impl Collider {
     pub fn sphere(radius: f32) -> Self {
         Self {
             shape: ColliderShape::Sphere { radius },
+            restitution: 0.3,
+            friction: 0.5,
+        }
+    }
+
+    /// Y-axis capsule (good for character controllers).
+    pub fn capsule(radius: f32, half_height: f32) -> Self {
+        Self {
+            shape: ColliderShape::Capsule {
+                radius,
+                half_height,
+            },
             restitution: 0.3,
             friction: 0.5,
         }

@@ -40,6 +40,7 @@ pub struct VelocityData {
 pub enum ColliderData {
     Aabb { hx: f32, hy: f32, hz: f32 },
     Sphere { radius: f32 },
+    Capsule { radius: f32, half_height: f32 },
 }
 
 // ── Rich entity representation ──
@@ -80,6 +81,13 @@ fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
             hz: *hz,
         },
         ColliderShape::Sphere { radius } => ColliderData::Sphere { radius: *radius },
+        ColliderShape::Capsule {
+            radius,
+            half_height,
+        } => ColliderData::Capsule {
+            radius: *radius,
+            half_height: *half_height,
+        },
     });
 
     let physics_body = w.get::<PhysicsBody>(entity).map(|pb| match pb.body_type {
@@ -207,6 +215,10 @@ fn apply_collider(w: &mut euca_ecs::World, entity: Entity, c: &ColliderData) {
     let collider = match c {
         ColliderData::Aabb { hx, hy, hz } => Collider::aabb(*hx, *hy, *hz),
         ColliderData::Sphere { radius } => Collider::sphere(*radius),
+        ColliderData::Capsule {
+            radius,
+            half_height,
+        } => Collider::capsule(*radius, *half_height),
     };
     if w.get::<Collider>(entity).is_some() {
         if let Some(existing) = w.get_mut::<Collider>(entity) {

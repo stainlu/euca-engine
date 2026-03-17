@@ -108,6 +108,56 @@ pub fn raycast_sphere(ray: &Ray, center: Vec3, radius: f32) -> Option<RayHit> {
     Some(RayHit { t, point, normal })
 }
 
+/// Raycast against a capsule (Y-axis aligned).
+/// Tests the cylinder body and two hemisphere endcaps.
+pub fn raycast_capsule(ray: &Ray, center: Vec3, radius: f32, half_height: f32) -> Option<RayHit> {
+    let top = Vec3::new(center.x, center.y + half_height, center.z);
+    let bottom = Vec3::new(center.x, center.y - half_height, center.z);
+
+    // Test against top and bottom hemispheres
+    let hit_top = raycast_sphere(ray, top, radius);
+    let hit_bottom = raycast_sphere(ray, bottom, radius);
+
+    // Test against the infinite cylinder (XZ plane), then clamp to segment
+    let oc = Vec3::new(ray.origin.x - center.x, 0.0, ray.origin.z - center.z);
+    let dir_xz = Vec3::new(ray.direction.x, 0.0, ray.direction.z);
+    let a = dir_xz.dot(dir_xz);
+    let b = 2.0 * oc.dot(dir_xz);
+    let c = oc.dot(oc) - radius * radius;
+
+    let hit_cyl = if a > 1e-12 {
+        let discriminant = b * b - 4.0 * a * c;
+        if discriminant >= 0.0 {
+            let sqrt_d = discriminant.sqrt();
+            let t1 = (-b - sqrt_d) / (2.0 * a);
+            let t2 = (-b + sqrt_d) / (2.0 * a);
+            let t = if t1 >= 0.0 { t1 } else { t2 };
+            if t >= 0.0 {
+                let point = ray.at(t);
+                // Check if hit is within the cylinder segment (between bottom and top Y)
+                if point.y >= center.y - half_height && point.y <= center.y + half_height {
+                    let normal = Vec3::new(point.x - center.x, 0.0, point.z - center.z).normalize();
+                    Some(RayHit { t, point, normal })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Return the closest hit among cylinder and hemispheres
+    [hit_cyl, hit_top, hit_bottom]
+        .into_iter()
+        .flatten()
+        .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal))
+}
+
 /// Raycast against a collider at a given position. Dispatches by shape.
 pub fn raycast_collider(
     ray: &Ray,
@@ -119,6 +169,10 @@ pub fn raycast_collider(
             raycast_aabb(ray, pos, *hx, *hy, *hz)
         }
         crate::components::ColliderShape::Sphere { radius } => raycast_sphere(ray, pos, *radius),
+        crate::components::ColliderShape::Capsule {
+            radius,
+            half_height,
+        } => raycast_capsule(ray, pos, *radius, *half_height),
     }
 }
 
@@ -156,6 +210,31 @@ mod tests {
     fn ray_misses_sphere() {
         let ray = Ray::new(Vec3::new(-5.0, 5.0, 0.0), Vec3::X);
         let hit = raycast_sphere(&ray, Vec3::ZERO, 1.0);
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn ray_hits_capsule_body() {
+        // Ray hitting the cylinder body of a capsule
+        let ray = Ray::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::X);
+        let hit = raycast_capsule(&ray, Vec3::ZERO, 1.0, 1.0);
+        assert!(hit.is_some());
+        let h = hit.unwrap();
+        assert!((h.t - 4.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn ray_hits_capsule_hemisphere() {
+        // Ray hitting the top hemisphere
+        let ray = Ray::new(Vec3::new(-5.0, 1.5, 0.0), Vec3::X);
+        let hit = raycast_capsule(&ray, Vec3::ZERO, 1.0, 1.0);
+        assert!(hit.is_some());
+    }
+
+    #[test]
+    fn ray_misses_capsule() {
+        let ray = Ray::new(Vec3::new(-5.0, 5.0, 0.0), Vec3::X);
+        let hit = raycast_capsule(&ray, Vec3::ZERO, 0.5, 1.0);
         assert!(hit.is_none());
     }
 }
