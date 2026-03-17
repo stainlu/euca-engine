@@ -18,28 +18,38 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    /// Create a unit cube centered at origin with proper normals per face.
+    /// Create a unit cube centered at origin with proper normals and tangents per face.
     pub fn cube() -> Self {
         let face = |positions: [[f32; 3]; 4], normal: [f32; 3]| -> [Vertex; 4] {
+            // Tangent is along the U direction (edge from vertex 0 → vertex 1)
+            let tangent = [
+                positions[1][0] - positions[0][0],
+                positions[1][1] - positions[0][1],
+                positions[1][2] - positions[0][2],
+            ];
             [
                 Vertex {
                     position: positions[0],
                     normal,
+                    tangent,
                     uv: [0.0, 0.0],
                 },
                 Vertex {
                     position: positions[1],
                     normal,
+                    tangent,
                     uv: [1.0, 0.0],
                 },
                 Vertex {
                     position: positions[2],
                     normal,
+                    tangent,
                     uv: [1.0, 1.0],
                 },
                 Vertex {
                     position: positions[3],
                     normal,
+                    tangent,
                     uv: [0.0, 1.0],
                 },
             ]
@@ -139,9 +149,14 @@ impl Mesh {
                 let ny = y / radius;
                 let nz = z / radius;
 
+                // Tangent: derivative of position w.r.t. theta (longitude)
+                let tx = -theta.sin();
+                let tz = theta.cos();
+
                 vertices.push(Vertex {
                     position: [x, y, z],
                     normal: [nx, ny, nz],
+                    tangent: [tx, 0.0, tz],
                     uv: [j as f32 / sectors as f32, i as f32 / stacks as f32],
                 });
             }
@@ -168,25 +183,31 @@ impl Mesh {
     /// Create a flat plane (quad) on the XZ plane centered at origin.
     pub fn plane(size: f32) -> Self {
         let h = size / 2.0;
+        // Tangent along X (U direction on XZ plane)
+        let tangent = [1.0, 0.0, 0.0];
         let vertices = vec![
             Vertex {
                 position: [-h, 0.0, -h],
                 normal: [0.0, 1.0, 0.0],
+                tangent,
                 uv: [0.0, 0.0],
             },
             Vertex {
                 position: [h, 0.0, -h],
                 normal: [0.0, 1.0, 0.0],
+                tangent,
                 uv: [1.0, 0.0],
             },
             Vertex {
                 position: [h, 0.0, h],
                 normal: [0.0, 1.0, 0.0],
+                tangent,
                 uv: [1.0, 1.0],
             },
             Vertex {
                 position: [-h, 0.0, h],
                 normal: [0.0, 1.0, 0.0],
+                tangent,
                 uv: [0.0, 1.0],
             },
         ];

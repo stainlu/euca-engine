@@ -64,6 +64,7 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
                 .map(|((pos, norm), uv)| Vertex {
                     position: *pos,
                     normal: *norm,
+                    tangent: [1.0, 0.0, 0.0], // Default tangent; proper computation needs MikkTSpace
                     uv: *uv,
                 })
                 .collect();

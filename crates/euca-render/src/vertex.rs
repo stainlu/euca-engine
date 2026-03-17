@@ -1,11 +1,12 @@
 use bytemuck::{Pod, Zeroable};
 
-/// A vertex with position, normal, and UV coordinates.
+/// A vertex with position, normal, tangent, and UV coordinates.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    pub tangent: [f32; 3],
     pub uv: [f32; 2],
 }
 
@@ -26,11 +27,17 @@ impl Vertex {
                 offset: 12,
                 shader_location: 1,
             },
+            // tangent
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 24,
+                shader_location: 2,
+            },
             // uv
             wgpu::VertexAttribute {
                 format: wgpu::VertexFormat::Float32x2,
-                offset: 24,
-                shader_location: 2,
+                offset: 36,
+                shader_location: 3,
             },
         ],
     };
