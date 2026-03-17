@@ -36,9 +36,8 @@ fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
     };
 
     for entity in entities {
+        let g = world.get::<Gravity>(entity).map(|g| g.0).unwrap_or(gravity);
         if let Some(vel) = world.get_mut::<Velocity>(entity) {
-            // Check for per-entity gravity override
-            let g = gravity; // TODO: check Gravity component
             vel.linear = vel.linear + g * dt;
         }
     }
@@ -65,87 +64,69 @@ fn integrate_positions(world: &mut World, dt: f32) {
 const REST_VELOCITY_THRESHOLD: f32 = 0.5;
 
 fn resolve_collisions(world: &mut World) {
-    // Collect all collidable entities
-    let bodies: Vec<(Entity, Vec3, ColliderShape, RigidBodyType, f32, f32)> = {
+    // Collect all collidable entities (copy scalars, borrow shapes via index)
+    struct Body {
+        entity: Entity,
+        pos: Vec3,
+        shape: ColliderShape,
+        body_type: RigidBodyType,
+        restitution: f32,
+        friction: f32,
+    }
+    let bodies: Vec<Body> = {
         let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
         query
             .iter()
             .filter_map(|(e, lt, col)| {
                 let body = world.get::<PhysicsBody>(e)?;
-                Some((
-                    e,
-                    lt.0.translation,
-                    col.shape.clone(),
-                    body.body_type,
-                    col.restitution,
-                    col.friction,
-                ))
+                Some(Body {
+                    entity: e,
+                    pos: lt.0.translation,
+                    shape: col.shape.clone(),
+                    body_type: body.body_type,
+                    restitution: col.restitution,
+                    friction: col.friction,
+                })
             })
             .collect()
     };
 
-    // O(n²) broadphase
-    let mut corrections: Vec<(Entity, Vec3, Vec3)> = Vec::new();
+    // O(n²) broadphase — TODO: replace with spatial hash or BVH (#5 in review)
+    let mut corrections: Vec<(Entity, Vec3, Vec3)> = Vec::with_capacity(bodies.len());
 
     for i in 0..bodies.len() {
         for j in (i + 1)..bodies.len() {
-            let (e_a, pos_a, shape_a, type_a, rest_a, fric_a) = &bodies[i];
-            let (e_b, pos_b, shape_b, type_b, rest_b, fric_b) = &bodies[j];
+            let a = &bodies[i];
+            let b = &bodies[j];
 
-            if *type_a == RigidBodyType::Static && *type_b == RigidBodyType::Static {
+            if a.body_type == RigidBodyType::Static && b.body_type == RigidBodyType::Static {
                 continue;
             }
 
-            if let Some((normal, depth)) = intersect_shapes(*pos_a, shape_a, *pos_b, shape_b) {
-                let restitution = (rest_a + rest_b) * 0.5;
-                let friction = (fric_a + fric_b) * 0.5;
+            if let Some((normal, depth)) = intersect_shapes(a.pos, &a.shape, b.pos, &b.shape) {
+                let restitution = a.restitution * b.restitution;
+                let friction = (a.friction * b.friction).sqrt();
 
                 // Push-out resolution
-                match (type_a, type_b) {
+                match (a.body_type, b.body_type) {
                     (RigidBodyType::Dynamic, RigidBodyType::Static) => {
-                        corrections.push((*e_a, normal * (-depth), Vec3::ZERO));
+                        corrections.push((a.entity, normal * (-depth), Vec3::ZERO));
                     }
                     (RigidBodyType::Static, RigidBodyType::Dynamic) => {
-                        corrections.push((*e_b, normal * depth, Vec3::ZERO));
+                        corrections.push((b.entity, normal * depth, Vec3::ZERO));
                     }
                     (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
-                        corrections.push((*e_a, normal * (-depth * 0.5), Vec3::ZERO));
-                        corrections.push((*e_b, normal * (depth * 0.5), Vec3::ZERO));
+                        corrections.push((a.entity, normal * (-depth * 0.5), Vec3::ZERO));
+                        corrections.push((b.entity, normal * (depth * 0.5), Vec3::ZERO));
                     }
                     _ => {}
                 }
 
                 // Velocity response for dynamic body A
-                if *type_a == RigidBodyType::Dynamic
-                    && let Some(vel) = world.get::<Velocity>(*e_a)
+                if a.body_type == RigidBodyType::Dynamic
+                    && let Some(vel) = world.get::<Velocity>(a.entity)
                 {
-                    let n = normal * (-1.0); // normal pointing away from A
-                    let vn = vel.linear.dot(n); // normal component (negative = approaching)
-                    if vn < 0.0 {
-                        let approach_speed = -vn;
-                        // Bounce or rest
-                        let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
-                            0.0 // come to rest
-                        } else {
-                            approach_speed * restitution // bounce with energy loss
-                        };
-                        let normal_correction = n * (new_normal_vel - vn);
-                        // Friction: damp tangential velocity
-                        let tangent_vel = vel.linear - n * vn;
-                        let friction_correction = tangent_vel * (-friction);
-                        corrections.push((
-                            *e_a,
-                            Vec3::ZERO,
-                            normal_correction + friction_correction,
-                        ));
-                    }
-                }
-
-                // Velocity response for dynamic body B
-                if *type_b == RigidBodyType::Dynamic
-                    && let Some(vel) = world.get::<Velocity>(*e_b)
-                {
-                    let n = normal; // normal already points away from B toward A
+                    let n = normal * (-1.0);
                     let vn = vel.linear.dot(n);
                     if vn < 0.0 {
                         let approach_speed = -vn;
@@ -158,7 +139,31 @@ fn resolve_collisions(world: &mut World) {
                         let tangent_vel = vel.linear - n * vn;
                         let friction_correction = tangent_vel * (-friction);
                         corrections.push((
-                            *e_b,
+                            a.entity,
+                            Vec3::ZERO,
+                            normal_correction + friction_correction,
+                        ));
+                    }
+                }
+
+                // Velocity response for dynamic body B
+                if b.body_type == RigidBodyType::Dynamic
+                    && let Some(vel) = world.get::<Velocity>(b.entity)
+                {
+                    let n = normal;
+                    let vn = vel.linear.dot(n);
+                    if vn < 0.0 {
+                        let approach_speed = -vn;
+                        let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
+                            0.0
+                        } else {
+                            approach_speed * restitution
+                        };
+                        let normal_correction = n * (new_normal_vel - vn);
+                        let tangent_vel = vel.linear - n * vn;
+                        let friction_correction = tangent_vel * (-friction);
+                        corrections.push((
+                            b.entity,
                             Vec3::ZERO,
                             normal_correction + friction_correction,
                         ));

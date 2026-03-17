@@ -252,3 +252,71 @@ Since this review was written, significant progress was made across all fronts:
 **crates.io (Phase C complete):** `euca-math` v0.1.0 and `euca-ecs` v0.1.0 published with full doc comments. Anyone can `cargo add euca-math euca-ecs`.
 
 **The critique above still stands.** Shadows and gizmos were built (contrary to the "can wait" advice), but the core point remains: the engine needs a game to drive its next evolution. Phase D should focus on making a real game playable by both humans and AI agents.
+
+---
+
+## Update: 2026-03-17 — Full UE5 Comparison Review
+
+Strict review of all 16 crates against Unreal Engine 5. 79 issues found.
+
+### CRITICAL (11 — blocks production)
+
+| # | System | Issue |
+|---|--------|-------|
+| 1 | ECS | No mutable queries — `Query` only supports `&T`, not `&mut T` |
+| 2 | ECS | No system parameter extraction — systems take raw `&mut World`, can't auto-parallelize |
+| 3 | ECS | No parallel system scheduling — sequential loop wastes all cores but one |
+| 4 | ECS | Reflection system exists but unused — can't generically serialize/replicate/inspect |
+| 5 | Physics | O(n²) broadphase — 1000 bodies = 500K checks/frame |
+| 6 | Physics | No continuous collision detection — fast objects tunnel through geometry |
+| 7 | Physics | Only AABB + Sphere — no capsule, convex hull, triangle mesh |
+| 8 | Physics | No constraint solver — push-out causes jitter with 3+ stacked bodies |
+| 9 | Agent | Mutex bottleneck on SharedWorld — zero parallelism for RL training |
+| 10 | Agent | No entity ownership — any client can despawn any entity |
+| 11 | Scene | No dirty flags on transforms — recalculates ALL globals every frame |
+
+### HIGH (22)
+
+**ECS:** Entity-level change detection only (#12), no query caching (#13), no sparse sets (#14), 61 unsafe blocks without SAFETY comments (#15), no system ordering deps (#16), no lifecycle phases (#17), event loop blocks forever (#18)
+
+**Rendering:** Forward-only (#19), no normal maps (#20), only 1 directional light (#21), no frustum culling/LOD (#22), no mip-maps (#23), no texture compression (#24), single 2048 shadow map (#25), no tangents in vertex format (#26)
+
+**Physics:** Angular velocity unused (#27), no joints (#28), no sleeping (#29), friction model incorrect (#30), no timestep accumulation (#31)
+
+**Networking:** No packet retransmission (#32), no client prediction (#33)
+
+### MEDIUM (28)
+
+ECS: no multi-world (#34), commands applied immediately (#35), events 2-frame only (#36), no plugin deps (#37), snapshot captures transforms only (#38), no determinism (#39), no resource lifecycle (#40)
+
+Rendering: no AA (#41), no exposure control (#42), perspective only (#43), no color grading (#44), no skeletal animation (#45), no transparency sorting (#46), hardcoded post-FX (#47), GPU init panics (#48), hardcoded vsync (#49), MAX_INSTANCES unchecked (#50), shaders as strings (#51)
+
+Physics: restitution average→multiply (#52), no triggers (#53), no collision layers (#54), hot loop allocations (#55)
+
+Asset: glTF discards textures (#56), no caching (#57), no async load (#58)
+
+Input: no gamepad (#59), no contexts (#60), no buffering (#61)
+
+Agent: fake socket ports (#62), no spatial filtering (#63), no rate limiting (#64)
+
+Editor: selection without generation (#65), translate-only gizmo (#66), hardcoded inspector (#67), 3 undo types (#68)
+
+Infra: no profiling (#69), no benchmarks (#70), no input validation (#71)
+
+### LOW (8)
+
+No SIMD in math (#72), no swizzling (#73), magic slerp threshold (#74), no GPU debug markers (#75), no CI coverage (#76), single-platform CI (#77), no nightly testing (#78), no scripting (#79)
+
+### What works well
+
+- Archetype ECS fundamentals (correct SoA, generational IDs, type-safe queries)
+- PBR rendering (Cook-Torrance BRDF, shadow PCF, HDR bloom, ACES)
+- Hardware survey (GPU enumeration, vendor detection, diagnostics)
+- Math library (correct, zero-dep)
+- Agent HTTP API (novel approach)
+- Code organization (16 crates, clear boundaries)
+- 145 tests, CI green
+
+### Verdict
+
+~30% production-ready. Strong prototype with sound foundations. Next priorities: mutable queries, parallel scheduling, transform dirty flags, physics broadphase, agent mutex elimination.

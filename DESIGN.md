@@ -44,16 +44,17 @@ External AI Agents (Claude Code, RL agents, etc.)
 |-------|---------|--------|-------|
 | `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query, Resource, Event, Command, Schedule, Snapshot, Change Detection, par_for_each | Done | 51 |
 | `euca-math` | Custom SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) | Done | 28 |
-| `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info | Done | 1 |
+| `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info | Done (unused) | 1 |
 | `euca-scene` | Transform hierarchy, Parent/Children BFS propagation | Done | 3 |
 | `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
-| `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing (bloom, ACES, vignette) | Done | 10 |
+| `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing, hardware survey | Done | 16 |
 | `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero deps) | Done | 12 |
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
-| `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 0 |
+| `euca-agent` | HTTP API server for external AI agents (axum + tokio) | Done | 3 |
 | `euca-editor` | egui editor: 3D viewport, hierarchy, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load, entity creation, grid, keyboard shortcuts | Done | 11 |
 | `euca-input` | InputState, ActionMap, InputSnapshot for humans + AI agents | Done | 4 |
 | `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, protocol | Done | 11 |
+| `euca-game` | Arena game: health, projectiles, shooting, elimination | Done | 4 |
 | `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) | Done | 0 |
 
 ## Dependency DAG
@@ -229,3 +230,5 @@ POST /reset                        → reset to initial state
 | 2026-03-16 | A | Rendering Quality: texture support (albedo maps, UV sampling, procedural textures), shadow mapping (2048px, 3×3 PCF, depth bias), procedural sky (gradient, sun disk, atmospheric scattering), GPU instancing (storage buffers, 16K instances), HDR post-processing (Rgba16Float, 13-tap bloom, ACES tone mapping, vignette) |
 | 2026-03-16 | B | Editor Maturity: grid overlay, keyboard shortcuts (Delete/F/Ctrl+Z/Ctrl+Y), entity creation (+Empty/Cube/Sphere), scene save/load (JSON SceneFile), transform gizmos (3 axis handles, click+drag translate), undo/redo (stack-based UndoHistory, typed UndoAction, drag debouncing) |
 | 2026-03-16 | C | Published to crates.io: euca-math v0.1.0, euca-ecs v0.1.0 — full doc comments, metadata (description, keywords, categories, license, repository) |
+| 2026-03-17 | — | Hybrid GPU strategy: HardwareSurvey at startup (enumerate all adapters, vendor detection, single Instance reuse), RenderBackend enum, metal-native feature flag, re-export wgpu from euca-render |
+| 2026-03-17 | — | Full UE5 comparison review: 79 issues identified (11 CRITICAL, 22 HIGH, 28 MEDIUM, 8 LOW). Phase E roadmap added. |

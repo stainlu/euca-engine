@@ -127,11 +127,32 @@ Fill gaps needed before any real game can be built.
 5. **Client prediction** — smooth movement without waiting for server response
 6. **Interest management** — only send nearby entities to each client
 
+### Phase E: Architecture Hardening (from UE5 comparison review)
+Address the 11 CRITICAL issues identified in the 2026-03-17 review before any serious game can be built on this engine.
+
+**Tier 1 — ECS foundations (unblocks everything else):**
+1. **Mutable queries** — `Query<&mut T>` support so systems can modify components during iteration
+2. **System parameter extraction** — Systems declare dependencies via types, not raw `&mut World`
+3. **Parallel system scheduling** — DAG-based scheduler runs independent systems on multiple cores
+4. **Reflection integration** — Wire `euca-reflect` into editor, serialization, and networking
+
+**Tier 2 — Physics correctness:**
+5. **Broadphase acceleration** — Spatial hash or BVH to replace O(n²) all-pairs
+6. **Capsule collider** — Required for character controllers
+7. **Constraint solver** — Iterative XPBD for stable stacking
+8. **Continuous collision detection** — Swept shapes prevent tunneling
+
+**Tier 3 — Agent / Scene:**
+9. **Multi-world agent pool** — Replace `Arc<Mutex<WorldState>>` with per-environment worlds
+10. **Entity ownership** — Authority checks before mutations
+11. **Transform dirty flags** — Only propagate globals for entities whose locals changed
+
 ### Order
-A → B → C → D (but can overlap — rendering and editor are independent)
+A → B → C → D → E (E can overlap with D — architecture work is independent of game features)
 
 ### Success criteria
 - ✅ Phase A done: engine renders a scene that looks professional (textures, shadows, procedural sky, HDR post-processing)
 - ✅ Phase B done: can create a simple level entirely in the editor (spawn objects, arrange with gizmos, save/load, undo/redo)
 - Phase C partial: `cargo add euca-ecs euca-math` works; README per crate, changelog, and CI still TODO
 - Phase D done: a real multiplayer game can be built and played by humans + AI agents
+- Phase E done: engine passes UE5 comparison on all CRITICAL items
