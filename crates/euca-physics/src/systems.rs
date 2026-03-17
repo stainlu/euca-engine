@@ -44,18 +44,66 @@ fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
 }
 
 fn integrate_positions(world: &mut World, dt: f32) {
-    let updates: Vec<(Entity, Vec3)> = {
-        let query = Query::<(Entity, &PhysicsBody, &Velocity)>::new(world);
+    use crate::raycast::{Ray, raycast_collider};
+
+    // Collect movers: entity, old position, velocity, collider extent
+    let movers: Vec<(Entity, Vec3, Vec3, f32)> = {
+        let query =
+            Query::<(Entity, &PhysicsBody, &Velocity, &LocalTransform, &Collider)>::new(world);
         query
             .iter()
-            .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
-            .map(|(e, _, vel)| (e, vel.linear))
+            .filter(|(_, body, _, _, _)| body.body_type == RigidBodyType::Dynamic)
+            .map(|(e, _, vel, lt, col)| (e, lt.0.translation, vel.linear, shape_extent(&col.shape)))
             .collect()
     };
 
-    for (entity, linear_vel) in updates {
+    // Collect static/kinematic colliders for CCD raycasting
+    let statics: Vec<(Entity, Vec3, Collider)> = {
+        let query = Query::<(Entity, &LocalTransform, &Collider, &PhysicsBody)>::new(world);
+        query
+            .iter()
+            .filter(|(_, _, _, body)| body.body_type != RigidBodyType::Dynamic)
+            .map(|(e, lt, col, _)| (e, lt.0.translation, col.clone()))
+            .collect()
+    };
+
+    for (entity, old_pos, linear_vel, extent) in movers {
+        let displacement = linear_vel * dt;
+        let mut new_pos = old_pos + displacement;
+
+        // CCD: if displacement > collider extent, sweep-test against statics
+        let speed = displacement.length();
+        if speed > extent * 0.5 && speed > 1e-6 {
+            let ray = Ray::new(old_pos, displacement);
+            let mut closest_t = 1.0_f32; // 1.0 = full displacement
+
+            for (static_e, static_pos, static_col) in &statics {
+                if *static_e == entity {
+                    continue;
+                }
+                if let Some(hit) = raycast_collider(&ray, *static_pos, static_col) {
+                    // hit.t is distance along ray; normalize to [0, 1] of displacement
+                    let t_normalized = hit.t / speed;
+                    if t_normalized < closest_t && t_normalized >= 0.0 {
+                        closest_t = t_normalized;
+                    }
+                }
+            }
+
+            if closest_t < 1.0 {
+                // Clamp position to just before the hit (small epsilon offset)
+                let safe_t = (closest_t - 0.01).max(0.0);
+                new_pos = old_pos + displacement * safe_t;
+
+                // Kill velocity along the movement direction on impact
+                if let Some(vel) = world.get_mut::<Velocity>(entity) {
+                    vel.linear = vel.linear * 0.1; // dampen heavily on CCD contact
+                }
+            }
+        }
+
         if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
-            lt.0.translation = lt.0.translation + linear_vel * dt;
+            lt.0.translation = new_pos;
         }
     }
 }
@@ -342,6 +390,51 @@ mod tests {
             lt.0.translation.y < 5.0,
             "Cube should have fallen, y={}",
             lt.0.translation.y
+        );
+    }
+
+    #[test]
+    fn ccd_prevents_tunneling() {
+        // Fast bullet (speed >> collider size) aimed at a thin wall.
+        // Without CCD, bullet would pass through. With CCD, it stops before.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO, // no gravity for this test
+            fixed_dt: 1.0 / 60.0,
+        });
+
+        // Thin wall at x=10 (AABB half-extent 0.1 in X)
+        let wall = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            10.0, 0.0, 0.0,
+        ))));
+        world.insert(wall, GlobalTransform::default());
+        world.insert(wall, PhysicsBody::fixed());
+        world.insert(wall, Collider::aabb(0.1, 2.0, 2.0));
+
+        // Bullet at x=0, moving at 600 m/s (10 units per frame at 60fps)
+        // Bullet size is 0.1 — displacement per frame (10) >> size (0.1)
+        let bullet = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(bullet, GlobalTransform::default());
+        world.insert(bullet, PhysicsBody::dynamic());
+        world.insert(
+            bullet,
+            Velocity {
+                linear: Vec3::new(600.0, 0.0, 0.0),
+                angular: Vec3::ZERO,
+            },
+        );
+        world.insert(bullet, Collider::sphere(0.1));
+
+        // Run one physics step
+        physics_step_system(&mut world);
+
+        let lt = world.get::<LocalTransform>(bullet).unwrap();
+        // Without CCD: bullet would be at x=10 (600 * 1/60 = 10)
+        // With CCD: bullet should stop before the wall (x < 10)
+        assert!(
+            lt.0.translation.x < 10.0,
+            "Bullet should not tunnel through wall, x={}",
+            lt.0.translation.x
         );
     }
 }
