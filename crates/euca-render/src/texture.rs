@@ -24,7 +24,7 @@ impl TextureStore {
         store
     }
 
-    /// Upload raw RGBA8 pixel data as a 2D texture.
+    /// Upload raw RGBA8 pixel data as a 2D texture with auto-generated mipmaps.
     pub fn upload_rgba(
         &mut self,
         device: &wgpu::Device,
@@ -33,6 +33,8 @@ impl TextureStore {
         height: u32,
         rgba: &[u8],
     ) -> TextureHandle {
+        let mip_level_count = 1 + (width.max(height) as f32).log2().floor() as u32;
+
         let size = wgpu::Extent3d {
             width,
             height,
@@ -41,13 +43,15 @@ impl TextureStore {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Texture"),
             size,
-            mip_level_count: 1,
+            mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
+
+        // Upload base mip (level 0)
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
@@ -63,6 +67,67 @@ impl TextureStore {
             },
             size,
         );
+
+        // Generate remaining mip levels on CPU (box filter downscale)
+        let mut prev_data = rgba.to_vec();
+        let mut mip_w = width;
+        let mut mip_h = height;
+
+        for level in 1..mip_level_count {
+            let new_w = (mip_w / 2).max(1);
+            let new_h = (mip_h / 2).max(1);
+            let mut new_data = vec![0u8; (new_w * new_h * 4) as usize];
+
+            // Box filter: average 2x2 blocks
+            for y in 0..new_h {
+                for x in 0..new_w {
+                    let dst = ((y * new_w + x) * 4) as usize;
+                    let sx = (x * 2).min(mip_w - 1);
+                    let sy = (y * 2).min(mip_h - 1);
+
+                    for c in 0..4u32 {
+                        let s00 = prev_data[((sy * mip_w + sx) * 4 + c) as usize] as u32;
+                        let s10 = prev_data
+                            [(((sy) * mip_w + (sx + 1).min(mip_w - 1)) * 4 + c) as usize]
+                            as u32;
+                        let s01 = prev_data
+                            [(((sy + 1).min(mip_h - 1) * mip_w + sx) * 4 + c) as usize]
+                            as u32;
+                        let s11 = prev_data[(((sy + 1).min(mip_h - 1) * mip_w
+                            + (sx + 1).min(mip_w - 1))
+                            * 4
+                            + c) as usize] as u32;
+                        new_data[dst + c as usize] = ((s00 + s10 + s01 + s11) / 4) as u8;
+                    }
+                }
+            }
+
+            let mip_size = wgpu::Extent3d {
+                width: new_w,
+                height: new_h,
+                depth_or_array_layers: 1,
+            };
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &new_data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * new_w),
+                    rows_per_image: Some(new_h),
+                },
+                mip_size,
+            );
+
+            prev_data = new_data;
+            mip_w = new_w;
+            mip_h = new_h;
+        }
+
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let handle = TextureHandle(self.textures.len() as u32);
         self.textures.push(GpuTexture { view, texture });
