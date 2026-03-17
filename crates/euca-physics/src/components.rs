@@ -1,4 +1,5 @@
 use euca_math::Vec3;
+use euca_reflect::Reflect;
 
 /// Rigid body type.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -12,7 +13,7 @@ pub enum RigidBodyType {
 }
 
 /// ECS component marking an entity as a physics body.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Reflect)]
 pub struct PhysicsBody {
     pub body_type: RigidBodyType,
 }
@@ -36,7 +37,7 @@ impl PhysicsBody {
 }
 
 /// Velocity component for dynamic bodies.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Reflect)]
 pub struct Velocity {
     pub linear: Vec3,
     pub angular: Vec3,
@@ -60,7 +61,7 @@ pub enum ColliderShape {
 }
 
 /// ECS component defining collision shape.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Reflect)]
 pub struct Collider {
     pub shape: ColliderShape,
     pub restitution: f32,

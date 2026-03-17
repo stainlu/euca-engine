@@ -80,7 +80,7 @@ impl Material {
 pub struct MaterialHandle(pub u32);
 
 /// ECS component: which material to use for rendering.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, euca_reflect::Reflect)]
 pub struct MaterialRef {
     pub handle: MaterialHandle,
 }

@@ -6,4 +6,5 @@ edition.workspace = true
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
+euca-reflect = { path = "../euca-reflect" }
 serde = { version = "1", features = ["derive"] }

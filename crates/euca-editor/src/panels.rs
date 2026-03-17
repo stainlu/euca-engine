@@ -1,9 +1,28 @@
 use euca_ecs::{Entity, Query, World};
-use euca_physics::{Collider, PhysicsBody};
+use euca_physics::{Collider, PhysicsBody, Velocity};
+use euca_reflect::Reflect;
 use euca_render::{MaterialRef, MeshRenderer};
 use euca_scene::{GlobalTransform, LocalTransform};
 
 use crate::EditorState;
+
+/// Display a component using the Reflect trait — generic, no hardcoding.
+/// Shows the component name as a collapsible header with field names + values.
+fn reflect_component<T: 'static + Send + Sync + Reflect>(
+    ui: &mut egui::Ui,
+    world: &World,
+    entity: Entity,
+) {
+    if let Some(component) = world.get::<T>(entity) {
+        let name = component.type_name();
+        let fields = component.fields();
+        ui.collapsing(name, |ui| {
+            for (field_name, value) in &fields {
+                ui.label(format!("{field_name}: {value}"));
+            }
+        });
+    }
+}
 
 /// Actions returned from the toolbar.
 #[derive(Clone, Debug)]
@@ -214,43 +233,15 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
                 }
             }
 
-            if let Some(gt) = world.get::<GlobalTransform>(entity) {
-                ui.collapsing("GlobalTransform", |ui| {
-                    ui.label(format!(
-                        "World Pos: ({:.2}, {:.2}, {:.2})",
-                        gt.0.translation.x, gt.0.translation.y, gt.0.translation.z
-                    ));
-                });
-            }
-
-            // Mesh
-            if let Some(mr) = world.get::<MeshRenderer>(entity) {
-                ui.collapsing("MeshRenderer", |ui| {
-                    ui.label(format!("Mesh: #{}", mr.mesh.0));
-                });
-            }
-
-            // Material
-            if let Some(mat) = world.get::<MaterialRef>(entity) {
-                ui.collapsing("MaterialRef", |ui| {
-                    ui.label(format!("Material: #{}", mat.handle.0));
-                });
-            }
-
-            // Physics
-            if let Some(body) = world.get::<PhysicsBody>(entity) {
-                ui.collapsing("PhysicsBody", |ui| {
-                    ui.label(format!("Type: {:?}", body.body_type));
-                });
-            }
-
-            if let Some(col) = world.get::<Collider>(entity) {
-                ui.collapsing("Collider", |ui| {
-                    ui.label(format!("Shape: {:?}", col.shape));
-                    ui.label(format!("Restitution: {:.2}", col.restitution));
-                    ui.label(format!("Friction: {:.2}", col.friction));
-                });
-            }
+            // ── Reflection-driven component display ──
+            // All components implementing Reflect are shown automatically
+            // via their field names + values. No hardcoding per component.
+            reflect_component::<GlobalTransform>(ui, world, entity);
+            reflect_component::<MeshRenderer>(ui, world, entity);
+            reflect_component::<MaterialRef>(ui, world, entity);
+            reflect_component::<PhysicsBody>(ui, world, entity);
+            reflect_component::<Collider>(ui, world, entity);
+            reflect_component::<Velocity>(ui, world, entity);
         });
 }
 

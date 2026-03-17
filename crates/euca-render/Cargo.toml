@@ -10,6 +10,7 @@ metal-native = []  # Future: metal-rs, objc2 for native Metal rendering
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
+euca-reflect = { path = "../euca-reflect" }
 euca-scene = { path = "../euca-scene" }
 euca-core = { path = "../euca-core" }
 wgpu = "27"
