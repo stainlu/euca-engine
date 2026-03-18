@@ -14,18 +14,12 @@ use crate::state::{Owner, SharedWorld};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransformData {
-    pub position: [f32; 3],
-    #[serde(default = "default_rotation")]
-    pub rotation: [f32; 4],
-    #[serde(default = "default_scale")]
-    pub scale: [f32; 3],
-}
-
-fn default_rotation() -> [f32; 4] {
-    [0.0, 0.0, 0.0, 1.0]
-}
-fn default_scale() -> [f32; 3] {
-    [1.0, 1.0, 1.0]
+    #[serde(default)]
+    pub position: Option<[f32; 3]>,
+    #[serde(default)]
+    pub rotation: Option<[f32; 4]>,
+    #[serde(default)]
+    pub scale: Option<[f32; 3]>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -63,9 +57,9 @@ fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
     let transform = w.get::<GlobalTransform>(entity).map(|gt| {
         let t = &gt.0;
         TransformData {
-            position: [t.translation.x, t.translation.y, t.translation.z],
-            rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
-            scale: [t.scale.x, t.scale.y, t.scale.z],
+            position: Some([t.translation.x, t.translation.y, t.translation.z]),
+            rotation: Some([t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w]),
+            scale: Some([t.scale.x, t.scale.y, t.scale.z]),
         }
     });
 
@@ -325,8 +319,15 @@ pub async fn patch_entity(
         if let Some(t) = &patch.transform
             && let Some(lt) = w.get_mut::<LocalTransform>(entity)
         {
-            lt.0.translation = Vec3::new(t.position[0], t.position[1], t.position[2]);
-            lt.0.scale = Vec3::new(t.scale[0], t.scale[1], t.scale[2]);
+            if let Some(pos) = t.position {
+                lt.0.translation = Vec3::new(pos[0], pos[1], pos[2]);
+            }
+            if let Some(scl) = t.scale {
+                lt.0.scale = Vec3::new(scl[0], scl[1], scl[2]);
+            }
+            if let Some(rot) = t.rotation {
+                lt.0.rotation = euca_math::Quat::from_xyzw(rot[0], rot[1], rot[2], rot[3]);
+            }
         }
         if let Some(v) = &patch.velocity {
             apply_velocity(w, entity, v);
