@@ -42,6 +42,30 @@ enum Commands {
         command: CameraCommands,
     },
 
+    /// Game match: create, state, scoreboard
+    Game {
+        #[command(subcommand)]
+        command: GameCommands,
+    },
+
+    /// Trigger zones: create area-based events
+    Trigger {
+        #[command(subcommand)]
+        command: TriggerCommands,
+    },
+
+    /// Projectiles: spawn moving damaging entities
+    Projectile {
+        #[command(subcommand)]
+        command: ProjectileCommands,
+    },
+
+    /// AI behavior: set entity AI goals
+    Ai {
+        #[command(subcommand)]
+        command: AiCommands,
+    },
+
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -148,6 +172,12 @@ enum EntityCommands {
         /// Collider: "aabb:hx,hy,hz" or "sphere:radius" or "capsule:radius,half_height"
         #[arg(long)]
         collider: Option<String>,
+        /// Initial health (adds Health component)
+        #[arg(long)]
+        health: Option<f32>,
+        /// Team ID (adds Team component)
+        #[arg(long)]
+        team: Option<u8>,
         /// Full JSON body (overrides other flags)
         #[arg(long)]
         json: Option<String>,
@@ -260,6 +290,74 @@ enum AuthCommands {
     Status,
 }
 
+#[derive(Subcommand)]
+enum GameCommands {
+    /// Create a new match
+    Create {
+        /// Game mode (e.g. "deathmatch")
+        #[arg(long, default_value = "deathmatch")]
+        mode: String,
+        /// Score required to win
+        #[arg(long, default_value = "10")]
+        score_limit: i32,
+    },
+    /// Get current match state and scores
+    State,
+}
+
+#[derive(Subcommand)]
+enum TriggerCommands {
+    /// Create a trigger zone
+    Create {
+        /// Position as "x,y,z"
+        #[arg(long)]
+        position: String,
+        /// Zone half-extents as "x,y,z"
+        #[arg(long, default_value = "1,1,1")]
+        zone: String,
+        /// Action: "damage:N" or "heal:N"
+        #[arg(long, default_value = "damage:10")]
+        action: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectileCommands {
+    /// Spawn a projectile
+    Spawn {
+        /// Origin position as "x,y,z"
+        #[arg(long)]
+        from: String,
+        /// Direction as "x,y,z"
+        #[arg(long)]
+        direction: String,
+        /// Speed (units/sec)
+        #[arg(long, default_value = "20")]
+        speed: f32,
+        /// Damage on hit
+        #[arg(long, default_value = "25")]
+        damage: f32,
+    },
+}
+
+#[derive(Subcommand)]
+enum AiCommands {
+    /// Set AI behavior on an entity
+    Set {
+        /// Entity ID
+        id: u32,
+        /// Behavior: idle, patrol, chase, flee
+        #[arg(long)]
+        behavior: String,
+        /// Target entity ID (for chase/flee)
+        #[arg(long)]
+        target: Option<u32>,
+        /// Movement speed
+        #[arg(long, default_value = "3")]
+        speed: f32,
+    },
+}
+
 // ── Helpers ──
 
 fn parse_vec3(s: &str) -> Option<[f32; 3]> {
@@ -301,6 +399,7 @@ fn parse_collider(s: &str) -> Option<Value> {
 }
 
 /// Build a spawn/create JSON body from friendly flags.
+#[allow(clippy::too_many_arguments)]
 fn build_create_body(
     mesh: &Option<String>,
     color: &Option<String>,
@@ -308,6 +407,8 @@ fn build_create_body(
     scale: &Option<String>,
     physics: &Option<String>,
     collider: &Option<String>,
+    health: Option<f32>,
+    team: Option<u8>,
 ) -> Value {
     let mut body = serde_json::json!({});
     if let Some(m) = mesh {
@@ -333,6 +434,12 @@ fn build_create_body(
         && let Some(v) = parse_collider(c)
     {
         body["collider"] = v;
+    }
+    if let Some(h) = health {
+        body["health"] = serde_json::json!(h);
+    }
+    if let Some(t) = team {
+        body["team"] = serde_json::json!(t);
     }
     body
 }
@@ -423,13 +530,17 @@ fn main() {
                 scale,
                 physics,
                 collider,
+                health,
+                team,
                 json,
                 dry_run,
             } => {
                 let body = if let Some(ref raw) = json {
                     parse_json_flag(raw)
                 } else {
-                    build_create_body(&mesh, &color, &position, &scale, &physics, &collider)
+                    build_create_body(
+                        &mesh, &color, &position, &scale, &physics, &collider, health, team,
+                    )
                 };
                 if dry_run {
                     println!("{}", serde_json::to_string_pretty(&body).unwrap());
@@ -555,6 +666,80 @@ fn main() {
         },
 
         // ── Auth ──
+        // ── Gameplay ──
+        Commands::Game { command } => match command {
+            GameCommands::Create { mode, score_limit } => {
+                let resp = client
+                    .post(format!("{server}/game/create"))
+                    .json(&serde_json::json!({"mode": mode, "score_limit": score_limit}))
+                    .send();
+                handle_response(resp)
+            }
+            GameCommands::State => {
+                let resp = client.get(format!("{server}/game/state")).send();
+                handle_response(resp)
+            }
+        },
+        Commands::Trigger { command } => match command {
+            TriggerCommands::Create {
+                position,
+                zone,
+                action,
+            } => {
+                let pos = parse_vec3(&position).unwrap_or([0.0, 0.0, 0.0]);
+                let z = parse_vec3(&zone).unwrap_or([1.0, 1.0, 1.0]);
+                let resp = client
+                    .post(format!("{server}/trigger/create"))
+                    .json(&serde_json::json!({
+                        "position": pos,
+                        "zone": z,
+                        "action": action,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+        },
+        Commands::Projectile { command } => match command {
+            ProjectileCommands::Spawn {
+                from,
+                direction,
+                speed,
+                damage,
+            } => {
+                let f = parse_vec3(&from).unwrap_or([0.0, 0.0, 0.0]);
+                let d = parse_vec3(&direction).unwrap_or([1.0, 0.0, 0.0]);
+                let resp = client
+                    .post(format!("{server}/projectile/spawn"))
+                    .json(&serde_json::json!({
+                        "from": f,
+                        "direction": d,
+                        "speed": speed,
+                        "damage": damage,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+        },
+        Commands::Ai { command } => match command {
+            AiCommands::Set {
+                id,
+                behavior,
+                target,
+                speed,
+            } => {
+                let mut body = serde_json::json!({
+                    "entity_id": id,
+                    "behavior": behavior,
+                    "speed": speed,
+                });
+                if let Some(t) = target {
+                    body["target"] = serde_json::json!(t);
+                }
+                let resp = client.post(format!("{server}/ai/set")).json(&body).send();
+                handle_response(resp)
+            }
+        },
+
         Commands::Auth { command } => run_auth(command, &client, server),
 
         // ── Standalone ──
@@ -590,7 +775,9 @@ fn main() {
             physics,
             collider,
         } => {
-            let body = build_create_body(&None, &None, &position, &scale, &physics, &collider);
+            let body = build_create_body(
+                &None, &None, &position, &scale, &physics, &collider, None, None,
+            );
             let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)
         }

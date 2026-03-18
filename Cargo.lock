@@ -1061,6 +1061,7 @@ dependencies = [
  "env_logger",
  "euca-ecs",
  "euca-game",
+ "euca-gameplay",
  "euca-input",
  "euca-math",
  "euca-net",
