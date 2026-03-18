@@ -123,7 +123,95 @@ pub struct HealthBelowRule {
     pub actions: Vec<GameAction>,
 }
 
+/// Fire actions when any player's score reaches threshold.
+#[derive(Clone, Debug)]
+pub struct OnScoreRule {
+    pub score_threshold: i32,
+    pub triggered: bool,
+    pub actions: Vec<GameAction>,
+}
+
+/// Fire actions when game phase changes to a specific phase.
+#[derive(Clone, Debug)]
+pub struct OnPhaseRule {
+    pub phase: String, // "playing", "post_match", "lobby"
+    pub triggered: bool,
+    pub actions: Vec<GameAction>,
+}
+
 // ── Rule systems ──
+
+/// Process OnScoreRule: when any player reaches score threshold, execute actions.
+pub fn on_score_rule_system(world: &mut World) {
+    let scores: Vec<(u32, i32)> = world
+        .resource::<crate::game_state::GameState>()
+        .map(|s| s.scoreboard())
+        .unwrap_or_default();
+
+    let rules: Vec<(Entity, i32, bool, Vec<GameAction>)> = {
+        let query = Query::<(Entity, &OnScoreRule)>::new(world);
+        query
+            .iter()
+            .map(|(e, r)| (e, r.score_threshold, r.triggered, r.actions.clone()))
+            .collect()
+    };
+
+    let dummy = Entity::from_raw(0, 0);
+    for (rule_entity, threshold, triggered, actions) in &rules {
+        if *triggered {
+            continue;
+        }
+        if scores.iter().any(|(_, score)| *score >= *threshold) {
+            for action in actions {
+                execute_action(world, action, dummy, None);
+            }
+            if let Some(rule) = world.get_mut::<OnScoreRule>(*rule_entity) {
+                rule.triggered = true;
+            }
+        }
+    }
+}
+
+/// Process OnPhaseRule: when game phase matches, execute actions.
+pub fn on_phase_rule_system(world: &mut World) {
+    let current_phase: Option<String> = world.resource::<crate::game_state::GameState>().map(|s| {
+        match &s.phase {
+            crate::game_state::GamePhase::Lobby => "lobby",
+            crate::game_state::GamePhase::Countdown { .. } => "countdown",
+            crate::game_state::GamePhase::Playing => "playing",
+            crate::game_state::GamePhase::PostMatch { .. } => "post_match",
+        }
+        .to_string()
+    });
+
+    let phase = match current_phase {
+        Some(p) => p,
+        None => return,
+    };
+
+    let rules: Vec<(Entity, String, bool, Vec<GameAction>)> = {
+        let query = Query::<(Entity, &OnPhaseRule)>::new(world);
+        query
+            .iter()
+            .map(|(e, r)| (e, r.phase.clone(), r.triggered, r.actions.clone()))
+            .collect()
+    };
+
+    let dummy = Entity::from_raw(0, 0);
+    for (rule_entity, target_phase, triggered, actions) in &rules {
+        if *triggered {
+            continue;
+        }
+        if phase == *target_phase {
+            for action in actions {
+                execute_action(world, action, dummy, None);
+            }
+            if let Some(rule) = world.get_mut::<OnPhaseRule>(*rule_entity) {
+                rule.triggered = true;
+            }
+        }
+    }
+}
 
 /// Process OnDeathRule: when DeathEvent matches filter, execute actions.
 pub fn on_death_rule_system(world: &mut World) {
@@ -472,8 +560,12 @@ pub fn parse_when(s: &str) -> Option<RuleCondition> {
     } else if let Some(rest) = s.strip_prefix("health-below:") {
         let threshold: f32 = rest.parse().ok()?;
         Some(RuleCondition::HealthBelow(threshold))
+    } else if let Some(rest) = s.strip_prefix("score:") {
+        let threshold: i32 = rest.parse().ok()?;
+        Some(RuleCondition::Score(threshold))
     } else {
-        None
+        s.strip_prefix("phase:")
+            .map(|rest| RuleCondition::Phase(rest.to_string()))
     }
 }
 
@@ -498,6 +590,8 @@ pub enum RuleCondition {
     Death,
     Timer(f32),
     HealthBelow(f32),
+    Score(i32),
+    Phase(String),
 }
 
 #[cfg(test)]

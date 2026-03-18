@@ -1537,6 +1537,22 @@ pub async fn rule_create(
             });
             entity.index()
         }
+        euca_gameplay::RuleCondition::Score(threshold) => {
+            let entity = w.spawn(euca_gameplay::OnScoreRule {
+                score_threshold: threshold,
+                triggered: false,
+                actions,
+            });
+            entity.index()
+        }
+        euca_gameplay::RuleCondition::Phase(phase) => {
+            let entity = w.spawn(euca_gameplay::OnPhaseRule {
+                phase,
+                triggered: false,
+                actions,
+            });
+            entity.index()
+        }
     });
 
     Json(serde_json::json!({

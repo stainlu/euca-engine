@@ -311,6 +311,8 @@ impl EditorApp {
             euca_gameplay::on_death_rule_system(world);
             euca_gameplay::timer_rule_system(world, dt);
             euca_gameplay::health_below_rule_system(world);
+            euca_gameplay::on_score_rule_system(world);
+            euca_gameplay::on_phase_rule_system(world);
 
             let respawn_delay = world
                 .resource::<euca_gameplay::GameState>()
