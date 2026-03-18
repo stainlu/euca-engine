@@ -45,6 +45,9 @@ impl AgentServer {
             .route("/spawn", post(routes::spawn))
             .route("/despawn", post(routes::despawn))
             .route("/reset", post(routes::reset))
+            .route("/play", post(routes::play))
+            .route("/pause", post(routes::pause))
+            .route("/screenshot", post(routes::screenshot))
             .route("/schema", get(routes::schema))
             .with_state(self.shared.clone())
     }

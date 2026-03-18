@@ -1,4 +1,4 @@
-use euca_agent::AgentServer;
+use euca_agent::{AgentServer, EngineControl, ScreenshotChannel};
 use euca_core::Time;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
@@ -68,6 +68,8 @@ impl EditorApp {
             color: [1.0, 1.0, 1.0],
             intensity: 0.2,
         });
+        world.insert_resource(EngineControl::new());
+        world.insert_resource(ScreenshotChannel::new());
 
         let shared = SharedWorld::new(world, Schedule::new());
 
@@ -269,6 +271,14 @@ impl EditorApp {
         world.resource_mut::<Time>().unwrap().update();
         let _elapsed = world.resource::<Time>().unwrap().elapsed as f32;
 
+        // Sync play state from EngineControl (may have been toggled by HTTP handler)
+        if let Some(ctrl) = world.resource::<EngineControl>() {
+            self.editor_state.playing = ctrl.is_playing();
+            if ctrl.take_step_request() {
+                self.editor_state.step_once = true;
+            }
+        }
+
         // Tick simulation when playing
         if self.editor_state.should_tick() {
             physics_step_system(world);
@@ -396,6 +406,14 @@ impl EditorApp {
             );
         }
 
+        // === Screenshot capture (after 3D render, before egui) ===
+        let screenshot_tx = world
+            .resource::<ScreenshotChannel>()
+            .and_then(|ch| ch.take());
+        if let Some(tx) = screenshot_tx {
+            capture_screenshot(gpu, &output.texture, &mut encoder, tx);
+        }
+
         // === 2. Render egui on top ===
         let window = self.window.as_ref().unwrap();
         let egui_winit = self.egui_winit.as_mut().unwrap();
@@ -412,6 +430,11 @@ impl EditorApp {
             spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
             inspector_panel(ctx, &mut self.editor_state, world);
         });
+
+        // Sync play state back to EngineControl (toolbar may have toggled it)
+        if let Some(ctrl) = world.resource::<EngineControl>() {
+            ctrl.set_playing(self.editor_state.playing);
+        }
 
         // Handle save/load
         if let Some(action) = toolbar_action {
@@ -938,6 +961,125 @@ impl EditorApp {
             }
         }
     }
+}
+
+/// Capture the current surface texture as a PNG and send it via the oneshot channel.
+fn capture_screenshot(
+    gpu: &GpuContext,
+    texture: &wgpu::Texture,
+    encoder: &mut wgpu::CommandEncoder,
+    tx: tokio::sync::oneshot::Sender<Vec<u8>>,
+) {
+    let width = gpu.surface_config.width;
+    let height = gpu.surface_config.height;
+    // 4 bytes per pixel (RGBA/BGRA), aligned to 256 bytes per row (wgpu requirement)
+    let bytes_per_pixel = 4u32;
+    let unpadded_bytes_per_row = width * bytes_per_pixel;
+    let padded_bytes_per_row = (unpadded_bytes_per_row + 255) & !255;
+
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("screenshot buffer"),
+        size: (padded_bytes_per_row * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    // We need to submit the encoder commands to execute the copy, then map.
+    // But the encoder is still in use by the caller. Instead, we'll do an
+    // async buffer map after the main submit. Clone the Arc<Device> reference.
+    let device = gpu.device.clone();
+    let format = gpu.surface_config.format;
+
+    // Spawn the buffer mapping on a background thread (can't block the render loop)
+    std::thread::spawn(move || {
+        let slice = buffer.slice(..);
+        let (map_tx, map_rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = map_tx.send(result);
+        });
+        // Poll the device until the buffer copy completes
+        loop {
+            match device.poll(wgpu::PollType::Poll) {
+                Ok(status) if status.is_queue_empty() => break,
+                Err(_) => break,
+                _ => std::thread::yield_now(),
+            }
+        }
+
+        if map_rx.recv().ok().and_then(|r| r.ok()).is_none() {
+            log::error!("Screenshot buffer map failed");
+            return;
+        }
+
+        let data = slice.get_mapped_range();
+
+        // Remove row padding and convert BGRA→RGBA if needed
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        let is_bgra = matches!(
+            format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+
+        for y in 0..height {
+            let row_start = (y * padded_bytes_per_row) as usize;
+            let row_end = row_start + (width * bytes_per_pixel) as usize;
+            let row = &data[row_start..row_end];
+            if is_bgra {
+                for pixel in row.chunks_exact(4) {
+                    rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+                }
+            } else {
+                rgba.extend_from_slice(row);
+            }
+        }
+        drop(data);
+        buffer.unmap();
+
+        // Encode to PNG
+        let mut png_buf = Vec::new();
+        {
+            let mut encoder =
+                png::Encoder::new(std::io::Cursor::new(&mut png_buf), width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            match encoder.write_header() {
+                Ok(mut writer) => {
+                    if let Err(e) = writer.write_image_data(&rgba) {
+                        log::error!("PNG write failed: {e}");
+                        return;
+                    }
+                }
+                Err(e) => {
+                    log::error!("PNG header failed: {e}");
+                    return;
+                }
+            }
+        }
+
+        let _ = tx.send(png_buf);
+    });
 }
 
 fn main() {

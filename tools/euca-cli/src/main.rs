@@ -92,6 +92,19 @@ enum Commands {
     /// Reset the world (despawn all entities)
     Reset,
 
+    /// Start simulation
+    Play,
+
+    /// Pause simulation
+    Pause,
+
+    /// Capture a screenshot of the 3D viewport
+    Screenshot {
+        /// Output file path (default: temp file)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
     /// Show available components and actions
     Schema,
 }
@@ -264,6 +277,55 @@ fn main() {
                 .body("{}")
                 .send();
             handle_response(resp)
+        }
+        Commands::Play => {
+            let resp = client
+                .post(format!("{}/play", cli.server))
+                .header("Content-Type", "application/json")
+                .body("{}")
+                .send();
+            handle_response(resp)
+        }
+        Commands::Pause => {
+            let resp = client
+                .post(format!("{}/pause", cli.server))
+                .header("Content-Type", "application/json")
+                .body("{}")
+                .send();
+            handle_response(resp)
+        }
+        Commands::Screenshot { output } => {
+            let resp = client
+                .post(format!("{}/screenshot", cli.server))
+                .header("Content-Type", "application/json")
+                .body("{}")
+                .send();
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    let text = r.text().unwrap_or_default();
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        let server_path = json["path"].as_str().unwrap_or("");
+                        // If user specified output path, copy the file
+                        if let Some(ref out) = output {
+                            if let Err(e) = std::fs::copy(server_path, out) {
+                                eprintln!("Failed to copy screenshot: {e}");
+                                std::process::exit(1);
+                            }
+                            println!("{out}");
+                        } else {
+                            println!("{server_path}");
+                        }
+                    }
+                    Ok(())
+                }
+                Ok(r) => {
+                    let status = r.status();
+                    let text = r.text().unwrap_or_default();
+                    eprintln!("{text}");
+                    Err(format!("HTTP {status}"))
+                }
+                Err(e) => Err(e.to_string()),
+            }
         }
         Commands::Schema => {
             let resp = client.get(format!("{}/schema", cli.server)).send();

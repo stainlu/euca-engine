@@ -457,6 +457,80 @@ pub async fn reset(State(world): State<SharedWorld>) -> Json<MessageResponse> {
     Json(resp)
 }
 
+/// POST /play — start simulation
+pub async fn play(State(world): State<SharedWorld>) -> Json<MessageResponse> {
+    world.with_world(|w| {
+        if let Some(ctrl) = w.resource::<crate::control::EngineControl>() {
+            ctrl.set_playing(true);
+        }
+    });
+    Json(MessageResponse {
+        ok: true,
+        message: Some("Simulation playing".into()),
+    })
+}
+
+/// POST /pause — pause simulation
+pub async fn pause(State(world): State<SharedWorld>) -> Json<MessageResponse> {
+    world.with_world(|w| {
+        if let Some(ctrl) = w.resource::<crate::control::EngineControl>() {
+            ctrl.set_playing(false);
+        }
+    });
+    Json(MessageResponse {
+        ok: true,
+        message: Some("Simulation paused".into()),
+    })
+}
+
+/// POST /screenshot — capture 3D viewport as PNG
+pub async fn screenshot(
+    State(world): State<SharedWorld>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let rx = world.with_world(|w| {
+        w.resource::<crate::control::ScreenshotChannel>()
+            .map(|ch| ch.request())
+    });
+
+    let rx = match rx {
+        Some(rx) => rx,
+        None => {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+    };
+
+    // Wait for the render loop to capture the frame (timeout 2s)
+    match tokio::time::timeout(std::time::Duration::from_secs(2), rx).await {
+        Ok(Ok(png_bytes)) => {
+            // Write to temp file
+            let path = std::env::temp_dir().join(format!(
+                "euca_screenshot_{}.png",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            ));
+            if let Err(e) = std::fs::write(&path, &png_bytes) {
+                log::error!("Failed to write screenshot: {e}");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            Ok(Json(serde_json::json!({
+                "ok": true,
+                "path": path.to_string_lossy(),
+                "size_bytes": png_bytes.len(),
+            })))
+        }
+        Ok(Err(_)) => {
+            // Sender dropped (render loop didn't capture)
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+        Err(_) => {
+            // Timeout
+            Err(StatusCode::GATEWAY_TIMEOUT)
+        }
+    }
+}
+
 /// GET /schema — dynamic schema: all component types and actions
 pub async fn schema() -> Json<serde_json::Value> {
     Json(serde_json::json!({
