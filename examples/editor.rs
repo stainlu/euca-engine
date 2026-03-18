@@ -1,4 +1,4 @@
-use euca_agent::{AgentServer, EngineControl, ScreenshotChannel, auth::AuthStore};
+use euca_agent::{AgentServer, CameraOverride, EngineControl, ScreenshotChannel, auth::AuthStore};
 use euca_core::Time;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
@@ -71,6 +71,7 @@ impl EditorApp {
         world.insert_resource(EngineControl::new());
         world.insert_resource(ScreenshotChannel::new());
         world.insert_resource(AuthStore::new());
+        world.insert_resource(CameraOverride::new());
 
         let shared = SharedWorld::new(world, Schedule::new());
 
@@ -286,28 +287,36 @@ impl EditorApp {
         }
         euca_scene::transform_propagation_system(world);
 
-        // User-controlled camera (orbit/pan/zoom)
-        if self.right_mouse_down {
-            self.cam_yaw += self.mouse_delta[0] * 0.005;
-            self.cam_pitch = (self.cam_pitch - self.mouse_delta[1] * 0.005).clamp(0.05, 1.5);
-        }
-        if self.middle_mouse_down {
-            let right = Vec3::new(self.cam_yaw.cos(), 0.0, -self.cam_yaw.sin());
-            let up = Vec3::Y;
-            self.cam_target =
-                self.cam_target + right * (-self.mouse_delta[0] * 0.01 * self.cam_distance * 0.1);
-            self.cam_target =
-                self.cam_target + up * (self.mouse_delta[1] * 0.01 * self.cam_distance * 0.1);
+        // Check if camera was set by agent (skip mouse orbit if so)
+        let camera_overridden = world
+            .resource::<CameraOverride>()
+            .map(|co| co.take())
+            .unwrap_or(false);
+
+        if !camera_overridden {
+            // User-controlled camera (orbit/pan/zoom)
+            if self.right_mouse_down {
+                self.cam_yaw += self.mouse_delta[0] * 0.005;
+                self.cam_pitch = (self.cam_pitch - self.mouse_delta[1] * 0.005).clamp(0.05, 1.5);
+            }
+            if self.middle_mouse_down {
+                let right = Vec3::new(self.cam_yaw.cos(), 0.0, -self.cam_yaw.sin());
+                let up = Vec3::Y;
+                self.cam_target = self.cam_target
+                    + right * (-self.mouse_delta[0] * 0.01 * self.cam_distance * 0.1);
+                self.cam_target =
+                    self.cam_target + up * (self.mouse_delta[1] * 0.01 * self.cam_distance * 0.1);
+            }
+
+            let cam = world.resource_mut::<Camera>().unwrap();
+            cam.eye = Vec3::new(
+                self.cam_target.x + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
+                self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
+                self.cam_target.z + self.cam_yaw.cos() * self.cam_pitch.cos() * self.cam_distance,
+            );
+            cam.target = self.cam_target;
         }
         self.mouse_delta = [0.0, 0.0];
-
-        let cam = world.resource_mut::<Camera>().unwrap();
-        cam.eye = Vec3::new(
-            self.cam_target.x + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
-            self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
-            self.cam_target.z + self.cam_yaw.cos() * self.cam_pitch.cos() * self.cam_distance,
-        );
-        cam.target = self.cam_target;
 
         // Get surface texture
         let gpu = self.gpu.as_ref().unwrap();

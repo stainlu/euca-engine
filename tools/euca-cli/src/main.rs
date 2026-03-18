@@ -226,7 +226,7 @@ enum SceneCommands {
 
 #[derive(Subcommand)]
 enum CameraCommands {
-    /// Get current camera position
+    /// Get current camera state
     Get,
     /// Set camera position and look-at target
     Set {
@@ -236,6 +236,19 @@ enum CameraCommands {
         /// Look-at target as "x,y,z"
         #[arg(long)]
         target: Option<String>,
+        /// Field of view in degrees (perspective mode)
+        #[arg(long)]
+        fov: Option<f32>,
+    },
+    /// Switch to a preset view: top, front, back, right, left, perspective
+    View {
+        /// View name
+        name: String,
+    },
+    /// Focus camera on a specific entity
+    Focus {
+        /// Entity ID to focus on
+        id: u32,
     },
 }
 
@@ -507,7 +520,7 @@ fn main() {
                 let resp = client.get(format!("{server}/camera")).send();
                 handle_response(resp)
             }
-            CameraCommands::Set { eye, target } => {
+            CameraCommands::Set { eye, target, fov } => {
                 let mut body = serde_json::json!({});
                 if let Some(e) = eye
                     && let Some(v) = parse_vec3(&e)
@@ -519,7 +532,24 @@ fn main() {
                 {
                     body["target"] = serde_json::json!(v);
                 }
+                if let Some(f) = fov {
+                    body["fov"] = serde_json::json!(f);
+                }
                 let resp = client.post(format!("{server}/camera")).json(&body).send();
+                handle_response(resp)
+            }
+            CameraCommands::View { name } => {
+                let resp = client
+                    .post(format!("{server}/camera/view"))
+                    .json(&serde_json::json!({"view": name}))
+                    .send();
+                handle_response(resp)
+            }
+            CameraCommands::Focus { id } => {
+                let resp = client
+                    .post(format!("{server}/camera/focus"))
+                    .json(&serde_json::json!({"entity_id": id}))
+                    .send();
                 handle_response(resp)
             }
         },

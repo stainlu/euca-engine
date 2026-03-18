@@ -50,6 +50,8 @@ impl AgentServer {
             .route("/screenshot", post(routes::screenshot))
             .route("/camera", get(routes::camera_get))
             .route("/camera", post(routes::camera_set))
+            .route("/camera/view", post(routes::camera_view))
+            .route("/camera/focus", post(routes::camera_focus))
             .route("/scene/save", post(routes::scene_save))
             .route("/scene/load", post(routes::scene_load))
             .route("/auth/login", post(routes::auth_login))

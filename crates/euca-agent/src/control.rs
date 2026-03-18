@@ -80,3 +80,26 @@ impl Default for ScreenshotChannel {
         Self::new()
     }
 }
+
+/// Flag indicating the camera was set programmatically this frame.
+/// When set, the editor skips mouse-based camera orbit/pan to avoid
+/// overwriting the agent's camera position.
+#[derive(Clone, Default)]
+pub struct CameraOverride {
+    active: Arc<AtomicBool>,
+}
+
+impl CameraOverride {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(&self) {
+        self.active.store(true, Ordering::Relaxed);
+    }
+
+    /// Take the flag (returns true once, then false until set again).
+    pub fn take(&self) -> bool {
+        self.active.swap(false, Ordering::Relaxed)
+    }
+}

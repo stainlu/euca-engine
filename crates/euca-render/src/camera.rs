@@ -9,12 +9,16 @@ pub struct Camera {
     pub target: Vec3,
     /// Up direction.
     pub up: Vec3,
-    /// Vertical field of view in radians.
+    /// Vertical field of view in radians (perspective mode).
     pub fov_y: f32,
     /// Near clip plane.
     pub near: f32,
     /// Far clip plane.
     pub far: f32,
+    /// Use orthographic projection instead of perspective.
+    pub orthographic: bool,
+    /// Half-extent of the orthographic view in world units.
+    pub ortho_size: f32,
 }
 
 impl Camera {
@@ -26,6 +30,8 @@ impl Camera {
             fov_y: std::f32::consts::FRAC_PI_4, // 45 degrees
             near: 0.1,
             far: 1000.0,
+            orthographic: false,
+            ortho_size: 10.0,
         }
     }
 
@@ -36,7 +42,13 @@ impl Camera {
 
     /// Build the projection matrix for the given aspect ratio.
     pub fn projection_matrix(&self, aspect_ratio: f32) -> Mat4 {
-        Mat4::perspective_lh(self.fov_y, aspect_ratio, self.near, self.far)
+        if self.orthographic {
+            let half_w = self.ortho_size * aspect_ratio;
+            let half_h = self.ortho_size;
+            Mat4::orthographic_lh(-half_w, half_w, -half_h, half_h, self.near, self.far)
+        } else {
+            Mat4::perspective_lh(self.fov_y, aspect_ratio, self.near, self.far)
+        }
     }
 
     /// Combined view-projection matrix.
@@ -160,6 +172,63 @@ impl Frustum {
 impl Default for Camera {
     fn default() -> Self {
         Self::new(Vec3::new(0.0, 2.0, -5.0), Vec3::ZERO)
+    }
+}
+
+/// Standard view presets for agent use.
+impl Camera {
+    /// Apply a named view preset. Returns true if the name was recognized.
+    pub fn apply_preset(&mut self, name: &str) -> bool {
+        match name {
+            "top" => {
+                self.eye = Vec3::new(0.0, 20.0, 0.001); // slight offset to avoid degenerate up
+                self.target = Vec3::ZERO;
+                self.up = Vec3::new(0.0, 0.0, -1.0); // Z-forward when looking down
+                self.orthographic = true;
+                self.ortho_size = 12.0;
+                true
+            }
+            "front" => {
+                self.eye = Vec3::new(0.0, 2.0, 20.0);
+                self.target = Vec3::new(0.0, 2.0, 0.0);
+                self.up = Vec3::Y;
+                self.orthographic = true;
+                self.ortho_size = 8.0;
+                true
+            }
+            "back" => {
+                self.eye = Vec3::new(0.0, 2.0, -20.0);
+                self.target = Vec3::new(0.0, 2.0, 0.0);
+                self.up = Vec3::Y;
+                self.orthographic = true;
+                self.ortho_size = 8.0;
+                true
+            }
+            "right" => {
+                self.eye = Vec3::new(20.0, 2.0, 0.0);
+                self.target = Vec3::new(0.0, 2.0, 0.0);
+                self.up = Vec3::Y;
+                self.orthographic = true;
+                self.ortho_size = 8.0;
+                true
+            }
+            "left" => {
+                self.eye = Vec3::new(-20.0, 2.0, 0.0);
+                self.target = Vec3::new(0.0, 2.0, 0.0);
+                self.up = Vec3::Y;
+                self.orthographic = true;
+                self.ortho_size = 8.0;
+                true
+            }
+            "perspective" => {
+                self.eye = Vec3::new(8.0, 6.0, 8.0);
+                self.target = Vec3::new(0.0, 1.0, 0.0);
+                self.up = Vec3::Y;
+                self.orthographic = false;
+                true
+            }
+            _ => false,
+        }
     }
 }
 
