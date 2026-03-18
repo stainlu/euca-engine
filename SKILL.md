@@ -89,9 +89,23 @@ euca screenshot --output scene.png  # Save to specific path
 ### Camera Control
 
 ```bash
-euca camera get                              # Current camera position + target
-euca camera set --eye 10,5,10 --target 0,0,0 # Set viewpoint
-euca camera set --eye 0,20,0 --target 0,0,0  # Top-down view
+# View presets (orthographic — no perspective distortion)
+euca camera view top          # Bird's-eye view
+euca camera view front        # Front orthographic
+euca camera view right        # Right side orthographic
+euca camera view left         # Left side
+euca camera view back         # Back
+euca camera view perspective  # Reset to default 3D view
+
+# Focus on entity (centers + frames)
+euca camera focus <entity_id>
+
+# Manual positioning
+euca camera set --eye 10,5,10 --target 0,0,0
+euca camera set --fov 60
+
+# Query current state
+euca camera get
 ```
 
 ### Scene Persistence
