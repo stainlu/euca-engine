@@ -249,8 +249,7 @@ impl EditorApp {
         // === 1. Render 3D scene ===
         {
             let mut draw_commands: Vec<DrawCommand> = {
-                let query =
-                    Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
+                let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
                 query
                     .iter()
                     .map(|(gt, mr, mat)| DrawCommand {
@@ -341,10 +340,7 @@ impl EditorApp {
         let mut spawn_request = None;
         let mut toolbar_action = None;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            let dt = world
-                .resource::<Time>()
-                .map(|t| t.delta)
-                .unwrap_or(0.0);
+            let dt = world.resource::<Time>().map(|t| t.delta).unwrap_or(0.0);
             toolbar_action = toolbar_panel(ctx, &mut self.editor_state, world, dt);
             spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
             inspector_panel(ctx, &mut self.editor_state, world);
@@ -503,8 +499,7 @@ impl EditorApp {
             let w = read_pool.world();
 
             let draw_cmds: Vec<DrawCommand> = {
-                let query =
-                    Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(w);
+                let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(w);
                 query
                     .iter()
                     .map(|(gt, mr, mat)| DrawCommand {
@@ -957,7 +952,15 @@ fn capture_screenshot(
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("screenshot render"),
         });
-    renderer.render_to_view(gpu, camera, light, ambient, draw_commands, &offscreen_view, &mut encoder);
+    renderer.render_to_view(
+        gpu,
+        camera,
+        light,
+        ambient,
+        draw_commands,
+        &offscreen_view,
+        &mut encoder,
+    );
 
     // Copy from offscreen texture to readback buffer
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1039,8 +1042,7 @@ fn capture_screenshot(
 
         let mut png_buf = Vec::new();
         {
-            let mut png_enc =
-                png::Encoder::new(std::io::Cursor::new(&mut png_buf), width, height);
+            let mut png_enc = png::Encoder::new(std::io::Cursor::new(&mut png_buf), width, height);
             png_enc.set_color(png::ColorType::Rgba);
             png_enc.set_depth(png::BitDepth::Eight);
             match png_enc.write_header() {

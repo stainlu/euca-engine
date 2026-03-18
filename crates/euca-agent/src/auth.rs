@@ -86,7 +86,10 @@ impl AuthStore {
         let signature = Signature::from_bytes(&sig_array);
 
         // Reconstruct the signed message: "{agent_id}\n{domain}\n{timestamp}"
-        let message = format!("{}\n{}\n{}", payload.agent_id, payload.domain, payload.timestamp);
+        let message = format!(
+            "{}\n{}\n{}",
+            payload.agent_id, payload.domain, payload.timestamp
+        );
 
         // Verify signature
         use ed25519_dalek::Verifier;

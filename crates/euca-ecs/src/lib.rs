@@ -11,11 +11,11 @@ mod event;
 mod query;
 mod resource;
 mod schedule;
+pub mod shared;
 mod snapshot;
 #[allow(unsafe_op_in_unsafe_fn)]
 pub mod sparse;
 mod system;
-pub mod shared;
 mod system_param;
 mod world;
 
@@ -27,8 +27,8 @@ pub use event::Events;
 pub use query::{ComponentAccess, Query, QueryFilter, With, Without, WorldQuery};
 pub use resource::Resources;
 pub use schedule::Schedule;
+pub use shared::SharedWorld;
 pub use snapshot::{EntitySnapshot, WorldSnapshot};
 pub use system::{AccessSystem, IntoSystem, LabeledSystem, System};
 pub use system_param::{Res, ResMut, SystemAccess};
-pub use shared::SharedWorld;
 pub use world::World;

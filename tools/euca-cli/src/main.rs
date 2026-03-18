@@ -245,13 +245,17 @@ fn parse_collider(s: &str) -> Option<Value> {
             .filter_map(|p| p.trim().parse().ok())
             .collect();
         if parts.len() == 2 {
-            Some(serde_json::json!({"shape": "Capsule", "radius": parts[0], "half_height": parts[1]}))
+            Some(
+                serde_json::json!({"shape": "Capsule", "radius": parts[0], "half_height": parts[1]}),
+            )
         } else {
             eprintln!("Warning: capsule format is 'capsule:radius,half_height'");
             None
         }
     } else {
-        eprintln!("Warning: collider format is 'aabb:hx,hy,hz' or 'sphere:radius' or 'capsule:radius,half_height'");
+        eprintln!(
+            "Warning: collider format is 'aabb:hx,hy,hz' or 'sphere:radius' or 'capsule:radius,half_height'"
+        );
         None
     }
 }
@@ -383,10 +387,7 @@ fn main() {
                     println!("(dry-run: not created)");
                     Ok(())
                 } else {
-                    let resp = client
-                        .post(format!("{server}/spawn"))
-                        .json(&body)
-                        .send();
+                    let resp = client.post(format!("{server}/spawn")).json(&body).send();
                     handle_response(resp)
                 }
             }
@@ -421,12 +422,8 @@ fn main() {
                 if all {
                     post_empty(&client, server, "/reset")
                 } else if let Some(id) = id {
-                    let body =
-                        serde_json::json!({"entity_id": id, "entity_generation": 0});
-                    let resp = client
-                        .post(format!("{server}/despawn"))
-                        .json(&body)
-                        .send();
+                    let body = serde_json::json!({"entity_id": id, "entity_generation": 0});
+                    let resp = client.post(format!("{server}/despawn")).json(&body).send();
                     handle_response(resp)
                 } else {
                     eprintln!("Specify an entity ID or use --all");
@@ -470,7 +467,9 @@ fn main() {
             handle_response(resp)
         }
         Commands::Screenshot { output } => run_screenshot(&client, server, output),
-        Commands::Schema { component: _component } => {
+        Commands::Schema {
+            component: _component,
+        } => {
             let resp = client.get(format!("{server}/schema")).send();
             handle_response(resp)
         }
@@ -496,10 +495,7 @@ fn main() {
             collider,
         } => {
             let body = build_create_body(&None, &position, &scale, &physics, &collider);
-            let resp = client
-                .post(format!("{server}/spawn"))
-                .json(&body)
-                .send();
+            let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)
         }
         Commands::Modify {
@@ -526,12 +522,8 @@ fn main() {
             if all {
                 post_empty(&client, server, "/reset")
             } else {
-                let body =
-                    serde_json::json!({"entity_id": id, "entity_generation": 0});
-                let resp = client
-                    .post(format!("{server}/despawn"))
-                    .json(&body)
-                    .send();
+                let body = serde_json::json!({"entity_id": id, "entity_generation": 0});
+                let resp = client.post(format!("{server}/despawn")).json(&body).send();
                 handle_response(resp)
             }
         }
@@ -556,11 +548,7 @@ fn main() {
 
 // ── Shared request helpers ──
 
-fn post_empty(
-    client: &reqwest::blocking::Client,
-    server: &str,
-    path: &str,
-) -> Result<(), String> {
+fn post_empty(client: &reqwest::blocking::Client, server: &str, path: &str) -> Result<(), String> {
     let resp = client
         .post(format!("{server}{path}"))
         .header("Content-Type", "application/json")
@@ -641,9 +629,7 @@ fn run_auth(
                 .output();
 
             let nit_output = match nit_output {
-                Ok(o) if o.status.success() => {
-                    String::from_utf8_lossy(&o.stdout).to_string()
-                }
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
                 Ok(o) => {
                     let err = String::from_utf8_lossy(&o.stderr);
                     eprintln!("nit sign --login failed: {err}");
