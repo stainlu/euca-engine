@@ -36,6 +36,12 @@ enum Commands {
         command: SceneCommands,
     },
 
+    /// Camera control: get, set
+    Camera {
+        #[command(subcommand)]
+        command: CameraCommands,
+    },
+
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -215,6 +221,21 @@ enum SceneCommands {
     Load {
         /// Input file path
         path: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CameraCommands {
+    /// Get current camera position
+    Get,
+    /// Set camera position and look-at target
+    Set {
+        /// Camera position as "x,y,z"
+        #[arg(long)]
+        eye: Option<String>,
+        /// Look-at target as "x,y,z"
+        #[arg(long)]
+        target: Option<String>,
     },
 }
 
@@ -464,13 +485,42 @@ fn main() {
 
         // ── Scene ──
         Commands::Scene { command } => match command {
-            SceneCommands::Save { path: _path } => {
-                eprintln!("Scene save not yet implemented via CLI");
-                Ok(())
+            SceneCommands::Save { path } => {
+                let resp = client
+                    .post(format!("{server}/scene/save"))
+                    .json(&serde_json::json!({"path": path}))
+                    .send();
+                handle_response(resp)
             }
-            SceneCommands::Load { path: _path } => {
-                eprintln!("Scene load not yet implemented via CLI");
-                Ok(())
+            SceneCommands::Load { path } => {
+                let resp = client
+                    .post(format!("{server}/scene/load"))
+                    .json(&serde_json::json!({"path": path}))
+                    .send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Camera ──
+        Commands::Camera { command } => match command {
+            CameraCommands::Get => {
+                let resp = client.get(format!("{server}/camera")).send();
+                handle_response(resp)
+            }
+            CameraCommands::Set { eye, target } => {
+                let mut body = serde_json::json!({});
+                if let Some(e) = eye
+                    && let Some(v) = parse_vec3(&e)
+                {
+                    body["eye"] = serde_json::json!(v);
+                }
+                if let Some(t) = target
+                    && let Some(v) = parse_vec3(&t)
+                {
+                    body["target"] = serde_json::json!(v);
+                }
+                let resp = client.post(format!("{server}/camera")).json(&body).send();
+                handle_response(resp)
             }
         },
 

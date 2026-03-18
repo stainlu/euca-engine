@@ -86,6 +86,21 @@ euca screenshot                     # Save to temp file, print path
 euca screenshot --output scene.png  # Save to specific path
 ```
 
+### Camera Control
+
+```bash
+euca camera get                              # Current camera position + target
+euca camera set --eye 10,5,10 --target 0,0,0 # Set viewpoint
+euca camera set --eye 0,20,0 --target 0,0,0  # Top-down view
+```
+
+### Scene Persistence
+
+```bash
+euca scene save my_scene.json    # Save current world state
+euca scene load my_scene.json    # Load (replaces current scene)
+```
+
 ### Status & Schema
 
 ```bash
@@ -99,6 +114,16 @@ euca schema          # All component types and their fields
 euca auth login      # Login with nit identity
 euca auth status     # Check authentication
 ```
+
+## Available Colors
+
+Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yellow`, `cyan`, `magenta`, `orange`
+
+RGB: any `r,g,b` value (0.0-1.0) maps to nearest preset.
+
+## Available Meshes
+
+`cube`, `sphere`, `plane`
 
 ## Components
 
@@ -122,6 +147,8 @@ euca auth status     # Check authentication
 | `--json` | JSON string | create, update (overrides other flags) |
 | `--dry-run` | (flag) | create, update |
 | `--output` | file path | screenshot |
+| `--eye` | `x,y,z` | camera set |
+| `--target` | `x,y,z` | camera set |
 | `--server` | URL | global (default: http://localhost:3917) |
 
 ## Workflows

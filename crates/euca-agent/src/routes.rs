@@ -562,6 +562,174 @@ pub async fn reset(State(world): State<SharedWorld>) -> Json<MessageResponse> {
     Json(resp)
 }
 
+/// GET /camera — get current camera position
+pub async fn camera_get(State(world): State<SharedWorld>) -> Json<serde_json::Value> {
+    let data = world.with_world(|w| {
+        w.resource::<euca_render::Camera>().map(|cam| {
+            serde_json::json!({
+                "eye": [cam.eye.x, cam.eye.y, cam.eye.z],
+                "target": [cam.target.x, cam.target.y, cam.target.z],
+                "fov_y": cam.fov_y,
+            })
+        })
+    });
+    Json(data.unwrap_or(serde_json::json!({"error": "No camera"})))
+}
+
+/// POST /camera — set camera position and target
+pub async fn camera_set(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<MessageResponse> {
+    world.with(|w, _| {
+        if let Some(cam) = w.resource_mut::<euca_render::Camera>() {
+            if let Some(eye) = req.get("eye").and_then(|v| v.as_array())
+                && eye.len() == 3
+            {
+                cam.eye = Vec3::new(
+                    eye[0].as_f64().unwrap_or(0.0) as f32,
+                    eye[1].as_f64().unwrap_or(0.0) as f32,
+                    eye[2].as_f64().unwrap_or(0.0) as f32,
+                );
+            }
+            if let Some(target) = req.get("target").and_then(|v| v.as_array())
+                && target.len() == 3
+            {
+                cam.target = Vec3::new(
+                    target[0].as_f64().unwrap_or(0.0) as f32,
+                    target[1].as_f64().unwrap_or(0.0) as f32,
+                    target[2].as_f64().unwrap_or(0.0) as f32,
+                );
+            }
+        }
+    });
+    Json(MessageResponse {
+        ok: true,
+        message: Some("Camera updated".into()),
+    })
+}
+
+/// POST /scene/save — save current world state as JSON
+pub async fn scene_save(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<MessageResponse> {
+    let path = req
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("scene.json")
+        .to_string();
+
+    // Capture all entities as JSON via the observe handler's data format
+    let scene_data = world.with_world(|w| {
+        let entities: Vec<RichEntityData> = {
+            let query = Query::<Entity>::new(w);
+            query.iter().map(|e| read_entity_data(w, e)).collect()
+        };
+        serde_json::json!({
+            "version": 1,
+            "tick": w.current_tick(),
+            "entities": entities,
+        })
+    });
+
+    match std::fs::write(&path, serde_json::to_string_pretty(&scene_data).unwrap()) {
+        Ok(()) => Json(MessageResponse {
+            ok: true,
+            message: Some(format!("Scene saved to {path}")),
+        }),
+        Err(e) => Json(MessageResponse {
+            ok: false,
+            message: Some(format!("Save failed: {e}")),
+        }),
+    }
+}
+
+/// POST /scene/load — load scene from JSON file
+pub async fn scene_load(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<MessageResponse> {
+    let path = req
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("scene.json")
+        .to_string();
+
+    let data = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            return Json(MessageResponse {
+                ok: false,
+                message: Some(format!("Cannot read {path}: {e}")),
+            });
+        }
+    };
+
+    let scene: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(e) => {
+            return Json(MessageResponse {
+                ok: false,
+                message: Some(format!("Invalid JSON: {e}")),
+            });
+        }
+    };
+
+    let entities = scene["entities"].as_array();
+    let count = entities.map(|e| e.len()).unwrap_or(0);
+
+    world.with(|w, _| {
+        // Clear existing entities
+        let existing: Vec<Entity> = {
+            let query = Query::<Entity>::new(w);
+            query.iter().collect()
+        };
+        for entity in existing {
+            w.despawn(entity);
+        }
+
+        // Recreate entities from scene data
+        if let Some(entities) = entities {
+            for ent in entities {
+                let pos = ent["transform"]["position"]
+                    .as_array()
+                    .map(|a| {
+                        [
+                            a.first().and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                            a.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                            a.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                        ]
+                    })
+                    .unwrap_or([0.0, 0.0, 0.0]);
+
+                let mut transform =
+                    euca_math::Transform::from_translation(Vec3::new(pos[0], pos[1], pos[2]));
+
+                if let Some(scl) = ent["transform"]["scale"].as_array() {
+                    transform.scale = Vec3::new(
+                        scl.first().and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                        scl.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                        scl.get(2).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                    );
+                }
+
+                let entity = w.spawn(LocalTransform(transform));
+                w.insert(entity, GlobalTransform::default());
+
+                if let Some(pb) = ent["physics_body"].as_str() {
+                    apply_physics_body(w, entity, pb);
+                }
+            }
+        }
+    });
+
+    Json(MessageResponse {
+        ok: true,
+        message: Some(format!("Loaded {count} entities from {path}")),
+    })
+}
+
 /// POST /play — start simulation
 pub async fn play(State(world): State<SharedWorld>) -> Json<MessageResponse> {
     world.with_world(|w| {
