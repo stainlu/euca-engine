@@ -406,13 +406,10 @@ impl EditorApp {
             );
         }
 
-        // === Screenshot capture (after 3D render, before egui) ===
+        // Check for pending screenshot request (will be fulfilled after submit)
         let screenshot_tx = world
             .resource::<ScreenshotChannel>()
             .and_then(|ch| ch.take());
-        if let Some(tx) = screenshot_tx {
-            capture_screenshot(gpu, &output.texture, &mut encoder, tx);
-        }
 
         // === 2. Render egui on top ===
         let window = self.window.as_ref().unwrap();
@@ -574,6 +571,37 @@ impl EditorApp {
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
+        }
+
+        // Screenshot: render scene again to a COPY_SRC offscreen texture
+        if let Some(tx) = screenshot_tx {
+            // Re-collect draw data (we're still holding the world lock via pool)
+            // Actually pool was dropped. Re-acquire read lock.
+            let read_pool = self.shared.lock_read();
+            let w = read_pool.world();
+
+            let draw_cmds: Vec<DrawCommand> = {
+                let query =
+                    Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(w);
+                query
+                    .iter()
+                    .map(|(gt, mr, mat)| DrawCommand {
+                        mesh: mr.mesh,
+                        material: mat.handle,
+                        model_matrix: gt.0.to_matrix(),
+                    })
+                    .collect()
+            };
+            let light = {
+                let query = Query::<&DirectionalLight>::new(w);
+                query.iter().next().cloned().unwrap_or_default()
+            };
+            let ambient = w.resource::<AmbientLight>().cloned().unwrap_or_default();
+            let camera = w.resource::<Camera>().unwrap().clone();
+            drop(read_pool);
+
+            let renderer = self.renderer.as_ref().unwrap();
+            capture_screenshot(gpu, renderer, &camera, &light, &ambient, &draw_cmds, tx);
         }
 
         output.present();
@@ -963,20 +991,53 @@ impl EditorApp {
     }
 }
 
-/// Capture the current surface texture as a PNG and send it via the oneshot channel.
+/// Render the scene to an offscreen texture, read it back, encode PNG,
+/// and send via the oneshot channel.
+///
+/// We render to a dedicated texture (not the surface) so we can use COPY_SRC.
+/// macOS/Metal surface textures don't support readback.
 fn capture_screenshot(
     gpu: &GpuContext,
-    texture: &wgpu::Texture,
-    encoder: &mut wgpu::CommandEncoder,
+    renderer: &Renderer,
+    camera: &Camera,
+    light: &DirectionalLight,
+    ambient: &AmbientLight,
+    draw_commands: &[DrawCommand],
     tx: tokio::sync::oneshot::Sender<Vec<u8>>,
 ) {
     let width = gpu.surface_config.width;
     let height = gpu.surface_config.height;
-    // 4 bytes per pixel (RGBA/BGRA), aligned to 256 bytes per row (wgpu requirement)
+    let format = gpu.surface_config.format;
     let bytes_per_pixel = 4u32;
     let unpadded_bytes_per_row = width * bytes_per_pixel;
     let padded_bytes_per_row = (unpadded_bytes_per_row + 255) & !255;
 
+    // Create offscreen render target with COPY_SRC
+    let offscreen = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("screenshot target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let offscreen_view = offscreen.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Render the scene to the offscreen texture
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("screenshot render"),
+        });
+    renderer.render_to_view(gpu, camera, light, ambient, draw_commands, &offscreen_view, &mut encoder);
+
+    // Copy from offscreen texture to readback buffer
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("screenshot buffer"),
         size: (padded_bytes_per_row * height) as u64,
@@ -986,7 +1047,7 @@ fn capture_screenshot(
 
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
-            texture,
+            texture: &offscreen,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -1006,20 +1067,19 @@ fn capture_screenshot(
         },
     );
 
-    // We need to submit the encoder commands to execute the copy, then map.
-    // But the encoder is still in use by the caller. Instead, we'll do an
-    // async buffer map after the main submit. Clone the Arc<Device> reference.
-    let device = gpu.device.clone();
-    let format = gpu.surface_config.format;
+    // Submit render + copy
+    gpu.queue.submit(std::iter::once(encoder.finish()));
 
-    // Spawn the buffer mapping on a background thread (can't block the render loop)
+    let device = gpu.device.clone();
+
+    // Map + encode on a background thread
     std::thread::spawn(move || {
         let slice = buffer.slice(..);
         let (map_tx, map_rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = map_tx.send(result);
         });
-        // Poll the device until the buffer copy completes
+
         loop {
             match device.poll(wgpu::PollType::Poll) {
                 Ok(status) if status.is_queue_empty() => break,
@@ -1034,8 +1094,6 @@ fn capture_screenshot(
         }
 
         let data = slice.get_mapped_range();
-
-        // Remove row padding and convert BGRA→RGBA if needed
         let mut rgba = Vec::with_capacity((width * height * 4) as usize);
         let is_bgra = matches!(
             format,
@@ -1057,14 +1115,13 @@ fn capture_screenshot(
         drop(data);
         buffer.unmap();
 
-        // Encode to PNG
         let mut png_buf = Vec::new();
         {
-            let mut encoder =
+            let mut png_enc =
                 png::Encoder::new(std::io::Cursor::new(&mut png_buf), width, height);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            match encoder.write_header() {
+            png_enc.set_color(png::ColorType::Rgba);
+            png_enc.set_depth(png::BitDepth::Eight);
+            match png_enc.write_header() {
                 Ok(mut writer) => {
                     if let Err(e) = writer.write_image_data(&rgba) {
                         log::error!("PNG write failed: {e}");
