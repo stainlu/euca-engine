@@ -15,6 +15,7 @@ members = [
     "crates/euca-input",
     "crates/euca-net",
     "crates/euca-game",
+    "crates/euca-gameplay",
     "tools/euca-cli",
 ]
 

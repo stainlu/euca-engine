@@ -1168,6 +1168,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "euca-gameplay"
+version = "0.1.0"
+dependencies = [
+ "euca-ecs",
+ "euca-math",
+ "euca-physics",
+ "euca-scene",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "euca-input"
 version = "0.1.0"
 dependencies = [

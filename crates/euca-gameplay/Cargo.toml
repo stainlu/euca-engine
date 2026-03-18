@@ -1,0 +1,13 @@
+[package]
+name = "euca-gameplay"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-physics = { path = "../euca-physics" }
+euca-scene = { path = "../euca-scene" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
