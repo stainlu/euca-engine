@@ -6,17 +6,18 @@
 
 An ECS-first, agent-native game engine in Rust. Three pillars:
 1. **ECS architecture** — Archetype-based, custom-built, optimized for large-scale simulation
-2. **Agent-native** — External AI agents access the engine via CLI tools + HTTP/WebSocket API
+2. **Agent-native** — AI agents control the engine via the `euca` CLI (primary) backed by HTTP REST API. Agents authenticate with [nit](https://github.com/newtype-ai/nit) Ed25519 identity. See SKILL.md for the full agent interface.
 3. **Rust** — Ownership for safety, proc macros for reflection, zero-cost abstractions
 
 ## Architecture Overview
 
 ```
-External AI Agents (Claude Code, RL agents, etc.)
-        │ CLI / HTTP / WebSocket
+External AI Agents (Claude Code, OpenClaw, etc.)
+        │ euca CLI (primary) / HTTP REST (backend)
         ▼
 ┌─ Agent Interface ──────────────────────────────────┐
-│  observe / act / step / save / load / reset        │
+│  status / observe / spawn / modify / despawn /     │
+│  step / play / pause / screenshot / auth login     │
 └────────────────────────┬───────────────────────────┘
                          │
 ┌────────────────────────▼───────────────────────────┐

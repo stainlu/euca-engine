@@ -1,6 +1,6 @@
 # Euca Engine — V2 Roadmap
 
-> **Status (March 2026):** Phases A, B, C (partial), and E are complete. All 11 CRITICAL architectural issues from the UE5 comparison review are resolved: mutable queries, parallel scheduling, capsule colliders, spatial hash broadphase, CCD, iterative constraint solver, transform dirty flags, multi-world agent pool, entity ownership, and reflection integration. Phase D (Game-Ready Features) is the next focus.
+> **Status (March 2026):** Phases A, B, C (partial), E, and F are complete. All 11 CRITICAL + 22 HIGH architectural issues from the UE5 comparison review are resolved. Phase F (Agent-Native Interface) unified the editor and agent worlds, added a rich CLI with screenshot capture, nit Ed25519 authentication, and SKILL.md. Phase D (Game-Ready Features) is the next focus.
 
 ## What we built (V1 recap)
 
@@ -151,3 +151,20 @@ A → B → C → D → E (all complete except D partial, C partial)
 - Phase C partial: `cargo add euca-ecs euca-math` works; README per crate, changelog, and CI still TODO
 - Phase D in progress: game features (audio, animation, particles, client prediction still TODO)
 - ✅ Phase E done: all 11 CRITICAL issues from UE5 comparison resolved
+- ✅ Phase F done: agent-native interface (SharedWorld unification, rich CLI, screenshot, play/pause, nit auth, SKILL.md)
+
+---
+
+## Phase F: Agent-Native Interface (COMPLETE)
+
+**Goal:** Make AI agents (Claude Code, OpenClaw) first-class users of the engine.
+
+**Decision:** CLI as primary interface (not MCP). Same pattern as `git`, `gh`, `cargo`.
+
+**What was built:**
+1. ✅ **SharedWorld unification** — Editor and HTTP server share the same ECS world via `Arc<RwLock<WorldPool>>`
+2. ✅ **Rich CLI** — `euca` with 12 commands: status, observe, spawn, modify, despawn, step, play, pause, screenshot, reset, schema, auth
+3. ✅ **Screenshot capture** — `euca screenshot` renders scene to offscreen texture, encodes PNG, returns path. Agent reads the image to verify visual state.
+4. ✅ **Play/pause control** — `EngineControl` resource with `Arc<AtomicBool>`, shared between editor toolbar and HTTP handler
+5. ✅ **nit authentication** — Ed25519 signature verification, session tokens, `euca auth login`
+6. ✅ **SKILL.md** — Full CLI reference for agent consumption

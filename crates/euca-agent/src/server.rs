@@ -48,6 +48,8 @@ impl AgentServer {
             .route("/play", post(routes::play))
             .route("/pause", post(routes::pause))
             .route("/screenshot", post(routes::screenshot))
+            .route("/auth/login", post(routes::auth_login))
+            .route("/auth/status", get(routes::auth_status))
             .route("/schema", get(routes::schema))
             .with_state(self.shared.clone())
     }

@@ -107,6 +107,20 @@ enum Commands {
 
     /// Show available components and actions
     Schema,
+
+    /// Authenticate with the engine via nit identity
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthCommands {
+    /// Login with nit Ed25519 identity
+    Login,
+    /// Check current authentication status
+    Status,
 }
 
 fn parse_vec3(s: &str) -> Option<[f32; 3]> {
@@ -331,6 +345,77 @@ fn main() {
             let resp = client.get(format!("{}/schema", cli.server)).send();
             handle_response(resp)
         }
+        Commands::Auth { command } => match command {
+            AuthCommands::Login => {
+                // Run nit sign --login and read public key
+                let nit_output = std::process::Command::new("nit")
+                    .args(["sign", "--login", "eucaengine.local"])
+                    .output();
+
+                let nit_output = match nit_output {
+                    Ok(o) if o.status.success() => {
+                        String::from_utf8_lossy(&o.stdout).to_string()
+                    }
+                    Ok(o) => {
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        eprintln!("nit sign --login failed: {err}");
+                        std::process::exit(1);
+                    }
+                    Err(_) => {
+                        eprintln!("nit not found. Install nit: npm install -g @newtype-ai/nit");
+                        std::process::exit(1);
+                    }
+                };
+
+                // Parse nit output (JSON)
+                let nit_data: Value = match serde_json::from_str(nit_output.trim()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Failed to parse nit output: {e}");
+                        std::process::exit(1);
+                    }
+                };
+
+                // Read public key from .nit/identity/agent.pub
+                let home = std::env::var("HOME").unwrap_or_default();
+                let pub_key_path = format!("{home}/.nit/identity/agent.pub");
+                let public_key = match std::fs::read_to_string(&pub_key_path) {
+                    Ok(k) => k,
+                    Err(_) => {
+                        eprintln!("Cannot read {pub_key_path}. Run 'nit init' first.");
+                        std::process::exit(1);
+                    }
+                };
+
+                // Build login payload
+                let payload = serde_json::json!({
+                    "agent_id": nit_data["agent_id"],
+                    "domain": nit_data["domain"],
+                    "timestamp": nit_data["timestamp"],
+                    "signature": nit_data["signature"],
+                    "public_key": public_key.trim(),
+                });
+
+                let resp = client
+                    .post(format!("{}/auth/login", cli.server))
+                    .json(&payload)
+                    .send();
+
+                match handle_response(resp) {
+                    Ok(()) => {
+                        // TODO: Store session token in ~/.euca/auth.json
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            AuthCommands::Status => {
+                let resp = client
+                    .get(format!("{}/auth/status", cli.server))
+                    .send();
+                handle_response(resp)
+            }
+        },
     };
 
     if let Err(e) = result {

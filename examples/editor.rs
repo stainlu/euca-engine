@@ -1,4 +1,4 @@
-use euca_agent::{AgentServer, EngineControl, ScreenshotChannel};
+use euca_agent::{AgentServer, EngineControl, ScreenshotChannel, auth::AuthStore};
 use euca_core::Time;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
@@ -70,6 +70,7 @@ impl EditorApp {
         });
         world.insert_resource(EngineControl::new());
         world.insert_resource(ScreenshotChannel::new());
+        world.insert_resource(AuthStore::new());
 
         let shared = SharedWorld::new(world, Schedule::new());
 

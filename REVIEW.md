@@ -297,7 +297,7 @@ Asset: glTF discards textures (#56), no caching (#57), no async load (#58)
 
 Input: no gamepad (#59), no contexts (#60), no buffering (#61)
 
-Agent: fake socket ports (#62), no spatial filtering (#63), no rate limiting (#64)
+Agent: fake socket ports (#62), no spatial filtering (#63), no rate limiting (#64). **Phase F update:** SharedWorld unification, CLI-first agent interface, nit auth, screenshot capture now in place.
 
 Editor: selection without generation (#65), translate-only gizmo (#66), hardcoded inspector (#67), 3 undo types (#68)
 

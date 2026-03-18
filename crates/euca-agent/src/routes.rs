@@ -531,6 +531,68 @@ pub async fn screenshot(
     }
 }
 
+/// POST /auth/login — authenticate via nit Ed25519 signature
+pub async fn auth_login(
+    State(world): State<SharedWorld>,
+    Json(payload): Json<crate::auth::LoginPayload>,
+) -> Result<Json<crate::auth::LoginResponse>, (StatusCode, Json<crate::auth::AuthError>)> {
+    let auth_store = world.with_world(|w| w.resource::<crate::auth::AuthStore>().cloned());
+
+    let auth_store = match auth_store {
+        Some(store) => store,
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(crate::auth::AuthError {
+                    ok: false,
+                    error: "Auth not configured".into(),
+                }),
+            ));
+        }
+    };
+
+    match auth_store.login(&payload) {
+        Ok(token) => Ok(Json(crate::auth::LoginResponse {
+            ok: true,
+            session_token: token,
+            agent_id: payload.agent_id,
+        })),
+        Err(e) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(crate::auth::AuthError {
+                ok: false,
+                error: e,
+            }),
+        )),
+    }
+}
+
+/// GET /auth/status — check current auth session
+pub async fn auth_status(
+    State(world): State<SharedWorld>,
+    headers: axum::http::HeaderMap,
+) -> Json<serde_json::Value> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    let auth_store = world.with_world(|w| w.resource::<crate::auth::AuthStore>().cloned());
+
+    if let (Some(token), Some(store)) = (token, auth_store)
+        && let Some(agent_id) = store.validate(token)
+    {
+        return Json(serde_json::json!({
+            "authenticated": true,
+            "agent_id": agent_id,
+        }));
+    }
+
+    Json(serde_json::json!({
+        "authenticated": false,
+    }))
+}
+
 /// GET /schema — dynamic schema: all component types and actions
 pub async fn schema() -> Json<serde_json::Value> {
     Json(serde_json::json!({

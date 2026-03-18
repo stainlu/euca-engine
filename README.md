@@ -5,7 +5,7 @@ An ECS-first, agent-native game engine built in Rust.
 ## Core Pillars
 
 1. **ECS Architecture** — Custom archetype-based Entity-Component-System, optimized for large-scale simulation
-2. **Agent-Native** — External AI agents access the engine via CLI tools and HTTP API (no internal AI systems)
+2. **Agent-Native** — AI agents control the engine via the `euca` CLI, backed by HTTP REST on port 3917. Authentication via [nit](https://github.com/newtype-ai/nit) Ed25519 identity. See [SKILL.md](SKILL.md) for the full interface.
 3. **Rust** — Ownership for safety, proc macros for reflection, zero-cost abstractions
 
 ## Quick Start
@@ -20,10 +20,12 @@ cargo run -p euca-editor --example editor
 # Run the headless server (for AI agents)
 cargo run -p euca-agent --example headless_server
 
-# Use the CLI tool (while server is running)
+# Use the CLI tool (while editor is running — server starts on port 3917)
 cargo run -p euca-cli -- status
 cargo run -p euca-cli -- observe
-cargo run -p euca-cli -- step --ticks 10
+cargo run -p euca-cli -- modify 1 --transform 3,2,0
+cargo run -p euca-cli -- screenshot
+cargo run -p euca-cli -- play
 
 # Load a glTF model
 cargo run -p euca-asset --example gltf_viewer -- path/to/model.glb
@@ -46,9 +48,9 @@ cargo test --workspace
 | `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) |
 | `euca-input` | InputState, ActionMap, InputSnapshot (humans + AI agents) |
 | `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, state replication protocol |
-| `euca-agent` | HTTP API server for external AI agents (axum + tokio) |
+| `euca-agent` | HTTP API server + nit auth for AI agents (axum + tokio + ed25519-dalek) |
 | `euca-editor` | egui editor: 3D viewport, hierarchy panel, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load (JSON), entity creation (+Empty/Cube/Sphere), grid overlay, keyboard shortcuts (Delete/F/Ctrl+Z/Ctrl+Y) |
-| `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) |
+| `euca-cli` | CLI for AI agents: observe, spawn, modify, despawn, step, play, pause, screenshot, auth |
 
 ## Agent Interface
 

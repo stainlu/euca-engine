@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod bridge;
 mod control;
 mod routes;
