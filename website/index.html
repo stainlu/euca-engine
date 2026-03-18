@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EucaEngine — The Agent-Native Game Engine</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>EucaEngine</h1>
+    <p class="tagline">The agent-native game engine, built in Rust.</p>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p>AI agents build games through the <code>euca</code> CLI. Create entities, run physics, set up combat, define rules, take screenshots &mdash; all from the terminal.</p>
+      <div class="cta">
+        <a href="https://github.com/stainlu/euca-engine/releases/latest" class="btn primary">Download</a>
+        <a href="https://github.com/stainlu/euca-engine" class="btn secondary">GitHub</a>
+        <a href="/skill.md" class="btn secondary">SKILL.md</a>
+      </div>
+    </section>
+
+    <section class="quickstart">
+      <h2>Quick Start</h2>
+      <pre><code># Download and extract
+curl -L https://github.com/stainlu/euca-engine/releases/latest/download/euca-cli-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv euca /usr/local/bin/
+
+# Start the engine
+cargo run -p euca-editor --example editor
+
+# Build a game
+euca game create --mode deathmatch --score-limit 5
+euca entity create --mesh cube --position 0,2,0 --health 100 --team 1 --color red
+euca entity create --mesh sphere --position 3,2,0 --health 100 --team 2 --color blue
+euca ai set 3 --behavior chase --target 2 --speed 3
+euca rule create --when death --filter team:2 --do-action "score source +1"
+euca sim play
+euca screenshot</code></pre>
+    </section>
+
+    <section class="features">
+      <h2>What Agents Can Do</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Build Scenes</h3>
+          <p>Spawn cubes, spheres, planes with colors and physics. 12 material presets. Orthographic and perspective camera views.</p>
+        </div>
+        <div class="card">
+          <h3>Game Logic</h3>
+          <p>Health, damage, teams, projectiles, trigger zones, AI behavior (chase/patrol/flee). All composable ECS components.</p>
+        </div>
+        <div class="card">
+          <h3>Data-Driven Rules</h3>
+          <p>"When X happens, do Y" &mdash; no code needed. Death reactions, timers, health thresholds. Rules ARE entities.</p>
+        </div>
+        <div class="card">
+          <h3>Visual Feedback</h3>
+          <p>Screenshots for verification. HUD text and health bars. Camera presets (top, front, side). Everything visible in the editor.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="cli">
+      <h2>CLI Reference</h2>
+      <p>See <a href="/skill.md">SKILL.md</a> for the complete command reference. Key commands:</p>
+      <pre><code>euca entity create/get/list/update/delete   # Entity CRUD
+euca entity damage/heal                     # Combat
+euca sim play/pause/step/reset              # Simulation
+euca game create/state                      # Match lifecycle
+euca rule create/list                       # Data-driven rules
+euca trigger create                         # Area events
+euca projectile spawn                       # Projectiles
+euca ai set                                 # AI behavior
+euca ui text/bar/clear                      # HUD elements
+euca camera view/focus/set/get              # Camera control
+euca screenshot                             # Visual capture
+euca scene save/load                        # Persistence</code></pre>
+    </section>
+
+    <section class="tech">
+      <h2>Built With</h2>
+      <p>16 Rust crates. Custom ECS, custom physics, custom math. wgpu for rendering. Zero heavy dependencies on the critical path.</p>
+      <p>Authenticated with <a href="https://github.com/newtype-ai/nit">nit</a> &mdash; Ed25519 cryptographic agent identity.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>EucaEngine &mdash; <a href="https://github.com/stainlu/euca-engine">Open Source (MIT)</a></p>
+  </footer>
+</body>
+</html>
