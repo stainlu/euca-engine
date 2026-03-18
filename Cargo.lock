@@ -1016,16 +1016,19 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "env_logger",
+ "euca-agent",
  "euca-core",
  "euca-ecs",
  "euca-math",
  "euca-physics",
+ "euca-reflect",
  "euca-render",
  "euca-scene",
  "log",
  "pollster",
  "serde",
  "serde_json",
+ "tokio",
  "wgpu",
  "winit",
 ]
@@ -1079,6 +1082,7 @@ version = "0.1.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
+ "euca-reflect",
  "euca-scene",
  "log",
 ]
@@ -1109,6 +1113,7 @@ dependencies = [
  "euca-ecs",
  "euca-math",
  "euca-physics",
+ "euca-reflect",
  "euca-scene",
  "image",
  "log",
@@ -1123,6 +1128,7 @@ version = "0.1.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
+ "euca-reflect",
  "serde",
 ]
 

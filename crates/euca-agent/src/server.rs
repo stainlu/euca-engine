@@ -21,6 +21,14 @@ impl AgentServer {
         }
     }
 
+    /// Create a server backed by an existing SharedWorld.
+    ///
+    /// Use this when the editor already owns the SharedWorld and wants the
+    /// HTTP server to operate on the same world instance.
+    pub fn from_shared(shared: SharedWorld, port: u16) -> Self {
+        Self { shared, port }
+    }
+
     /// Get a clone of the shared world handle (for external use).
     pub fn shared_world(&self) -> SharedWorld {
         self.shared.clone()

@@ -1,5 +1,6 @@
+use euca_agent::AgentServer;
 use euca_core::Time;
-use euca_ecs::{Query, World};
+use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
     EditorState, SceneFile, SpawnRequest, ToolbarAction, find_alive_entity, hierarchy_panel,
     inspector_panel, toolbar_panel,
@@ -18,8 +19,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+const AGENT_PORT: u16 = 3917;
+
 struct EditorApp {
-    world: World,
+    shared: SharedWorld,
     survey: HardwareSurvey,
     wgpu_instance: wgpu::Instance,
     editor_state: EditorState,
@@ -46,6 +49,8 @@ struct EditorApp {
     // Modifier key tracking
     ctrl_held: bool,
     shift_held: bool,
+    // Tokio runtime for agent HTTP server
+    _tokio_rt: Option<tokio::runtime::Runtime>,
 }
 
 impl EditorApp {
@@ -64,8 +69,10 @@ impl EditorApp {
             intensity: 0.2,
         });
 
+        let shared = SharedWorld::new(world, Schedule::new());
+
         Self {
-            world,
+            shared,
             survey,
             wgpu_instance,
             editor_state: EditorState::new(),
@@ -92,6 +99,7 @@ impl EditorApp {
             default_material: None,
             ctrl_held: false,
             shift_held: false,
+            _tokio_rt: None,
         }
     }
 
@@ -124,26 +132,28 @@ impl EditorApp {
         self.outline_material =
             Some(renderer.upload_material(gpu, &Material::new([1.0, 0.6, 0.0, 1.0], 0.0, 1.0)));
 
+        let mut pool = self.shared.lock();
+        let world = pool.world();
+
         // Ground with grid texture
-        let g = self
-            .world
-            .spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
-        self.world.insert(g, GlobalTransform::default());
-        self.world.insert(g, MeshRenderer { mesh: plane });
-        self.world.insert(g, MaterialRef { handle: grid_mat });
-        self.world.insert(g, PhysicsBody::fixed());
-        self.world.insert(g, Collider::aabb(10.0, 0.01, 10.0));
+        let g = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(g, GlobalTransform::default());
+        world.insert(g, MeshRenderer { mesh: plane });
+        world.insert(g, MaterialRef { handle: grid_mat });
+        world.insert(g, PhysicsBody::fixed());
+        world.insert(g, Collider::aabb(10.0, 0.01, 10.0));
 
         // Cubes
-        let spawn = |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
-            let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
-            w.insert(e, GlobalTransform::default());
-            w.insert(e, MeshRenderer { mesh });
-            w.insert(e, MaterialRef { handle: mat });
-            w.insert(e, PhysicsBody::dynamic());
-            w.insert(e, Velocity::default());
-            w.insert(e, Collider::aabb(half, half, half).with_restitution(0.4));
-        };
+        let spawn =
+            |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
+                let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
+                w.insert(e, GlobalTransform::default());
+                w.insert(e, MeshRenderer { mesh });
+                w.insert(e, MaterialRef { handle: mat });
+                w.insert(e, PhysicsBody::dynamic());
+                w.insert(e, Velocity::default());
+                w.insert(e, Collider::aabb(half, half, half).with_restitution(0.4));
+            };
 
         let silver = renderer.upload_material(gpu, &Material::silver());
         let gray = renderer.upload_material(gpu, &Material::gray());
@@ -170,16 +180,16 @@ impl EditorApp {
         };
 
         // Center pedestal (stacked cubes)
-        spawn_static(&mut self.world, Vec3::new(0.0, 0.5, 0.0), cube, gray, 0.5);
-        spawn_static(&mut self.world, Vec3::new(0.0, 1.5, 0.0), cube, silver, 0.4);
+        spawn_static(world, Vec3::new(0.0, 0.5, 0.0), cube, gray, 0.5);
+        spawn_static(world, Vec3::new(0.0, 1.5, 0.0), cube, silver, 0.4);
         // Gold sphere on top of pedestal
-        spawn_sphere_static(&mut self.world, Vec3::new(0.0, 2.5, 0.0), gold);
+        spawn_sphere_static(world, Vec3::new(0.0, 2.5, 0.0), gold);
 
         // Four pillars in a square — taller
         for &(x, z) in &[(4.0, 4.0), (-4.0, 4.0), (4.0, -4.0), (-4.0, -4.0)] {
-            spawn_static(&mut self.world, Vec3::new(x, 0.5, z), cube, gray, 0.35);
-            spawn_static(&mut self.world, Vec3::new(x, 1.5, z), cube, gray, 0.35);
-            spawn_static(&mut self.world, Vec3::new(x, 2.5, z), cube, gray, 0.35);
+            spawn_static(world, Vec3::new(x, 0.5, z), cube, gray, 0.35);
+            spawn_static(world, Vec3::new(x, 1.5, z), cube, gray, 0.35);
+            spawn_static(world, Vec3::new(x, 2.5, z), cube, gray, 0.35);
             // Colored sphere caps
             let mat = match (x > 0.0, z > 0.0) {
                 (true, true) => red,
@@ -187,20 +197,20 @@ impl EditorApp {
                 (true, false) => green,
                 (false, false) => gold,
             };
-            spawn_sphere_static(&mut self.world, Vec3::new(x, 3.5, z), mat);
+            spawn_sphere_static(world, Vec3::new(x, 3.5, z), mat);
         }
 
         // Front row — three material showcase cubes on small pedestals
         for (i, mat) in [red, silver, blue].iter().enumerate() {
             let x = (i as f32 - 1.0) * 2.5;
-            spawn_static(&mut self.world, Vec3::new(x, 0.3, -3.0), cube, gray, 0.3);
-            spawn_static(&mut self.world, Vec3::new(x, 0.9, -3.0), cube, *mat, 0.25);
+            spawn_static(world, Vec3::new(x, 0.3, -3.0), cube, gray, 0.3);
+            spawn_static(world, Vec3::new(x, 0.9, -3.0), cube, *mat, 0.25);
         }
 
         // Dynamic objects (will fall when you press Play)
-        spawn(&mut self.world, Vec3::new(-1.5, 5.0, 1.0), cube, red, 0.5);
-        spawn(&mut self.world, Vec3::new(1.5, 7.0, -0.5), cube, blue, 0.5);
-        spawn(&mut self.world, Vec3::new(0.0, 9.0, 0.5), cube, green, 0.5);
+        spawn(world, Vec3::new(-1.5, 5.0, 1.0), cube, red, 0.5);
+        spawn(world, Vec3::new(1.5, 7.0, -0.5), cube, blue, 0.5);
+        spawn(world, Vec3::new(0.0, 9.0, 0.5), cube, green, 0.5);
 
         // Floating gold spheres (dynamic — will drop on Play)
         let spawn_sphere_dyn = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
@@ -213,11 +223,11 @@ impl EditorApp {
             w.insert(e, Collider::sphere(0.5).with_restitution(0.6));
         };
 
-        spawn_sphere_dyn(&mut self.world, Vec3::new(2.5, 6.0, 2.0), gold);
-        spawn_sphere_dyn(&mut self.world, Vec3::new(-2.5, 8.0, -1.5), silver);
+        spawn_sphere_dyn(world, Vec3::new(2.5, 6.0, 2.0), gold);
+        spawn_sphere_dyn(world, Vec3::new(-2.5, 8.0, -1.5), silver);
 
         // Directional light — warm sunlight from upper-left
-        self.world.spawn(DirectionalLight {
+        world.spawn(DirectionalLight {
             direction: [0.4, -0.9, 0.25],
             color: [1.0, 0.95, 0.88],
             intensity: 2.5,
@@ -226,15 +236,19 @@ impl EditorApp {
 
     fn reset_scene(&mut self) {
         // Despawn all entities
-        let entities: Vec<euca_ecs::Entity> = {
-            let query = euca_ecs::Query::<euca_ecs::Entity>::new(&self.world);
-            query.iter().collect()
-        };
-        for entity in entities {
-            self.world.despawn(entity);
+        {
+            let mut pool = self.shared.lock();
+            let world = pool.world();
+            let entities: Vec<euca_ecs::Entity> = {
+                let query = euca_ecs::Query::<euca_ecs::Entity>::new(world);
+                query.iter().collect()
+            };
+            for entity in entities {
+                world.despawn(entity);
+            }
+            // Reset physics world
+            world.insert_resource(PhysicsConfig::new());
         }
-        // Reset physics world
-        self.world.insert_resource(PhysicsConfig::new());
         // Re-create scene
         self.setup_scene();
         self.editor_state.selected_entity = None;
@@ -247,14 +261,19 @@ impl EditorApp {
             self.reset_scene();
         }
 
-        self.world.resource_mut::<Time>().unwrap().update();
-        let _elapsed = self.world.resource::<Time>().unwrap().elapsed as f32;
+        // Hold write lock for the frame's world access.
+        // Lock contention is minimal — agent CLI calls come seconds apart.
+        let mut pool = self.shared.lock();
+        let world = pool.world();
+
+        world.resource_mut::<Time>().unwrap().update();
+        let _elapsed = world.resource::<Time>().unwrap().elapsed as f32;
 
         // Tick simulation when playing
         if self.editor_state.should_tick() {
-            physics_step_system(&mut self.world);
+            physics_step_system(world);
         }
-        euca_scene::transform_propagation_system(&mut self.world);
+        euca_scene::transform_propagation_system(world);
 
         // User-controlled camera (orbit/pan/zoom)
         if self.right_mouse_down {
@@ -271,7 +290,7 @@ impl EditorApp {
         }
         self.mouse_delta = [0.0, 0.0];
 
-        let cam = self.world.resource_mut::<Camera>().unwrap();
+        let cam = world.resource_mut::<Camera>().unwrap();
         cam.eye = Vec3::new(
             self.cam_target.x + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
             self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
@@ -299,7 +318,7 @@ impl EditorApp {
         {
             let mut draw_commands: Vec<DrawCommand> = {
                 let query =
-                    Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
+                    Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
                 query
                     .iter()
                     .map(|(gt, mr, mat)| DrawCommand {
@@ -317,12 +336,12 @@ impl EditorApp {
                 // Find the selected entity
                 for g in 0..16u32 {
                     let entity = euca_ecs::Entity::from_raw(sel_idx, g);
-                    if !self.world.is_alive(entity) {
+                    if !world.is_alive(entity) {
                         continue;
                     }
                     if let (Some(gt), Some(mr)) = (
-                        self.world.get::<GlobalTransform>(entity),
-                        self.world.get::<MeshRenderer>(entity),
+                        world.get::<GlobalTransform>(entity),
+                        world.get::<MeshRenderer>(entity),
                     ) {
                         // Skip outline for large objects (avoids z-fighting on ground plane)
                         let max_scale = gt.0.scale.x.max(gt.0.scale.y).max(gt.0.scale.z);
@@ -342,9 +361,9 @@ impl EditorApp {
 
             // Gizmo: draw axis handles on selected entity
             if let Some(sel_idx) = self.editor_state.selected_entity {
-                if let Some(entity) = find_alive_entity(&self.world, sel_idx) {
-                    if let Some(gt) = self.world.get::<GlobalTransform>(entity) {
-                        let camera = self.world.resource::<Camera>().unwrap();
+                if let Some(entity) = find_alive_entity(world, sel_idx) {
+                    if let Some(gt) = world.get::<GlobalTransform>(entity) {
+                        let camera = world.resource::<Camera>().unwrap();
                         let gizmo_cmds = euca_editor::gizmo::gizmo_draw_commands(
                             gt.0.translation,
                             camera.eye,
@@ -356,15 +375,14 @@ impl EditorApp {
             }
 
             let light = {
-                let query = Query::<&DirectionalLight>::new(&self.world);
+                let query = Query::<&DirectionalLight>::new(world);
                 query.iter().next().cloned().unwrap_or_default()
             };
-            let ambient = self
-                .world
+            let ambient = world
                 .resource::<AmbientLight>()
                 .cloned()
                 .unwrap_or_default();
-            let camera = self.world.resource::<Camera>().unwrap().clone();
+            let camera = world.resource::<Camera>().unwrap().clone();
 
             let renderer = self.renderer.as_ref().unwrap();
             renderer.render_to_view(
@@ -386,21 +404,20 @@ impl EditorApp {
         let mut spawn_request = None;
         let mut toolbar_action = None;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            let dt = self
-                .world
+            let dt = world
                 .resource::<Time>()
                 .map(|t| t.delta)
                 .unwrap_or(0.0);
-            toolbar_action = toolbar_panel(ctx, &mut self.editor_state, &self.world, dt);
-            spawn_request = hierarchy_panel(ctx, &mut self.editor_state, &self.world);
-            inspector_panel(ctx, &mut self.editor_state, &mut self.world);
+            toolbar_action = toolbar_panel(ctx, &mut self.editor_state, world, dt);
+            spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
+            inspector_panel(ctx, &mut self.editor_state, world);
         });
 
         // Handle save/load
         if let Some(action) = toolbar_action {
             match action {
                 ToolbarAction::SaveScene => {
-                    let scene = SceneFile::capture(&self.world);
+                    let scene = SceneFile::capture(world);
                     if let Err(e) = scene.save("scene.json") {
                         log::error!("Save failed: {e}");
                     } else {
@@ -415,17 +432,17 @@ impl EditorApp {
                         );
                         // Clear existing entities
                         let entities: Vec<euca_ecs::Entity> = {
-                            let query = Query::<euca_ecs::Entity>::new(&self.world);
+                            let query = Query::<euca_ecs::Entity>::new(world);
                             query.iter().collect()
                         };
                         for entity in entities {
-                            self.world.despawn(entity);
+                            world.despawn(entity);
                         }
                         // Rebuild from scene file
                         let cube_mesh = self.cube_mesh;
                         let sphere_mesh = self.sphere_mesh;
                         euca_editor::load_scene_into_world(
-                            &mut self.world,
+                            world,
                             &scene,
                             &|name| match name {
                                 n if n.contains("0") => cube_mesh, // mesh_0 = cube (first uploaded)
@@ -435,7 +452,7 @@ impl EditorApp {
                             6, // number of uploaded materials
                         );
                         // Re-add light
-                        self.world.spawn(DirectionalLight {
+                        world.spawn(DirectionalLight {
                             direction: [0.5, -1.0, 0.3],
                             color: [1.0, 0.98, 0.95],
                             intensity: 2.0,
@@ -450,28 +467,26 @@ impl EditorApp {
         // Handle entity spawn requests
         if let Some(req) = spawn_request {
             let pos = Vec3::new(0.0, 2.0, 0.0);
-            let e = self
-                .world
-                .spawn(LocalTransform(Transform::from_translation(pos)));
-            self.world.insert(e, GlobalTransform::default());
+            let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
+            world.insert(e, GlobalTransform::default());
             match req {
                 SpawnRequest::Cube => {
                     if let Some(mesh) = self.cube_mesh {
-                        self.world.insert(e, MeshRenderer { mesh });
+                        world.insert(e, MeshRenderer { mesh });
                     }
                     if let Some(mat) = self.default_material {
-                        self.world.insert(e, MaterialRef { handle: mat });
+                        world.insert(e, MaterialRef { handle: mat });
                     }
-                    self.world.insert(e, Collider::aabb(0.5, 0.5, 0.5));
+                    world.insert(e, Collider::aabb(0.5, 0.5, 0.5));
                 }
                 SpawnRequest::Sphere => {
                     if let Some(mesh) = self.sphere_mesh {
-                        self.world.insert(e, MeshRenderer { mesh });
+                        world.insert(e, MeshRenderer { mesh });
                     }
                     if let Some(mat) = self.default_material {
-                        self.world.insert(e, MaterialRef { handle: mat });
+                        world.insert(e, MaterialRef { handle: mat });
                     }
-                    self.world.insert(e, Collider::sphere(0.5));
+                    world.insert(e, Collider::sphere(0.5));
                 }
                 SpawnRequest::Empty => {}
             }
@@ -483,6 +498,9 @@ impl EditorApp {
                     entity_index: e.index(),
                 });
         }
+
+        // Release the world lock before GPU submission
+        drop(pool);
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
@@ -567,6 +585,22 @@ impl ApplicationHandler for EditorApp {
             self.egui_renderer = Some(egui_renderer);
 
             self.setup_scene();
+
+            // Start the agent HTTP server on a background tokio runtime.
+            // The server shares the same world as the editor.
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime");
+
+            let server = AgentServer::from_shared(self.shared.clone(), AGENT_PORT);
+            rt.spawn(async move {
+                server.run().await;
+            });
+            log::info!("Agent server started on port {AGENT_PORT}");
+
+            self._tokio_rt = Some(rt);
         }
     }
 
@@ -600,17 +634,18 @@ impl ApplicationHandler for EditorApp {
             } => {
                 // Delete selected entity (with undo support)
                 if let Some(idx) = self.editor_state.selected_entity {
-                    if let Some(e) = find_alive_entity(&self.world, idx) {
+                    let mut pool = self.shared.lock();
+                    let world = pool.world();
+                    if let Some(e) = find_alive_entity(world, idx) {
                         // Capture state before despawn
-                        let transform = self
-                            .world
+                        let transform = world
                             .get::<LocalTransform>(e)
                             .map(|lt| lt.0)
                             .unwrap_or_default();
-                        let mesh = self.world.get::<MeshRenderer>(e).map(|mr| mr.mesh);
-                        let material = self.world.get::<MaterialRef>(e).map(|mr| mr.handle);
-                        let collider = self.world.get::<Collider>(e).cloned();
-                        self.world.despawn(e);
+                        let mesh = world.get::<MeshRenderer>(e).map(|mr| mr.mesh);
+                        let material = world.get::<MaterialRef>(e).map(|mr| mr.handle);
+                        let collider = world.get::<Collider>(e).cloned();
+                        world.despawn(e);
                         self.editor_state
                             .undo
                             .push(euca_editor::undo::UndoAction::DespawnEntity {
@@ -635,8 +670,10 @@ impl ApplicationHandler for EditorApp {
             } if ch.as_str() == "f" || ch.as_str() == "F" => {
                 // Focus camera on selected entity
                 if let Some(idx) = self.editor_state.selected_entity {
-                    if let Some(e) = find_alive_entity(&self.world, idx) {
-                        if let Some(gt) = self.world.get::<GlobalTransform>(e) {
+                    let pool = self.shared.lock_read();
+                    let world = pool.world();
+                    if let Some(e) = find_alive_entity(world, idx) {
+                        if let Some(gt) = world.get::<GlobalTransform>(e) {
                             self.cam_target = gt.0.translation;
                             self.cam_distance = 5.0;
                         }
@@ -652,7 +689,8 @@ impl ApplicationHandler for EditorApp {
                     },
                 ..
             } if ch.as_str() == "z" && self.ctrl_held && !self.shift_held => {
-                self.editor_state.undo.undo(&mut self.world);
+                let mut pool = self.shared.lock();
+                self.editor_state.undo.undo(pool.world());
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -665,7 +703,8 @@ impl ApplicationHandler for EditorApp {
             } if (ch.as_str() == "y" && self.ctrl_held)
                 || (ch.as_str() == "z" && self.ctrl_held && self.shift_held) =>
             {
-                self.editor_state.undo.redo(&mut self.world);
+                let mut pool = self.shared.lock();
+                self.editor_state.undo.redo(pool.world());
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.ctrl_held = modifiers.state().control_key();
@@ -738,7 +777,11 @@ impl EditorApp {
             Some(g) => g,
             None => return,
         };
-        let camera = match self.world.resource::<Camera>() {
+
+        let pool = self.shared.lock_read();
+        let world = pool.world();
+
+        let camera = match world.resource::<Camera>() {
             Some(c) => c.clone(),
             None => return,
         };
@@ -753,7 +796,7 @@ impl EditorApp {
         let mut closest: Option<(euca_ecs::Entity, f32)> = None;
 
         let candidates: Vec<(euca_ecs::Entity, Vec3, Collider)> = {
-            let query = Query::<(euca_ecs::Entity, &GlobalTransform, &Collider)>::new(&self.world);
+            let query = Query::<(euca_ecs::Entity, &GlobalTransform, &Collider)>::new(world);
             query
                 .iter()
                 .map(|(e, gt, col)| (e, gt.0.translation, col.clone()))
@@ -779,19 +822,23 @@ impl EditorApp {
             Some(idx) => idx,
             None => return false,
         };
-        let entity = match find_alive_entity(&self.world, sel_idx) {
-            Some(e) => e,
-            None => return false,
-        };
-        let entity_pos = match self.world.get::<GlobalTransform>(entity) {
-            Some(gt) => gt.0.translation,
-            None => return false,
-        };
         let gpu = match &self.gpu {
             Some(g) => g,
             None => return false,
         };
-        let camera = match self.world.resource::<Camera>() {
+
+        let pool = self.shared.lock_read();
+        let world = pool.world();
+
+        let entity = match find_alive_entity(world, sel_idx) {
+            Some(e) => e,
+            None => return false,
+        };
+        let entity_pos = match world.get::<GlobalTransform>(entity) {
+            Some(gt) => gt.0.translation,
+            None => return false,
+        };
+        let camera = match world.resource::<Camera>() {
             Some(c) => c.clone(),
             None => return false,
         };
@@ -810,11 +857,13 @@ impl EditorApp {
                 Vec3::closest_line_param(entity_pos, axis_dir, ray_origin, ray_dir.normalize());
             let grab_point = entity_pos + axis_dir * grab_t;
 
-            let current_transform = self
-                .world
+            let current_transform = world
                 .get::<LocalTransform>(entity)
                 .map(|lt| lt.0)
                 .unwrap_or_default();
+
+            // Drop the read lock before mutating editor_state
+            drop(pool);
 
             self.editor_state.gizmo.active_drag = Some(euca_editor::gizmo::GizmoDrag {
                 axis,
@@ -837,14 +886,17 @@ impl EditorApp {
     /// End an active gizmo drag and commit the undo action.
     fn end_gizmo_drag(&mut self) {
         if let Some(drag) = self.editor_state.gizmo.active_drag.take() {
-            if let Some(entity) = find_alive_entity(&self.world, drag.entity_index) {
-                let current = self
-                    .world
+            let pool = self.shared.lock_read();
+            let world = pool.world();
+            if let Some(entity) = find_alive_entity(world, drag.entity_index) {
+                let current = world
                     .get::<LocalTransform>(entity)
                     .map(|lt| lt.0)
                     .unwrap_or_default();
+                drop(pool);
                 self.editor_state.undo.end_drag(current);
             } else {
+                drop(pool);
                 self.editor_state.undo.cancel_drag();
             }
         }
@@ -860,20 +912,28 @@ impl EditorApp {
             Some(g) => g,
             None => return,
         };
-        let camera = match self.world.resource::<Camera>() {
-            Some(c) => c.clone(),
-            None => return,
+
+        let (camera, screen_w, screen_h) = {
+            let pool = self.shared.lock_read();
+            let world = pool.world();
+            let camera = match world.resource::<Camera>() {
+                Some(c) => c.clone(),
+                None => return,
+            };
+            let screen_w = gpu.surface_config.width as f32;
+            let screen_h = gpu.surface_config.height as f32;
+            (camera, screen_w, screen_h)
         };
 
-        let screen_w = gpu.surface_config.width as f32;
-        let screen_h = gpu.surface_config.height as f32;
         let (ray_origin, ray_dir) =
             camera.screen_to_ray(self.mouse_pos[0], self.mouse_pos[1], screen_w, screen_h);
 
         let new_pos = euca_editor::gizmo::update_gizmo_drag(&drag, ray_origin, ray_dir.normalize());
 
-        if let Some(entity) = find_alive_entity(&self.world, drag.entity_index) {
-            if let Some(lt) = self.world.get_mut::<LocalTransform>(entity) {
+        let mut pool = self.shared.lock();
+        let world = pool.world();
+        if let Some(entity) = find_alive_entity(world, drag.entity_index) {
+            if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
                 lt.0.translation = new_pos;
             }
         }
