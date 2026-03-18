@@ -16,8 +16,8 @@ External AI Agents (Claude Code, OpenClaw, etc.)
         │ euca CLI (primary) / HTTP REST (backend)
         ▼
 ┌─ Agent Interface ──────────────────────────────────┐
-│  status / observe / spawn / modify / despawn /     │
-│  step / play / pause / screenshot / auth login     │
+│  entity / sim / camera / game / trigger / ai /     │
+│  rule / projectile / ui / screenshot / scene       │
 └────────────────────────┬───────────────────────────┘
                          │
 ┌────────────────────────▼───────────────────────────┐
@@ -55,6 +55,7 @@ External AI Agents (Claude Code, OpenClaw, etc.)
 | `euca-editor` | egui editor: 3D viewport, hierarchy, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load, entity creation, grid, keyboard shortcuts | Done | 11 |
 | `euca-input` | InputState, ActionMap, InputSnapshot for humans + AI agents | Done | 4 |
 | `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, protocol | Done | 11 |
+| `euca-gameplay` | ECS-native game logic library: Health, Damage, Teams, Triggers, Projectiles, AI, Rules, GameState, DataTables | Done | 39 |
 | `euca-game` | Arena game: health, projectiles, shooting, elimination | Done | 4 |
 | `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) | Done | 0 |
 

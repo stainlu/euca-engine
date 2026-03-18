@@ -139,6 +139,32 @@ euca ai set <id> --behavior flee --target <threat_id> --speed 4
 
 AI sets entity Velocity each tick based on behavior. Requires entity to have a position (LocalTransform).
 
+### Rules (Data-Driven Game Logic)
+
+```bash
+# When blue team dies, spawn a replacement
+euca rule create --when death --filter team:2 --do-action "spawn sphere 3,3,0 blue"
+
+# Every 10 seconds, spawn a health pickup
+euca rule create --when timer:10 --do-action "spawn sphere 0,1,0 gold"
+
+# When health drops below 25, auto-heal
+euca rule create --when health-below:25 --do-action "heal this 50"
+
+# Kill scoring
+euca rule create --when death --filter team:2 --do-action "score source +1"
+
+# Management
+euca rule list
+```
+
+**Conditions:** `death`, `timer:N` (seconds), `health-below:N`
+**Filters:** `any`, `entity:N`, `team:N`
+**Actions:** `spawn <mesh> <x,y,z> [color]`, `damage <target> <amount>`, `heal <target> <amount>`, `score <target> <points>`, `despawn <target>`, `teleport <target> <x,y,z>`
+**Targets:** `this` (trigger entity), `source` (e.g. killer), `entity:N`
+
+Rules are ECS entities — they're saved/loaded with scenes and compose with all other systems.
+
 ### HUD (In-Game UI)
 
 ```bash
@@ -229,6 +255,9 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 | `--action` | damage:N / heal:N | trigger create |
 | `--fill` | 0.0-1.0 | ui bar |
 | `--size` | pixels | ui text |
+| `--when` | death/timer:N/health-below:N | rule create |
+| `--filter` | any/entity:N/team:N | rule create |
+| `--do-action` | action string (repeatable) | rule create |
 | `--output` | file path | screenshot |
 | `--server` | URL | global (default: http://localhost:3917) |
 
@@ -242,7 +271,24 @@ euca entity create --mesh cube --position="-3,1,0" --health 100 --team 1 --color
 euca entity create --mesh sphere --position 3,1,0 --health 100 --team 2 --color blue --physics Dynamic --collider sphere:0.5
 euca trigger create --position 0,0,0 --zone 1,1,1 --action damage:5
 euca ai set 3 --behavior chase --target 2 --speed 3
+euca rule create --when death --filter team:2 --do-action "score source +1"
+euca rule create --when death --filter team:2 --do-action "spawn sphere 3,3,0 blue"
+euca rule create --when timer:15 --do-action "spawn sphere 0,1,0 gold"
 euca ui text "DEATHMATCH" --x 0.5 --y 0.02 --size 28 --color yellow
+euca sim play
+```
+
+### Wave Survival (using rules)
+
+```bash
+euca game create --mode deathmatch --score-limit 20
+euca entity create --mesh cube --position 0,1,0 --health 200 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
+# Spawn enemies every 8 seconds
+euca rule create --when timer:8 --do-action "spawn sphere 5,2,0 blue"
+# Enemies chase the player
+euca rule create --when death --filter team:2 --do-action "score source +1"
+# Heal player when enemy dies
+euca rule create --when death --filter team:2 --do-action "heal entity:2 10"
 euca sim play
 ```
 

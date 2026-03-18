@@ -1,6 +1,6 @@
 # Euca Engine — V2 Roadmap
 
-> **Status (March 2026):** Phases A, B, C (partial), E, and F are complete. All 11 CRITICAL + 22 HIGH architectural issues from the UE5 comparison review are resolved. Phase F (Agent-Native Interface) unified the editor and agent worlds, added a rich CLI with screenshot capture, nit Ed25519 authentication, and SKILL.md. Phase D (Game-Ready Features) is the next focus.
+> **Status (March 2026):** Phases A, B, C (partial), E, F, and G are complete. Phase F (Agent-Native Interface) + Phase G (Game Logic Layer) give agents full game-building capability: health, damage, teams, triggers, projectiles, AI, HUD, data-driven rules, camera views, screenshots.
 
 ## What we built (V1 recap)
 
@@ -152,6 +152,7 @@ A → B → C → D → E (all complete except D partial, C partial)
 - Phase D in progress: game features (audio, animation, particles, client prediction still TODO)
 - ✅ Phase E done: all 11 CRITICAL issues from UE5 comparison resolved
 - ✅ Phase F done: agent-native interface (SharedWorld unification, rich CLI, screenshot, play/pause, nit auth, SKILL.md)
+- ✅ Phase G done: game logic layer (euca-gameplay: health, damage, teams, triggers, projectiles, AI, rules, game state, HUD, data tables — 39 tests)
 
 ---
 
@@ -168,3 +169,25 @@ A → B → C → D → E (all complete except D partial, C partial)
 4. ✅ **Play/pause control** — `EngineControl` resource with `Arc<AtomicBool>`, shared between editor toolbar and HTTP handler
 5. ✅ **nit authentication** — Ed25519 signature verification, session tokens, `euca auth login`
 6. ✅ **SKILL.md** — Full CLI reference for agent consumption
+
+---
+
+## Phase G: Game Logic Layer (COMPLETE)
+
+**Goal:** Enable agents to build complete games, not just 3D scenes.
+
+**Design principle:** Library of composable ECS primitives, not a framework. Rules ARE entities.
+
+**What was built:**
+
+New crate `euca-gameplay` (39 tests):
+1. ✅ **Health + Damage** — Health component, DamageEvent, DeathEvent, apply_damage_system, death_check_system
+2. ✅ **Teams + Respawn** — Team component, SpawnPoint, RespawnTimer, respawn_system
+3. ✅ **Projectiles** — Projectile component, collision detection, projectile_system
+4. ✅ **Trigger Zones** — TriggerZone with Damage/Heal/Teleport actions, trigger_system
+5. ✅ **AI Behavior** — AiGoal (Idle/Patrol/Chase/Flee), ai_system sets Velocity
+6. ✅ **Game State** — GameState resource, MatchConfig, phase transitions, score tracking
+7. ✅ **Data Tables** — JSON-loaded game configuration
+8. ✅ **Data-Driven Rules** — OnDeathRule, TimerRule, HealthBelowRule with GameAction execution. Agents define "when X, do Y" without code.
+9. ✅ **HUD** — Text, bars, rectangles via egui, controlled by CLI
+10. ✅ **Full CLI integration** — entity damage/heal, game create/state, trigger/projectile/ai/rule/ui commands

@@ -5,7 +5,7 @@ use serde_json::Value;
 #[command(
     name = "euca",
     about = "Euca Engine CLI — control the engine from the terminal",
-    after_help = "Examples:\n  euca entity list\n  euca entity create --position 1,2,3\n  euca entity update 5 --position 3,0,0\n  euca sim play\n  euca screenshot"
+    after_help = "Examples:\n  euca entity create --mesh cube --position 0,2,0 --health 100 --team 1 --color red\n  euca rule create --when death --filter team:2 --do-action \"score source +1\"\n  euca sim play\n  euca screenshot"
 )]
 struct Cli {
     /// Server URL

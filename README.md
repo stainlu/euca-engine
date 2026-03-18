@@ -50,7 +50,8 @@ cargo test --workspace
 | `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, state replication protocol |
 | `euca-agent` | HTTP API server + nit auth for AI agents (axum + tokio + ed25519-dalek) |
 | `euca-editor` | egui editor: 3D viewport, hierarchy panel, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load (JSON), entity creation (+Empty/Cube/Sphere), grid overlay, keyboard shortcuts (Delete/F/Ctrl+Z/Ctrl+Y) |
-| `euca-cli` | CLI for AI agents: observe, spawn, modify, despawn, step, play, pause, screenshot, auth |
+| `euca-gameplay` | ECS-native game logic: Health, Damage, Teams, Triggers, Projectiles, AI, Rules, GameState, DataTables (39 tests) |
+| `euca-cli` | CLI for AI agents: entity, sim, camera, game, trigger, projectile, ai, rule, ui, screenshot, scene, auth |
 
 ## Agent Interface
 
