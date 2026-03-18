@@ -158,7 +158,7 @@ euca rule create --when death --filter team:2 --do-action "score source +1"
 euca rule list
 ```
 
-**Conditions:** `death`, `timer:N` (seconds), `health-below:N`
+**Conditions:** `death`, `timer:N` (seconds), `health-below:N`, `score:N` (when any player reaches score), `phase:playing|post_match` (when game phase changes)
 **Filters:** `any`, `entity:N`, `team:N`
 **Actions:** `spawn <mesh> <x,y,z> [color]`, `damage <target> <amount>`, `heal <target> <amount>`, `score <target> <points>`, `despawn <target>`, `teleport <target> <x,y,z>`
 **Targets:** `this` (trigger entity), `source` (e.g. killer), `entity:N`
@@ -181,6 +181,21 @@ euca ui list                      # Show current elements
 ```
 
 Coordinates: (0,0) = top-left, (1,1) = bottom-right. HUD renders in the editor window.
+
+### Entity Templates
+
+```bash
+# Define a template
+euca template create soldier --mesh cube --health 100 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
+
+# Spawn instances at different positions
+euca template spawn soldier --position 0,2,0
+euca template spawn soldier --position 3,2,0
+euca template spawn soldier --position 6,2,0
+
+# List templates
+euca template list
+```
 
 ### Screenshot
 
