@@ -8,7 +8,7 @@ protocol: cli
 
 # EucaEngine — Agent Interface
 
-EucaEngine is a game engine you control via the `euca` CLI. You interact with a live, visual editor — spawn entities, move them, run physics, take screenshots to verify your work.
+EucaEngine is a game engine you control via the `euca` CLI. You interact with a live, visual editor — create entities, move them, run physics, take screenshots to verify your work.
 
 ## Quick Start
 
@@ -20,14 +20,14 @@ cargo run -p euca-editor --example editor
 euca status
 
 # 3. See what's in the scene
-euca observe
+euca entity list
 
 # 4. Move an entity
-euca modify 1 --transform 3,2,0
+euca entity update 1 --position 3,2,0
 
-# 5. Take a screenshot to see the result
+# 5. Take a screenshot to verify
 euca screenshot
-# Returns a PNG path — read it to verify visually
+# Returns a PNG path — read it to see the scene
 ```
 
 ## Authentication
@@ -35,164 +35,138 @@ euca screenshot
 EucaEngine uses [nit](https://github.com/newtype-ai/nit) for agent identity.
 
 ```bash
-# Install nit
 npm install -g @newtype-ai/nit
-
-# Initialize identity (one-time)
-nit init
-nit push
-
-# Login to the engine
+nit init && nit push
 euca auth login
-
-# Check auth status
 euca auth status
 ```
 
-## CLI Reference
+## Command Reference
 
-### Engine Status
-
-```bash
-euca status
-# Returns: { engine, version, entity_count, archetype_count, tick }
-```
-
-### Observe World State
+### Entity (CRUD)
 
 ```bash
-# All entities
-euca observe
+# List all entities
+euca entity list
 
-# Single entity
-euca observe --entity 5
+# Get a single entity
+euca entity get <id>
 
-# Output is JSON with: id, generation, transform, velocity, collider, physics_body
+# Create an entity
+euca entity create --position 1,2,3
+euca entity create --position 0,5,0 --physics Dynamic --collider aabb:0.5,0.5,0.5
+euca entity create --json '{"position": [1,2,3], "physics_body": "Dynamic"}'
+
+# Preview without creating
+euca entity create --position 1,2,3 --dry-run
+
+# Update an entity
+euca entity update <id> --position 3,0,0
+euca entity update <id> --velocity 0,5,0
+euca entity update <id> --json '{"transform": {"position": [1,2,3]}}'
+
+# Delete an entity
+euca entity delete <id>
+euca entity delete --all
 ```
 
-### Spawn Entity
+### Simulation
 
 ```bash
-# Basic entity at position
-euca spawn --position 1,2,3
-
-# With physics
-euca spawn --position 0,5,0 --physics Dynamic --collider aabb:0.5,0.5,0.5
-
-# With scale
-euca spawn --position 1,2,3 --scale 2,2,2
+euca sim play              # Start physics
+euca sim pause             # Pause
+euca sim step --ticks 10   # Advance 10 ticks
+euca sim reset             # Reset to initial scene
 ```
 
-### Modify Entity
+### Screenshot
 
 ```bash
-# Change position
-euca modify <id> --transform x,y,z
-
-# Change velocity
-euca modify <id> --velocity 0,5,0
-
-# Change physics body type
-euca modify <id> --physics Static
-
-# Change collider
-euca modify <id> --collider sphere:1.0
-
-# Full JSON control
-euca modify <id> --json '{"transform": {"position": [1,2,3]}, "velocity": {"linear": [0,1,0], "angular": [0,0,0]}}'
+euca screenshot                     # Save to temp file, print path
+euca screenshot --output scene.png  # Save to specific path
 ```
 
-### Despawn Entity
+### Status & Schema
 
 ```bash
-euca despawn <id>
-euca despawn --all    # Clear everything
+euca status          # Engine info: version, entity count, tick
+euca schema          # All component types and their fields
 ```
 
-### Simulation Control
+### Auth
 
 ```bash
-euca step 10         # Advance 10 physics ticks
-euca play            # Start continuous simulation
-euca pause           # Pause simulation
-euca reset           # Reset to initial scene
+euca auth login      # Login with nit identity
+euca auth status     # Check authentication
 ```
 
-### Screenshot (visual feedback)
-
-```bash
-# Capture viewport as PNG (returns temp file path)
-euca screenshot
-
-# Save to specific path
-euca screenshot --output scene.png
-```
-
-Use screenshots to verify your work visually. The PNG captures the 3D viewport without UI panels.
-
-### Schema
-
-```bash
-euca schema
-# Returns available components and their fields
-```
-
-## Components Reference
+## Components
 
 | Component | Fields | Notes |
 |-----------|--------|-------|
 | LocalTransform | position [f32;3], rotation [f32;4], scale [f32;3] | Entity's local transform |
-| GlobalTransform | (same) | Read-only. Computed from hierarchy. |
+| GlobalTransform | (same) | Read-only, computed from hierarchy |
 | Velocity | linear [f32;3], angular [f32;3] | Requires PhysicsBody |
 | PhysicsBody | body_type: Dynamic / Static / Kinematic | |
 | Collider | Aabb{hx,hy,hz}, Sphere{radius}, Capsule{radius,half_height} | |
 
-## Common Workflows
+## Flag Reference
+
+| Flag | Format | Used in |
+|------|--------|---------|
+| `--position` | `x,y,z` | create, update |
+| `--scale` | `x,y,z` | create, update |
+| `--velocity` | `x,y,z` | update |
+| `--physics` | `Dynamic\|Static\|Kinematic` | create, update |
+| `--collider` | `aabb:h,h,h` or `sphere:r` or `capsule:r,h` | create, update |
+| `--json` | JSON string | create, update (overrides other flags) |
+| `--dry-run` | (flag) | create, update |
+| `--output` | file path | screenshot |
+| `--server` | URL | global (default: http://localhost:3917) |
+
+## Workflows
 
 ### Build a Scene
 
 ```bash
-# Spawn ground
-euca spawn --position 0,0,0 --physics Static --collider aabb:10,0.01,10
-
-# Add objects
-euca spawn --position 0,2,0 --physics Dynamic --collider aabb:0.5,0.5,0.5
-euca spawn --position 2,3,0 --physics Dynamic --collider sphere:0.5
-
-# Check result
+euca entity create --position 0,0,0 --physics Static --collider aabb:10,0.01,10
+euca entity create --position 0,2,0 --physics Dynamic --collider aabb:0.5,0.5,0.5
+euca entity create --position 2,3,0 --physics Dynamic --collider sphere:0.5
 euca screenshot --output scene.png
 ```
 
 ### Test Physics
 
 ```bash
-# Drop objects
-euca play
-# Wait...
-euca pause
-
-# Check where things landed
-euca observe --entity 2
+euca sim play
+# wait...
+euca sim pause
+euca entity get 2
 euca screenshot
 ```
 
 ### Iterate on Layout
 
 ```bash
-# Move entity 3 to a new position
-euca modify 3 --transform 5,1,0
-
-# Verify
+euca entity update 3 --position 5,1,0
 euca screenshot
-
-# Adjust
-euca modify 3 --transform 5,1.5,0
+euca entity update 3 --position 5,1.5,0
 euca screenshot
 ```
 
-## Server Details
+## Output
 
-- **Port**: 3917 (default)
-- **Protocol**: HTTP REST (JSON)
-- **Override**: `euca --server http://localhost:PORT ...`
-- **All responses are JSON** (pipe through `jq` for filtering)
+All commands return JSON. Pipe through `jq` for filtering:
+
+```bash
+euca entity list | jq '.entities[] | select(.physics_body == "Dynamic") | .id'
+```
+
+## Backward Compatibility
+
+Old commands still work as hidden aliases:
+- `euca spawn` → `euca entity create`
+- `euca modify` → `euca entity update`
+- `euca despawn` → `euca entity delete`
+- `euca observe` → `euca entity list`
+- `euca play/pause/step/reset` → `euca sim play/pause/step/reset`
