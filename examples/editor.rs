@@ -301,9 +301,10 @@ impl EditorApp {
             euca_gameplay::ai_system(world, dt);
             euca_gameplay::game_state_system(world, dt);
 
-            if let Some(state) = world.resource::<euca_gameplay::GameState>() {
-                let delay = state.config.respawn_delay;
-                drop(state);
+            let respawn_delay = world
+                .resource::<euca_gameplay::GameState>()
+                .map(|s| s.config.respawn_delay);
+            if let Some(delay) = respawn_delay {
                 euca_gameplay::respawn_system(world, dt);
                 euca_gameplay::start_respawn_on_death(world, delay);
             }
