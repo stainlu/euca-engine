@@ -306,6 +306,11 @@ impl EditorApp {
             euca_gameplay::ai_system(world, dt);
             euca_gameplay::game_state_system(world, dt);
 
+            // Data-driven rules (evaluate conditions → execute actions)
+            euca_gameplay::on_death_rule_system(world);
+            euca_gameplay::timer_rule_system(world, dt);
+            euca_gameplay::health_below_rule_system(world);
+
             let respawn_delay = world
                 .resource::<euca_gameplay::GameState>()
                 .map(|s| s.config.respawn_delay);

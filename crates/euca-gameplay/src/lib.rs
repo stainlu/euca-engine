@@ -15,6 +15,7 @@ pub mod combat;
 pub mod data_table;
 pub mod game_state;
 pub mod health;
+pub mod rules;
 pub mod teams;
 pub mod triggers;
 
@@ -24,5 +25,10 @@ pub use combat::{Projectile, projectile_system};
 pub use data_table::DataTable;
 pub use game_state::{GamePhase, GameState, MatchConfig, ScoreEvent, game_state_system};
 pub use health::{DamageEvent, Dead, DeathEvent, Health, apply_damage_system, death_check_system};
+pub use rules::{
+    ActionTarget, GameAction, HealthBelowRule, OnDeathRule, RuleCondition, RuleFilter, TimerRule,
+    health_below_rule_system, on_death_rule_system, parse_action, parse_filter, parse_when,
+    timer_rule_system,
+};
 pub use teams::{RespawnTimer, SpawnPoint, Team, respawn_system, start_respawn_on_death};
 pub use triggers::{TriggerAction, TriggerZone, trigger_system};

@@ -66,6 +66,12 @@ enum Commands {
         command: AiCommands,
     },
 
+    /// Game rules: when X happens, do Y
+    Rule {
+        #[command(subcommand)]
+        command: RuleCommands,
+    },
+
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -378,6 +384,24 @@ enum AiCommands {
         #[arg(long, default_value = "3")]
         speed: f32,
     },
+}
+
+#[derive(Subcommand)]
+enum RuleCommands {
+    /// Create a game rule: when condition fires, execute actions
+    Create {
+        /// Condition: "death", "timer:N", "health-below:N"
+        #[arg(long)]
+        when: String,
+        /// Filter: "any", "entity:N", "team:N"
+        #[arg(long, default_value = "any")]
+        filter: String,
+        /// Actions (can repeat): "spawn cube 0,5,0", "score source +1", "damage this 10"
+        #[arg(long)]
+        do_action: Vec<String>,
+    },
+    /// List all rules
+    List,
 }
 
 #[derive(Subcommand)]
@@ -818,6 +842,29 @@ fn main() {
                     body["target"] = serde_json::json!(t);
                 }
                 let resp = client.post(format!("{server}/ai/set")).json(&body).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Rules ──
+        Commands::Rule { command } => match command {
+            RuleCommands::Create {
+                when,
+                filter,
+                do_action,
+            } => {
+                let resp = client
+                    .post(format!("{server}/rule/create"))
+                    .json(&serde_json::json!({
+                        "when": when,
+                        "filter": filter,
+                        "actions": do_action,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+            RuleCommands::List => {
+                let resp = client.get(format!("{server}/rule/list")).send();
                 handle_response(resp)
             }
         },

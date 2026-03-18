@@ -1425,3 +1425,105 @@ pub async fn ai_set(
         }),
     })
 }
+
+// ── Rule endpoints ──
+
+/// POST /rule/create — create a game rule
+pub async fn rule_create(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let when_str = req.get("when").and_then(|v| v.as_str()).unwrap_or("");
+    let filter_str = req.get("filter").and_then(|v| v.as_str()).unwrap_or("any");
+    let action_strs: Vec<String> = req
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let condition = match euca_gameplay::parse_when(when_str) {
+        Some(c) => c,
+        None => {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": format!("Unknown condition: '{when_str}'. Use: death, timer:N, health-below:N"),
+            }));
+        }
+    };
+
+    let filter = euca_gameplay::parse_filter(filter_str).unwrap_or(euca_gameplay::RuleFilter::Any);
+
+    let actions: Vec<euca_gameplay::GameAction> = action_strs
+        .iter()
+        .filter_map(|s| euca_gameplay::parse_action(s))
+        .collect();
+
+    if actions.is_empty() {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "No valid actions. Use: spawn, damage, heal, score, despawn, teleport, color, text",
+        }));
+    }
+
+    let rule_id = world.with(|w, _| match condition {
+        euca_gameplay::RuleCondition::Death => {
+            let entity = w.spawn(euca_gameplay::OnDeathRule { filter, actions });
+            entity.index()
+        }
+        euca_gameplay::RuleCondition::Timer(interval) => {
+            let entity = w.spawn(euca_gameplay::TimerRule {
+                interval,
+                elapsed: 0.0,
+                repeat: true,
+                actions,
+            });
+            entity.index()
+        }
+        euca_gameplay::RuleCondition::HealthBelow(threshold) => {
+            let entity = w.spawn(euca_gameplay::HealthBelowRule {
+                filter,
+                threshold,
+                triggered_entities: std::collections::HashSet::new(),
+                actions,
+            });
+            entity.index()
+        }
+    });
+
+    Json(serde_json::json!({
+        "ok": true,
+        "rule_id": rule_id,
+        "when": when_str,
+    }))
+}
+
+/// GET /rule/list — list all rules
+pub async fn rule_list(State(world): State<SharedWorld>) -> Json<serde_json::Value> {
+    let rules = world.with_world(|w| {
+        let mut rules = Vec::new();
+
+        let death_rules = euca_ecs::Query::<(euca_ecs::Entity, &euca_gameplay::OnDeathRule)>::new(w);
+        for (e, _r) in death_rules.iter() {
+            rules.push(serde_json::json!({"id": e.index(), "type": "on_death"}));
+        }
+
+        let timer_rules = euca_ecs::Query::<(euca_ecs::Entity, &euca_gameplay::TimerRule)>::new(w);
+        for (e, t) in timer_rules.iter() {
+            rules.push(serde_json::json!({"id": e.index(), "type": "timer", "interval": t.interval}));
+        }
+
+        let health_rules =
+            euca_ecs::Query::<(euca_ecs::Entity, &euca_gameplay::HealthBelowRule)>::new(w);
+        for (e, h) in health_rules.iter() {
+            rules.push(serde_json::json!({"id": e.index(), "type": "health_below", "threshold": h.threshold}));
+        }
+
+        rules
+    });
+
+    Json(serde_json::json!({"rules": rules, "count": rules.len()}))
+}

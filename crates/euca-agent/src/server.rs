@@ -65,6 +65,8 @@ impl AgentServer {
             .route("/trigger/create", post(routes::trigger_create))
             .route("/projectile/spawn", post(routes::projectile_spawn))
             .route("/ai/set", post(routes::ai_set))
+            .route("/rule/create", post(routes::rule_create))
+            .route("/rule/list", get(routes::rule_list))
             .route("/auth/login", post(routes::auth_login))
             .route("/auth/status", get(routes::auth_status))
             .route("/schema", get(routes::schema))
