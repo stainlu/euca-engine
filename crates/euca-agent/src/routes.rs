@@ -13,9 +13,64 @@ use euca_scene::{GlobalTransform, LocalTransform};
 /// Allows the HTTP handler to assign visuals to spawned entities.
 #[derive(Clone)]
 pub struct DefaultAssets {
-    pub cube_mesh: MeshHandle,
-    pub sphere_mesh: MeshHandle,
+    pub meshes: std::collections::HashMap<String, MeshHandle>,
+    pub materials: std::collections::HashMap<String, MaterialHandle>,
     pub default_material: MaterialHandle,
+}
+
+impl DefaultAssets {
+    pub fn mesh(&self, name: &str) -> Option<MeshHandle> {
+        self.meshes.get(name).copied()
+    }
+
+    /// Resolve a color string to a material handle.
+    /// Accepts named colors ("red", "gold") or RGB ("0.5,0.2,0.8") mapped to nearest preset.
+    pub fn material(&self, color: &str) -> Option<MaterialHandle> {
+        // Try exact name match first
+        if let Some(h) = self.materials.get(color) {
+            return Some(*h);
+        }
+        // Try RGB parsing → nearest preset
+        let parts: Vec<f32> = color
+            .split(',')
+            .filter_map(|p| p.trim().parse().ok())
+            .collect();
+        if parts.len() == 3 {
+            return Some(self.nearest_color(parts[0], parts[1], parts[2]));
+        }
+        None
+    }
+
+    fn nearest_color(&self, r: f32, g: f32, b: f32) -> MaterialHandle {
+        // Known preset RGB values (must match what's uploaded in editor setup_scene)
+        let presets: &[(&str, [f32; 3])] = &[
+            ("red", [0.9, 0.1, 0.1]),
+            ("blue", [0.1, 0.2, 0.9]),
+            ("green", [0.2, 0.8, 0.2]),
+            ("gold", [1.0, 0.84, 0.0]),
+            ("silver", [0.95, 0.95, 0.95]),
+            ("gray", [0.5, 0.5, 0.5]),
+            ("white", [1.0, 1.0, 1.0]),
+            ("black", [0.05, 0.05, 0.05]),
+            ("yellow", [1.0, 1.0, 0.0]),
+            ("cyan", [0.0, 0.9, 0.9]),
+            ("magenta", [0.9, 0.0, 0.9]),
+            ("orange", [1.0, 0.5, 0.0]),
+        ];
+        let mut best = "blue";
+        let mut best_dist = f32::MAX;
+        for (name, rgb) in presets {
+            let dist = (r - rgb[0]).powi(2) + (g - rgb[1]).powi(2) + (b - rgb[2]).powi(2);
+            if dist < best_dist {
+                best_dist = dist;
+                best = name;
+            }
+        }
+        self.materials
+            .get(best)
+            .copied()
+            .unwrap_or(self.default_material)
+    }
 }
 
 use crate::state::{Owner, SharedWorld};
@@ -149,9 +204,12 @@ pub struct SpawnRequest {
     /// Agent that owns this entity. If set, only this agent can despawn/modify it.
     #[serde(default)]
     pub agent_id: Option<u32>,
-    /// Mesh to attach: "cube" or "sphere"
+    /// Mesh to attach: "cube", "sphere", "plane", "cylinder", "cone"
     #[serde(default)]
     pub mesh: Option<String>,
+    /// Color: named ("red", "gold") or RGB ("0.5,0.2,0.8")
+    #[serde(default)]
+    pub color: Option<String>,
     #[serde(default)]
     pub position: Option<[f32; 3]>,
     #[serde(default)]
@@ -191,6 +249,9 @@ pub struct ComponentPatch {
     /// Agent requesting the patch. Must match entity's Owner if set.
     #[serde(default)]
     pub agent_id: Option<u32>,
+    /// Color: named ("red", "gold") or RGB ("0.5,0.2,0.8")
+    #[serde(default)]
+    pub color: Option<String>,
     #[serde(default)]
     pub transform: Option<TransformData>,
     #[serde(default)]
@@ -342,6 +403,18 @@ pub async fn patch_entity(
                 lt.0.rotation = euca_math::Quat::from_xyzw(rot[0], rot[1], rot[2], rot[3]);
             }
         }
+        if let Some(color) = &patch.color
+            && let Some(assets) = w.resource::<DefaultAssets>().cloned()
+            && let Some(mat) = assets.material(color)
+        {
+            if w.get::<MaterialRef>(entity).is_some() {
+                if let Some(mr) = w.get_mut::<MaterialRef>(entity) {
+                    mr.handle = mat;
+                }
+            } else {
+                w.insert(entity, MaterialRef { handle: mat });
+            }
+        }
         if let Some(v) = &patch.velocity {
             apply_velocity(w, entity, v);
         }
@@ -398,20 +471,19 @@ pub async fn spawn(
             w.insert(entity, Owner(agent_id));
         }
 
-        // Assign mesh + default material from pre-uploaded assets
-        if let Some(mesh_name) = &req.mesh
-            && let Some(assets) = w.resource::<DefaultAssets>()
+        // Assign mesh + material from pre-uploaded assets
+        if let Some(assets) = w.resource::<DefaultAssets>().cloned()
+            && let Some(mesh_name) = &req.mesh
+            && let Some(mesh) = assets.mesh(mesh_name)
         {
-            let mesh_handle = match mesh_name.as_str() {
-                "cube" => Some(assets.cube_mesh),
-                "sphere" => Some(assets.sphere_mesh),
-                _ => None,
-            };
-            let mat = assets.default_material;
-            if let Some(mesh) = mesh_handle {
-                w.insert(entity, MeshRenderer { mesh });
-                w.insert(entity, MaterialRef { handle: mat });
-            }
+            w.insert(entity, MeshRenderer { mesh });
+            // Material: use --color if provided, else default
+            let mat = req
+                .color
+                .as_deref()
+                .and_then(|c| assets.material(c))
+                .unwrap_or(assets.default_material);
+            w.insert(entity, MaterialRef { handle: mat });
         }
 
         if let Some(v) = &req.velocity {

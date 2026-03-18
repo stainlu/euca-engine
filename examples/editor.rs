@@ -119,26 +119,105 @@ impl EditorApp {
         // Initialize gizmo (reuses cube mesh, uploads bright R/G/B materials)
         self.editor_state.gizmo = euca_editor::gizmo::init_gizmo(renderer, gpu, cube);
 
-        // Grid texture for ground (dark lines on lighter background)
+        // Grid texture for ground
         let grid_tex = renderer.checkerboard_texture(gpu, 512, 32);
         let grid_mat = renderer.upload_material(
             gpu,
             &Material::new([0.45, 0.45, 0.45, 1.0], 0.0, 0.95).with_texture(grid_tex),
         );
-        let blue = renderer.upload_material(gpu, &Material::blue_plastic());
+
+        // Upload material palette for agent use
+        let mut materials = std::collections::HashMap::new();
+        let upload =
+            |r: &mut Renderer,
+             g: &GpuContext,
+             mat: Material,
+             name: &str,
+             map: &mut std::collections::HashMap<String, MaterialHandle>| {
+                let h = r.upload_material(g, &mat);
+                map.insert(name.to_string(), h);
+                h
+            };
+        let blue = upload(
+            renderer,
+            gpu,
+            Material::blue_plastic(),
+            "blue",
+            &mut materials,
+        );
+        upload(
+            renderer,
+            gpu,
+            Material::red_plastic(),
+            "red",
+            &mut materials,
+        );
+        upload(renderer, gpu, Material::green(), "green", &mut materials);
+        upload(renderer, gpu, Material::gold(), "gold", &mut materials);
+        upload(renderer, gpu, Material::silver(), "silver", &mut materials);
+        upload(renderer, gpu, Material::gray(), "gray", &mut materials);
+        upload(
+            renderer,
+            gpu,
+            Material::new([1.0, 1.0, 1.0, 1.0], 0.0, 0.5),
+            "white",
+            &mut materials,
+        );
+        upload(
+            renderer,
+            gpu,
+            Material::new([0.05, 0.05, 0.05, 1.0], 0.0, 0.5),
+            "black",
+            &mut materials,
+        );
+        upload(
+            renderer,
+            gpu,
+            Material::new([1.0, 1.0, 0.0, 1.0], 0.0, 0.4),
+            "yellow",
+            &mut materials,
+        );
+        upload(
+            renderer,
+            gpu,
+            Material::new([0.0, 0.9, 0.9, 1.0], 0.0, 0.4),
+            "cyan",
+            &mut materials,
+        );
+        upload(
+            renderer,
+            gpu,
+            Material::new([0.9, 0.0, 0.9, 1.0], 0.0, 0.4),
+            "magenta",
+            &mut materials,
+        );
+        upload(
+            renderer,
+            gpu,
+            Material::new([1.0, 0.5, 0.0, 1.0], 0.0, 0.4),
+            "orange",
+            &mut materials,
+        );
+
         self.default_material = Some(blue);
 
         // Bright orange outline material for selection highlight
         self.outline_material =
             Some(renderer.upload_material(gpu, &Material::new([1.0, 0.6, 0.0, 1.0], 0.0, 1.0)));
 
+        // Mesh palette
+        let mut meshes = std::collections::HashMap::new();
+        meshes.insert("cube".to_string(), cube);
+        meshes.insert("sphere".to_string(), sphere);
+        meshes.insert("plane".to_string(), plane);
+
         let mut pool = self.shared.lock();
         let world = pool.world();
 
         // Register default assets for CLI/HTTP entity creation
         world.insert_resource(euca_agent::routes::DefaultAssets {
-            cube_mesh: cube,
-            sphere_mesh: sphere,
+            meshes,
+            materials,
             default_material: blue,
         });
 

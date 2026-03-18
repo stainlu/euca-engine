@@ -124,9 +124,12 @@ enum EntityCommands {
     },
     /// Create a new entity
     Create {
-        /// Mesh: "cube" or "sphere"
+        /// Mesh: "cube", "sphere", "plane", "cylinder", "cone"
         #[arg(short, long)]
         mesh: Option<String>,
+        /// Color: name ("red", "gold") or RGB ("0.5,0.2,0.8")
+        #[arg(short, long)]
+        color: Option<String>,
         /// Position as "x,y,z"
         #[arg(short, long)]
         position: Option<String>,
@@ -150,6 +153,9 @@ enum EntityCommands {
     Update {
         /// Entity ID
         id: u32,
+        /// Color: name ("red", "gold") or RGB ("0.5,0.2,0.8")
+        #[arg(short, long)]
+        color: Option<String>,
         /// Position as "x,y,z"
         #[arg(short, long)]
         position: Option<String>,
@@ -263,6 +269,7 @@ fn parse_collider(s: &str) -> Option<Value> {
 /// Build a spawn/create JSON body from friendly flags.
 fn build_create_body(
     mesh: &Option<String>,
+    color: &Option<String>,
     position: &Option<String>,
     scale: &Option<String>,
     physics: &Option<String>,
@@ -271,6 +278,9 @@ fn build_create_body(
     let mut body = serde_json::json!({});
     if let Some(m) = mesh {
         body["mesh"] = serde_json::json!(m);
+    }
+    if let Some(c) = color {
+        body["color"] = serde_json::json!(c);
     }
     if let Some(s) = position
         && let Some(v) = parse_vec3(s)
@@ -295,6 +305,7 @@ fn build_create_body(
 
 /// Build an update/patch JSON body from friendly flags.
 fn build_update_body(
+    color: &Option<String>,
     position: &Option<String>,
     scale: &Option<String>,
     velocity: &Option<String>,
@@ -302,6 +313,9 @@ fn build_update_body(
     collider: &Option<String>,
 ) -> Value {
     let mut body = serde_json::json!({});
+    if let Some(c) = color {
+        body["color"] = serde_json::json!(c);
+    }
     if position.is_some() || scale.is_some() {
         let mut transform = serde_json::json!({});
         if let Some(p) = position
@@ -370,6 +384,7 @@ fn main() {
             }
             EntityCommands::Create {
                 mesh,
+                color,
                 position,
                 scale,
                 physics,
@@ -380,7 +395,7 @@ fn main() {
                 let body = if let Some(ref raw) = json {
                     parse_json_flag(raw)
                 } else {
-                    build_create_body(&mesh, &position, &scale, &physics, &collider)
+                    build_create_body(&mesh, &color, &position, &scale, &physics, &collider)
                 };
                 if dry_run {
                     println!("{}", serde_json::to_string_pretty(&body).unwrap());
@@ -393,6 +408,7 @@ fn main() {
             }
             EntityCommands::Update {
                 id,
+                color,
                 position,
                 scale,
                 velocity,
@@ -404,7 +420,7 @@ fn main() {
                 let body = if let Some(ref raw) = json {
                     parse_json_flag(raw)
                 } else {
-                    build_update_body(&position, &scale, &velocity, &physics, &collider)
+                    build_update_body(&color, &position, &scale, &velocity, &physics, &collider)
                 };
                 if dry_run {
                     println!("{}", serde_json::to_string_pretty(&body).unwrap());
@@ -494,7 +510,7 @@ fn main() {
             physics,
             collider,
         } => {
-            let body = build_create_body(&None, &position, &scale, &physics, &collider);
+            let body = build_create_body(&None, &None, &position, &scale, &physics, &collider);
             let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)
         }
@@ -510,7 +526,7 @@ fn main() {
                 parse_json_flag(raw)
             } else {
                 // Map old --transform to --position
-                build_update_body(&transform, &None, &velocity, &physics, &collider)
+                build_update_body(&None, &transform, &None, &velocity, &physics, &collider)
             };
             let resp = client
                 .post(format!("{server}/entities/{id}/components"))
