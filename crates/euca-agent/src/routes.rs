@@ -134,6 +134,12 @@ pub struct RichEntityData {
     pub team: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dead: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_zone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projectile: Option<bool>,
 }
 
 fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
@@ -183,6 +189,30 @@ fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
         None
     };
 
+    let ai = w
+        .get::<euca_gameplay::AiGoal>(entity)
+        .map(|g| match &g.behavior {
+            euca_gameplay::AiBehavior::Idle => "idle".to_string(),
+            euca_gameplay::AiBehavior::Patrol => {
+                format!("patrol ({} waypoints)", g.waypoints.len())
+            }
+            euca_gameplay::AiBehavior::Chase => format!(
+                "chase (target: {})",
+                g.target
+                    .map(|t| t.index().to_string())
+                    .unwrap_or("none".into())
+            ),
+            euca_gameplay::AiBehavior::Flee => "flee".to_string(),
+        });
+    let trigger_zone = w
+        .get::<euca_gameplay::TriggerZone>(entity)
+        .map(|tz| format!("{:?}", tz.action));
+    let projectile = if w.get::<euca_gameplay::Projectile>(entity).is_some() {
+        Some(true)
+    } else {
+        None
+    };
+
     RichEntityData {
         id: entity.index(),
         generation: entity.generation(),
@@ -193,6 +223,9 @@ fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
         health,
         team,
         dead,
+        ai,
+        trigger_zone,
+        projectile,
     }
 }
 
