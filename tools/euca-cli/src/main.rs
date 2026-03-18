@@ -124,6 +124,9 @@ enum EntityCommands {
     },
     /// Create a new entity
     Create {
+        /// Mesh: "cube" or "sphere"
+        #[arg(short, long)]
+        mesh: Option<String>,
         /// Position as "x,y,z"
         #[arg(short, long)]
         position: Option<String>,
@@ -255,12 +258,16 @@ fn parse_collider(s: &str) -> Option<Value> {
 
 /// Build a spawn/create JSON body from friendly flags.
 fn build_create_body(
+    mesh: &Option<String>,
     position: &Option<String>,
     scale: &Option<String>,
     physics: &Option<String>,
     collider: &Option<String>,
 ) -> Value {
     let mut body = serde_json::json!({});
+    if let Some(m) = mesh {
+        body["mesh"] = serde_json::json!(m);
+    }
     if let Some(s) = position
         && let Some(v) = parse_vec3(s)
     {
@@ -358,6 +365,7 @@ fn main() {
                 handle_response(resp)
             }
             EntityCommands::Create {
+                mesh,
                 position,
                 scale,
                 physics,
@@ -368,7 +376,7 @@ fn main() {
                 let body = if let Some(ref raw) = json {
                     parse_json_flag(raw)
                 } else {
-                    build_create_body(&position, &scale, &physics, &collider)
+                    build_create_body(&mesh, &position, &scale, &physics, &collider)
                 };
                 if dry_run {
                     println!("{}", serde_json::to_string_pretty(&body).unwrap());
@@ -487,7 +495,7 @@ fn main() {
             physics,
             collider,
         } => {
-            let body = build_create_body(&position, &scale, &physics, &collider);
+            let body = build_create_body(&None, &position, &scale, &physics, &collider);
             let resp = client
                 .post(format!("{server}/spawn"))
                 .json(&body)

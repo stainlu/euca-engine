@@ -1065,6 +1065,7 @@ dependencies = [
  "euca-math",
  "euca-net",
  "euca-physics",
+ "euca-render",
  "euca-scene",
  "log",
  "rand",

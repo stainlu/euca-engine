@@ -6,7 +6,17 @@ use serde::{Deserialize, Serialize};
 use euca_ecs::{Entity, Query};
 use euca_math::Vec3;
 use euca_physics::{Collider, ColliderShape, PhysicsBody, RigidBodyType, Velocity};
+use euca_render::{MaterialHandle, MaterialRef, MeshHandle, MeshRenderer};
 use euca_scene::{GlobalTransform, LocalTransform};
+
+/// Pre-uploaded mesh/material handles stored as a World resource.
+/// Allows the HTTP handler to assign visuals to spawned entities.
+#[derive(Clone)]
+pub struct DefaultAssets {
+    pub cube_mesh: MeshHandle,
+    pub sphere_mesh: MeshHandle,
+    pub default_material: MaterialHandle,
+}
 
 use crate::state::{Owner, SharedWorld};
 
@@ -139,6 +149,9 @@ pub struct SpawnRequest {
     /// Agent that owns this entity. If set, only this agent can despawn/modify it.
     #[serde(default)]
     pub agent_id: Option<u32>,
+    /// Mesh to attach: "cube" or "sphere"
+    #[serde(default)]
+    pub mesh: Option<String>,
     #[serde(default)]
     pub position: Option<[f32; 3]>,
     #[serde(default)]
@@ -385,6 +398,22 @@ pub async fn spawn(
             w.insert(entity, Owner(agent_id));
         }
 
+        // Assign mesh + default material from pre-uploaded assets
+        if let Some(mesh_name) = &req.mesh
+            && let Some(assets) = w.resource::<DefaultAssets>()
+        {
+            let mesh_handle = match mesh_name.as_str() {
+                "cube" => Some(assets.cube_mesh),
+                "sphere" => Some(assets.sphere_mesh),
+                _ => None,
+            };
+            let mat = assets.default_material;
+            if let Some(mesh) = mesh_handle {
+                w.insert(entity, MeshRenderer { mesh });
+                w.insert(entity, MaterialRef { handle: mat });
+            }
+        }
+
         if let Some(v) = &req.velocity {
             apply_velocity(w, entity, v);
         }
@@ -393,6 +422,10 @@ pub async fn spawn(
         }
         if let Some(pb) = &req.physics_body {
             apply_physics_body(w, entity, pb);
+            // Dynamic bodies need Velocity for physics simulation (gravity)
+            if pb == "Dynamic" && w.get::<Velocity>(entity).is_none() {
+                w.insert(entity, Velocity::default());
+            }
         }
 
         SpawnResponse {

@@ -10,6 +10,7 @@ euca-scene = { path = "../euca-scene" }
 euca-physics = { path = "../euca-physics" }
 euca-net = { path = "../euca-net" }
 euca-input = { path = "../euca-input" }
+euca-render = { path = "../euca-render" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }

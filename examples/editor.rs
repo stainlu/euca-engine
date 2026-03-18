@@ -7,7 +7,7 @@ use euca_editor::{
 };
 use euca_math::{Transform, Vec3};
 use euca_physics::{
-    Collider, PhysicsBody, PhysicsConfig, Ray, Velocity, physics_step_system, raycast_collider,
+    Collider, PhysicsBody, PhysicsConfig, Ray, physics_step_system, raycast_collider,
 };
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
@@ -125,10 +125,7 @@ impl EditorApp {
             gpu,
             &Material::new([0.45, 0.45, 0.45, 1.0], 0.0, 0.95).with_texture(grid_tex),
         );
-        let red = renderer.upload_material(gpu, &Material::red_plastic());
         let blue = renderer.upload_material(gpu, &Material::blue_plastic());
-        let gold = renderer.upload_material(gpu, &Material::gold());
-        let green = renderer.upload_material(gpu, &Material::green());
         self.default_material = Some(blue);
 
         // Bright orange outline material for selection highlight
@@ -138,7 +135,14 @@ impl EditorApp {
         let mut pool = self.shared.lock();
         let world = pool.world();
 
-        // Ground with grid texture
+        // Register default assets for CLI/HTTP entity creation
+        world.insert_resource(euca_agent::routes::DefaultAssets {
+            cube_mesh: cube,
+            sphere_mesh: sphere,
+            default_material: blue,
+        });
+
+        // Ground plane with grid texture
         let g = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         world.insert(g, GlobalTransform::default());
         world.insert(g, MeshRenderer { mesh: plane });
@@ -146,90 +150,7 @@ impl EditorApp {
         world.insert(g, PhysicsBody::fixed());
         world.insert(g, Collider::aabb(10.0, 0.01, 10.0));
 
-        // Cubes
-        let spawn =
-            |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
-                let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
-                w.insert(e, GlobalTransform::default());
-                w.insert(e, MeshRenderer { mesh });
-                w.insert(e, MaterialRef { handle: mat });
-                w.insert(e, PhysicsBody::dynamic());
-                w.insert(e, Velocity::default());
-                w.insert(e, Collider::aabb(half, half, half).with_restitution(0.4));
-            };
-
-        let silver = renderer.upload_material(gpu, &Material::silver());
-        let gray = renderer.upload_material(gpu, &Material::gray());
-
-        // ── Static scene objects (arranged for visual appeal) ──
-
-        let spawn_static =
-            |w: &mut World, pos: Vec3, mesh: MeshHandle, mat: MaterialHandle, half: f32| {
-                let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
-                w.insert(e, GlobalTransform::default());
-                w.insert(e, MeshRenderer { mesh });
-                w.insert(e, MaterialRef { handle: mat });
-                w.insert(e, PhysicsBody::fixed());
-                w.insert(e, Collider::aabb(half, half, half));
-            };
-
-        let spawn_sphere_static = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
-            let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
-            w.insert(e, GlobalTransform::default());
-            w.insert(e, MeshRenderer { mesh: sphere });
-            w.insert(e, MaterialRef { handle: mat });
-            w.insert(e, PhysicsBody::fixed());
-            w.insert(e, Collider::sphere(0.5));
-        };
-
-        // Center pedestal (stacked cubes)
-        spawn_static(world, Vec3::new(0.0, 0.5, 0.0), cube, gray, 0.5);
-        spawn_static(world, Vec3::new(0.0, 1.5, 0.0), cube, silver, 0.4);
-        // Gold sphere on top of pedestal
-        spawn_sphere_static(world, Vec3::new(0.0, 2.5, 0.0), gold);
-
-        // Four pillars in a square — taller
-        for &(x, z) in &[(4.0, 4.0), (-4.0, 4.0), (4.0, -4.0), (-4.0, -4.0)] {
-            spawn_static(world, Vec3::new(x, 0.5, z), cube, gray, 0.35);
-            spawn_static(world, Vec3::new(x, 1.5, z), cube, gray, 0.35);
-            spawn_static(world, Vec3::new(x, 2.5, z), cube, gray, 0.35);
-            // Colored sphere caps
-            let mat = match (x > 0.0, z > 0.0) {
-                (true, true) => red,
-                (false, true) => blue,
-                (true, false) => green,
-                (false, false) => gold,
-            };
-            spawn_sphere_static(world, Vec3::new(x, 3.5, z), mat);
-        }
-
-        // Front row — three material showcase cubes on small pedestals
-        for (i, mat) in [red, silver, blue].iter().enumerate() {
-            let x = (i as f32 - 1.0) * 2.5;
-            spawn_static(world, Vec3::new(x, 0.3, -3.0), cube, gray, 0.3);
-            spawn_static(world, Vec3::new(x, 0.9, -3.0), cube, *mat, 0.25);
-        }
-
-        // Dynamic objects (will fall when you press Play)
-        spawn(world, Vec3::new(-1.5, 5.0, 1.0), cube, red, 0.5);
-        spawn(world, Vec3::new(1.5, 7.0, -0.5), cube, blue, 0.5);
-        spawn(world, Vec3::new(0.0, 9.0, 0.5), cube, green, 0.5);
-
-        // Floating gold spheres (dynamic — will drop on Play)
-        let spawn_sphere_dyn = |w: &mut World, pos: Vec3, mat: MaterialHandle| {
-            let e = w.spawn(LocalTransform(Transform::from_translation(pos)));
-            w.insert(e, GlobalTransform::default());
-            w.insert(e, MeshRenderer { mesh: sphere });
-            w.insert(e, MaterialRef { handle: mat });
-            w.insert(e, PhysicsBody::dynamic());
-            w.insert(e, Velocity::default());
-            w.insert(e, Collider::sphere(0.5).with_restitution(0.6));
-        };
-
-        spawn_sphere_dyn(world, Vec3::new(2.5, 6.0, 2.0), gold);
-        spawn_sphere_dyn(world, Vec3::new(-2.5, 8.0, -1.5), silver);
-
-        // Directional light — warm sunlight from upper-left
+        // Directional light — warm sunlight
         world.spawn(DirectionalLight {
             direction: [0.4, -0.9, 0.25],
             color: [1.0, 0.95, 0.88],
