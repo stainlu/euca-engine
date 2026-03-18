@@ -116,6 +116,12 @@ pub struct RichEntityData {
     pub collider: Option<ColliderData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub physics_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<[f32; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dead: Option<bool>,
 }
 
 fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
@@ -155,6 +161,16 @@ fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
         RigidBodyType::Kinematic => "Kinematic".to_string(),
     });
 
+    let health = w
+        .get::<euca_gameplay::Health>(entity)
+        .map(|h| [h.current, h.max]);
+    let team = w.get::<euca_gameplay::Team>(entity).map(|t| t.0);
+    let dead = if w.get::<euca_gameplay::Dead>(entity).is_some() {
+        Some(true)
+    } else {
+        None
+    };
+
     RichEntityData {
         id: entity.index(),
         generation: entity.generation(),
@@ -162,6 +178,9 @@ fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
         velocity,
         collider,
         physics_body,
+        health,
+        team,
+        dead,
     }
 }
 

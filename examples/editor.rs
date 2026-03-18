@@ -1,5 +1,6 @@
 use euca_agent::{AgentServer, CameraOverride, EngineControl, ScreenshotChannel, auth::AuthStore};
 use euca_core::Time;
+use euca_ecs::Events;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
     EditorState, SceneFile, SpawnRequest, ToolbarAction, find_alive_entity, hierarchy_panel,
@@ -72,6 +73,7 @@ impl EditorApp {
         world.insert_resource(ScreenshotChannel::new());
         world.insert_resource(AuthStore::new());
         world.insert_resource(CameraOverride::new());
+        world.insert_resource(Events::default());
 
         let shared = SharedWorld::new(world, Schedule::new());
 
@@ -283,7 +285,33 @@ impl EditorApp {
 
         // Tick simulation when playing
         if self.editor_state.should_tick() {
+            let dt = world
+                .resource::<Time>()
+                .map(|t| t.delta as f32)
+                .unwrap_or(0.016);
+
+            // Physics
             physics_step_system(world);
+
+            // Gameplay systems (order matters: damage → death → respawn → projectiles → triggers → AI → game state)
+            euca_gameplay::apply_damage_system(world);
+            euca_gameplay::death_check_system(world);
+            euca_gameplay::projectile_system(world, dt);
+            euca_gameplay::trigger_system(world);
+            euca_gameplay::ai_system(world, dt);
+            euca_gameplay::game_state_system(world, dt);
+
+            if let Some(state) = world.resource::<euca_gameplay::GameState>() {
+                let delay = state.config.respawn_delay;
+                drop(state);
+                euca_gameplay::respawn_system(world, dt);
+                euca_gameplay::start_respawn_on_death(world, delay);
+            }
+
+            // Swap event buffers (events persist 2 frames)
+            if let Some(events) = world.resource_mut::<Events>() {
+                events.update();
+            }
         }
         euca_scene::transform_propagation_system(world);
 

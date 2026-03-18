@@ -222,6 +222,22 @@ enum EntityCommands {
         #[arg(long)]
         all: bool,
     },
+    /// Apply damage to an entity
+    Damage {
+        /// Entity ID
+        id: u32,
+        /// Damage amount
+        #[arg(long)]
+        amount: f32,
+    },
+    /// Heal an entity
+    Heal {
+        /// Entity ID
+        id: u32,
+        /// Heal amount
+        #[arg(long)]
+        amount: f32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -590,6 +606,20 @@ fn main() {
                     eprintln!("Specify an entity ID or use --all");
                     std::process::exit(1);
                 }
+            }
+            EntityCommands::Damage { id, amount } => {
+                let resp = client
+                    .post(format!("{server}/entity/damage"))
+                    .json(&serde_json::json!({"entity_id": id, "amount": amount}))
+                    .send();
+                handle_response(resp)
+            }
+            EntityCommands::Heal { id, amount } => {
+                let resp = client
+                    .post(format!("{server}/entity/heal"))
+                    .json(&serde_json::json!({"entity_id": id, "amount": amount}))
+                    .send();
+                handle_response(resp)
             }
         },
 

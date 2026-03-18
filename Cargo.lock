@@ -1135,6 +1135,7 @@ dependencies = [
  "euca-agent",
  "euca-core",
  "euca-ecs",
+ "euca-gameplay",
  "euca-math",
  "euca-physics",
  "euca-reflect",

@@ -24,6 +24,7 @@ pollster = "0.4"
 [dev-dependencies]
 env_logger = "0.11"
 euca-agent = { path = "../euca-agent" }
+euca-gameplay = { path = "../euca-gameplay" }
 tokio = { version = "1", features = ["full"] }
 png = "0.17"
 
