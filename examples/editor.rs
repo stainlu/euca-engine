@@ -79,6 +79,7 @@ impl EditorApp {
         world.insert_resource(CameraOverride::new());
         world.insert_resource(Events::default());
         world.insert_resource(HudCanvas::new());
+        world.insert_resource(euca_agent::routes::TemplateRegistry::new());
 
         let shared = SharedWorld::new(world, Schedule::new());
 

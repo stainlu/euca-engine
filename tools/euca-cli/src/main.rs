@@ -72,6 +72,12 @@ enum Commands {
         command: RuleCommands,
     },
 
+    /// Entity templates: define once, spawn many
+    Template {
+        #[command(subcommand)]
+        command: TemplateCommands,
+    },
+
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -401,6 +407,43 @@ enum RuleCommands {
         do_action: Vec<String>,
     },
     /// List all rules
+    List,
+}
+
+#[derive(Subcommand)]
+enum TemplateCommands {
+    /// Define a named entity template
+    Create {
+        /// Template name
+        name: String,
+        /// Mesh
+        #[arg(long)]
+        mesh: Option<String>,
+        /// Color
+        #[arg(long)]
+        color: Option<String>,
+        /// Health
+        #[arg(long)]
+        health: Option<f32>,
+        /// Team
+        #[arg(long)]
+        team: Option<u8>,
+        /// Physics body type
+        #[arg(long)]
+        physics: Option<String>,
+        /// Collider
+        #[arg(long)]
+        collider: Option<String>,
+    },
+    /// Spawn an entity from a template
+    Spawn {
+        /// Template name
+        name: String,
+        /// Position
+        #[arg(long)]
+        position: Option<String>,
+    },
+    /// List all templates
     List,
 }
 
@@ -842,6 +885,63 @@ fn main() {
                     body["target"] = serde_json::json!(t);
                 }
                 let resp = client.post(format!("{server}/ai/set")).json(&body).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Templates ──
+        Commands::Template { command } => match command {
+            TemplateCommands::Create {
+                name,
+                mesh,
+                color,
+                health,
+                team,
+                physics,
+                collider,
+            } => {
+                let mut body = serde_json::json!({"name": name});
+                if let Some(m) = mesh {
+                    body["mesh"] = serde_json::json!(m);
+                }
+                if let Some(c) = color {
+                    body["color"] = serde_json::json!(c);
+                }
+                if let Some(h) = health {
+                    body["health"] = serde_json::json!(h);
+                }
+                if let Some(t) = team {
+                    body["team"] = serde_json::json!(t);
+                }
+                if let Some(p) = physics {
+                    body["physics_body"] = serde_json::json!(p);
+                }
+                if let Some(c) = collider
+                    && let Some(v) = parse_collider(&c)
+                {
+                    body["collider"] = v;
+                }
+                let resp = client
+                    .post(format!("{server}/template/create"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            TemplateCommands::Spawn { name, position } => {
+                let mut body = serde_json::json!({"name": name});
+                if let Some(p) = position
+                    && let Some(v) = parse_vec3(&p)
+                {
+                    body["position"] = serde_json::json!(v);
+                }
+                let resp = client
+                    .post(format!("{server}/template/spawn"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            TemplateCommands::List => {
+                let resp = client.get(format!("{server}/template/list")).send();
                 handle_response(resp)
             }
         },
