@@ -1,4 +1,8 @@
-use euca_agent::{AgentServer, CameraOverride, EngineControl, ScreenshotChannel, auth::AuthStore};
+use euca_agent::{
+    AgentServer, CameraOverride, EngineControl, ScreenshotChannel,
+    auth::AuthStore,
+    hud::{HudCanvas, HudElement, parse_color},
+};
 use euca_core::Time;
 use euca_ecs::Events;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
@@ -74,6 +78,7 @@ impl EditorApp {
         world.insert_resource(AuthStore::new());
         world.insert_resource(CameraOverride::new());
         world.insert_resource(Events::default());
+        world.insert_resource(HudCanvas::new());
 
         let shared = SharedWorld::new(world, Schedule::new());
 
@@ -461,6 +466,99 @@ impl EditorApp {
             toolbar_action = toolbar_panel(ctx, &mut self.editor_state, world, dt);
             spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
             inspector_panel(ctx, &mut self.editor_state, world);
+
+            // Render in-game HUD elements from HudCanvas
+            if let Some(canvas) = world.resource::<HudCanvas>() {
+                let screen = ctx.screen_rect();
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("hud"),
+                ));
+                for element in &canvas.elements {
+                    match element {
+                        HudElement::Text {
+                            text,
+                            x,
+                            y,
+                            size,
+                            color,
+                        } => {
+                            let rgba = parse_color(color);
+                            let pos = egui::pos2(x * screen.width(), y * screen.height());
+                            painter.text(
+                                pos,
+                                egui::Align2::CENTER_TOP,
+                                text,
+                                egui::FontId::proportional(*size),
+                                egui::Color32::from_rgba_unmultiplied(
+                                    (rgba[0] * 255.0) as u8,
+                                    (rgba[1] * 255.0) as u8,
+                                    (rgba[2] * 255.0) as u8,
+                                    (rgba[3] * 255.0) as u8,
+                                ),
+                            );
+                        }
+                        HudElement::Bar {
+                            x,
+                            y,
+                            width,
+                            height,
+                            fill,
+                            color,
+                        } => {
+                            let rgba = parse_color(color);
+                            let rect = egui::Rect::from_min_size(
+                                egui::pos2(x * screen.width(), y * screen.height()),
+                                egui::vec2(width * screen.width(), height * screen.height()),
+                            );
+                            // Background (dark)
+                            painter.rect_filled(
+                                rect,
+                                2.0,
+                                egui::Color32::from_rgba_unmultiplied(20, 20, 20, 180),
+                            );
+                            // Fill
+                            let fill_rect = egui::Rect::from_min_size(
+                                rect.min,
+                                egui::vec2(rect.width() * fill.clamp(0.0, 1.0), rect.height()),
+                            );
+                            painter.rect_filled(
+                                fill_rect,
+                                2.0,
+                                egui::Color32::from_rgba_unmultiplied(
+                                    (rgba[0] * 255.0) as u8,
+                                    (rgba[1] * 255.0) as u8,
+                                    (rgba[2] * 255.0) as u8,
+                                    (rgba[3] * 255.0) as u8,
+                                ),
+                            );
+                        }
+                        HudElement::Rect {
+                            x,
+                            y,
+                            width,
+                            height,
+                            color,
+                        } => {
+                            let rgba = parse_color(color);
+                            let rect = egui::Rect::from_min_size(
+                                egui::pos2(x * screen.width(), y * screen.height()),
+                                egui::vec2(width * screen.width(), height * screen.height()),
+                            );
+                            painter.rect_filled(
+                                rect,
+                                0.0,
+                                egui::Color32::from_rgba_unmultiplied(
+                                    (rgba[0] * 255.0) as u8,
+                                    (rgba[1] * 255.0) as u8,
+                                    (rgba[2] * 255.0) as u8,
+                                    (rgba[3] * 255.0) as u8,
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
         });
 
         // Sync play state back to EngineControl (toolbar may have toggled it)

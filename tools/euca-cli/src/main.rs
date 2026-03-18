@@ -82,6 +82,12 @@ enum Commands {
         output: Option<String>,
     },
 
+    /// HUD elements: text, bars, rectangles on screen
+    Ui {
+        #[command(subcommand)]
+        command: UiCommands,
+    },
+
     /// Inspect component schemas
     Schema {
         /// Component name (e.g. "Collider", "PhysicsBody"). Omit to list all.
@@ -372,6 +378,52 @@ enum AiCommands {
         #[arg(long, default_value = "3")]
         speed: f32,
     },
+}
+
+#[derive(Subcommand)]
+enum UiCommands {
+    /// Add text to HUD
+    Text {
+        /// Text content
+        text: String,
+        /// X position (0.0-1.0, left to right)
+        #[arg(long, default_value = "0.5")]
+        x: f32,
+        /// Y position (0.0-1.0, top to bottom)
+        #[arg(long, default_value = "0.05")]
+        y: f32,
+        /// Font size in pixels
+        #[arg(long, default_value = "20")]
+        size: f32,
+        /// Color name (red, green, blue, white, yellow, etc.)
+        #[arg(long, default_value = "white")]
+        color: String,
+    },
+    /// Add a bar (health bar, progress bar) to HUD
+    Bar {
+        /// X position (0.0-1.0)
+        #[arg(long, default_value = "0.02")]
+        x: f32,
+        /// Y position (0.0-1.0)
+        #[arg(long, default_value = "0.95")]
+        y: f32,
+        /// Width (0.0-1.0)
+        #[arg(long, default_value = "0.2")]
+        width: f32,
+        /// Height (0.0-1.0)
+        #[arg(long, default_value = "0.03")]
+        height: f32,
+        /// Fill amount (0.0-1.0)
+        #[arg(long)]
+        fill: f32,
+        /// Bar color
+        #[arg(long, default_value = "red")]
+        color: String,
+    },
+    /// Remove all HUD elements
+    Clear,
+    /// List current HUD elements
+    List,
 }
 
 // ── Helpers ──
@@ -771,6 +823,42 @@ fn main() {
         },
 
         Commands::Auth { command } => run_auth(command, &client, server),
+
+        // ── HUD ──
+        Commands::Ui { command } => match command {
+            UiCommands::Text {
+                text,
+                x,
+                y,
+                size,
+                color,
+            } => {
+                let resp = client
+                    .post(format!("{server}/ui/text"))
+                    .json(&serde_json::json!({"type": "text", "text": text, "x": x, "y": y, "size": size, "color": color}))
+                    .send();
+                handle_response(resp)
+            }
+            UiCommands::Bar {
+                x,
+                y,
+                width,
+                height,
+                fill,
+                color,
+            } => {
+                let resp = client
+                    .post(format!("{server}/ui/bar"))
+                    .json(&serde_json::json!({"type": "bar", "x": x, "y": y, "width": width, "height": height, "fill": fill, "color": color}))
+                    .send();
+                handle_response(resp)
+            }
+            UiCommands::Clear => post_empty(&client, server, "/ui/clear"),
+            UiCommands::List => {
+                let resp = client.get(format!("{server}/ui/list")).send();
+                handle_response(resp)
+            }
+        },
 
         // ── Standalone ──
         Commands::Status => {

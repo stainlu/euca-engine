@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod bridge;
 mod control;
+pub mod hud;
 pub mod routes;
 mod server;
 mod state;
