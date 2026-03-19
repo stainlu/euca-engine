@@ -326,6 +326,12 @@ impl EditorApp {
             if let Some(events) = world.resource_mut::<Events>() {
                 events.update();
             }
+
+            // Advance tick counter — required for change detection.
+            // Without this, transform_propagation_system can't detect
+            // modified LocalTransforms, so GlobalTransform stays stale
+            // and entities appear frozen.
+            world.tick();
         }
         euca_scene::transform_propagation_system(world);
 
@@ -379,10 +385,19 @@ impl EditorApp {
         // === 1. Render 3D scene ===
         {
             let mut draw_commands: Vec<DrawCommand> = {
-                let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
+                let query = Query::<(
+                    euca_ecs::Entity,
+                    &GlobalTransform,
+                    &MeshRenderer,
+                    &MaterialRef,
+                )>::new(world);
                 query
                     .iter()
-                    .map(|(gt, mr, mat)| DrawCommand {
+                    .filter(|(e, _, _, _)| {
+                        // Skip dead entities — they shouldn't render
+                        world.get::<euca_gameplay::Dead>(*e).is_none()
+                    })
+                    .map(|(_, gt, mr, mat)| DrawCommand {
                         mesh: mr.mesh,
                         material: mat.handle,
                         model_matrix: gt.0.to_matrix(),
