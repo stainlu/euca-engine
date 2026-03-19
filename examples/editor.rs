@@ -479,7 +479,7 @@ impl EditorApp {
             // Like UE5: game UI renders inside the viewport, never bleeds into editor panels.
             if let Some(canvas) = world.resource::<HudCanvas>() {
                 let vp = ctx.available_rect(); // viewport = area after panels
-                let painter = ctx.layer_painter(egui::LayerId::new(
+                let mut painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Foreground,
                     egui::Id::new("hud"),
                 ));
