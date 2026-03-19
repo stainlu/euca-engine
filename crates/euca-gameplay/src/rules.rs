@@ -494,11 +494,9 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
             let team = args.get(4).and_then(|s| s.parse::<u8>().ok());
             let combat = args.get(5).map(|s| *s == "true");
             // Waypoints: colon-separated "x,y,z:x,y,z:x,y,z"
-            let waypoints = args.get(6).map(|s| {
-                s.split(':')
-                    .filter_map(parse_vec3)
-                    .collect::<Vec<_>>()
-            });
+            let waypoints = args
+                .get(6)
+                .map(|s| s.split(':').filter_map(parse_vec3).collect::<Vec<_>>());
             let speed = args.get(7).and_then(|s| s.parse::<f32>().ok());
             Some(GameAction::Spawn {
                 mesh,
