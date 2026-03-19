@@ -5,7 +5,9 @@ pub mod undo;
 
 pub use gizmo::GizmoState;
 pub use panels::{SpawnRequest, ToolbarAction, hierarchy_panel, inspector_panel, toolbar_panel};
-pub use scene_file::{SceneEntity, SceneFile, load_scene_into_world};
+pub use scene_file::{
+    PrefabRegistry, SCENE_VERSION, SceneEntity, SceneFile, load_scene_into_world,
+};
 pub use undo::UndoHistory;
 
 /// Editor state: tracks selection, play/pause, gizmo, undo history.

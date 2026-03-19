@@ -11,6 +11,7 @@ euca-scene = { path = "../euca-scene" }
 euca-core = { path = "../euca-core" }
 euca-render = { path = "../euca-render" }
 euca-physics = { path = "../euca-physics" }
+euca-gameplay = { path = "../euca-gameplay" }
 egui = "0.33"
 egui-wgpu = "0.33"
 egui-winit = "0.33"
