@@ -400,8 +400,10 @@ pub fn execute_action(
                     ac.speed = *s;
                 }
                 world.insert(entity, ac);
-                // Combat entities need Velocity
+                // Combat entities need Velocity + PhysicsBody + Collider for movement
                 world.insert(entity, euca_physics::Velocity::default());
+                world.insert(entity, euca_physics::PhysicsBody::dynamic());
+                world.insert(entity, euca_physics::Collider::aabb(0.3, 0.3, 0.3));
             }
             if let Some(wps) = waypoints {
                 let wp_vecs: Vec<Vec3> = wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
