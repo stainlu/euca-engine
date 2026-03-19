@@ -80,6 +80,14 @@ impl EditorApp {
         world.insert_resource(Events::default());
         world.insert_resource(HudCanvas::new());
         world.insert_resource(euca_agent::routes::TemplateRegistry::new());
+        world.insert_resource(euca_asset::AnimationLibrary::default());
+        world.insert_resource(euca_input::ActionMap::new());
+        world.insert_resource(euca_input::InputContextStack::new());
+        // AudioEngine init may fail on headless systems — log and continue
+        match euca_audio::AudioEngine::new() {
+            Ok(engine) => world.insert_resource(engine),
+            Err(e) => log::warn!("Audio init failed (non-fatal): {e}"),
+        }
 
         let shared = SharedWorld::new(world, Schedule::new());
 
@@ -322,6 +330,14 @@ impl EditorApp {
                 euca_gameplay::respawn_system(world, dt);
                 euca_gameplay::start_respawn_on_death(world, delay);
             }
+
+            // Audio, animation, particles, navigation
+            euca_audio::audio_update_system_mut(world);
+            euca_asset::skeletal_animation_system(world, dt);
+            euca_particle::emit_particles_system(world, dt);
+            euca_particle::particle_update_system(world, dt);
+            euca_nav::pathfinding_system(world);
+            euca_nav::steering_system(world, dt);
 
             // Swap event buffers (events persist 2 frames)
             if let Some(events) = world.resource_mut::<Events>() {

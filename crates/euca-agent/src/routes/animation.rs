@@ -33,10 +33,11 @@ pub async fn animation_load(
     let mesh_count = scene.meshes.len();
 
     // Store animations and skeleton in the library
-    world.with(|w, _| {
-        let lib = w
-            .resource_mut::<euca_asset::AnimationLibrary>()
-            .expect("AnimationLibrary not initialized");
+    let stored = world.with(|w, _| {
+        let lib = match w.resource_mut::<euca_asset::AnimationLibrary>() {
+            Some(lib) => lib,
+            None => return false,
+        };
 
         if let Some(skeleton) = scene.skeleton {
             lib.add_skeleton(skeleton);
@@ -44,7 +45,15 @@ pub async fn animation_load(
         for clip in scene.animations {
             lib.add_clip(clip);
         }
+        true
     });
+
+    if !stored {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "AnimationLibrary resource not initialized",
+        }));
+    }
 
     Json(serde_json::json!({
         "ok": true,

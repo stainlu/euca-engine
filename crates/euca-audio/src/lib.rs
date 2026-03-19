@@ -164,33 +164,7 @@ impl AudioSource {
 
 // ── System ──
 
-/// Each tick: start/stop playback, update spatial volume attenuation.
-pub fn audio_update_system(world: &World) {
-    // Get listener position
-    let listener_pos = {
-        let query = euca_ecs::Query::<(&AudioListener, &GlobalTransform)>::new(world);
-        query.iter().next().map(|(_, gt)| gt.0.translation)
-    };
-    let listener_pos = listener_pos.unwrap_or(Vec3::ZERO);
-
-    // Get engine
-    // Note: we need mutable access to AudioEngine for play(), and mutable access
-    // to AudioSource handles. Since our ECS gives &World, we need to collect data
-    // first, then apply. But AudioEngine is a resource that needs &mut World.
-    // This system signature takes &World, so we can only read. For a real system
-    // that starts playback, we'd need &mut World. For now, just update volumes
-    // on already-playing sources.
-
-    let query = euca_ecs::Query::<(euca_ecs::Entity, &GlobalTransform)>::new(world);
-    let _entities_with_transform: Vec<_> = query.iter().collect();
-
-    // Spatial volume updates happen through the kira handle's set_volume.
-    // Since AudioSource stores Option<StaticSoundHandle> and we only have &World,
-    // we can't mutate handles here. The mutable version is audio_update_system_mut.
-    let _ = listener_pos;
-}
-
-/// Mutable version: starts playback for new sources, updates spatial volumes.
+/// Each tick: starts playback for new sources, updates spatial volumes.
 pub fn audio_update_system_mut(world: &mut World) {
     // Get listener position
     let listener_pos = {

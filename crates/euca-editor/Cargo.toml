@@ -26,6 +26,11 @@ pollster = "0.4"
 env_logger = "0.11"
 euca-agent = { path = "../euca-agent" }
 euca-gameplay = { path = "../euca-gameplay" }
+euca-audio = { path = "../euca-audio" }
+euca-asset = { path = "../euca-asset" }
+euca-particle = { path = "../euca-particle" }
+euca-nav = { path = "../euca-nav" }
+euca-input = { path = "../euca-input" }
 tokio = { version = "1", features = ["full"] }
 png = "0.17"
 
