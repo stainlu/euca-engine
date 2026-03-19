@@ -5,6 +5,53 @@ use std::collections::{HashMap, HashSet};
 /// Actions are strings so they can be defined by the game, not the engine.
 pub type Action = String;
 
+/// Active input context — determines which action map is active.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputContext {
+    Gameplay,
+    Menu,
+    Editor,
+}
+
+impl Default for InputContext {
+    fn default() -> Self {
+        Self::Gameplay
+    }
+}
+
+/// Stack of input contexts. Top of stack is the active context.
+#[derive(Clone, Debug, Default)]
+pub struct InputContextStack {
+    stack: Vec<InputContext>,
+}
+
+impl InputContextStack {
+    pub fn new() -> Self {
+        Self {
+            stack: vec![InputContext::Gameplay],
+        }
+    }
+
+    /// Push a new context (becomes active).
+    pub fn push(&mut self, ctx: InputContext) {
+        self.stack.push(ctx);
+    }
+
+    /// Pop the top context. Returns the popped context.
+    pub fn pop(&mut self) -> Option<InputContext> {
+        if self.stack.len() > 1 {
+            self.stack.pop()
+        } else {
+            None // Don't pop the last context
+        }
+    }
+
+    /// Get the active (top) context.
+    pub fn active(&self) -> &InputContext {
+        self.stack.last().unwrap_or(&InputContext::Gameplay)
+    }
+}
+
 /// Raw input key/button identifier.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum InputKey {
@@ -14,8 +61,54 @@ pub enum InputKey {
     MouseLeft,
     MouseRight,
     MouseMiddle,
-    // Gamepad (future)
+    // Gamepad
     GamepadButton(u32),
+    GamepadAxis(u32, GamepadAxisType),
+}
+
+/// Which axis of a gamepad stick or trigger.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum GamepadAxisType {
+    LeftStickX,
+    LeftStickY,
+    RightStickX,
+    RightStickY,
+    LeftTrigger,
+    RightTrigger,
+}
+
+/// Gamepad state tracking.
+#[derive(Clone, Debug, Default)]
+pub struct GamepadState {
+    /// Axis values keyed by (gamepad_id, axis_type).
+    pub axes: HashMap<(u32, GamepadAxisType), f32>,
+    /// Buttons currently held.
+    pub buttons: HashSet<(u32, u32)>,
+}
+
+impl GamepadState {
+    pub fn set_axis(&mut self, gamepad: u32, axis: GamepadAxisType, value: f32) {
+        self.axes.insert((gamepad, axis), value);
+    }
+
+    pub fn axis_value(&self, gamepad: u32, axis: &GamepadAxisType) -> f32 {
+        self.axes
+            .get(&(gamepad, axis.clone()))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    pub fn press_button(&mut self, gamepad: u32, button: u32) {
+        self.buttons.insert((gamepad, button));
+    }
+
+    pub fn release_button(&mut self, gamepad: u32, button: u32) {
+        self.buttons.remove(&(gamepad, button));
+    }
+
+    pub fn is_button_pressed(&self, gamepad: u32, button: u32) -> bool {
+        self.buttons.contains(&(gamepad, button))
+    }
 }
 
 /// Current state of all inputs for one frame.
@@ -135,6 +228,30 @@ impl ActionMap {
             .map(|(_, action)| action.as_str())
             .collect()
     }
+
+    /// Remove a binding for a key.
+    pub fn unbind(&mut self, key: &InputKey) -> Option<Action> {
+        self.bindings.remove(key)
+    }
+
+    /// Get all current bindings.
+    pub fn bindings(&self) -> &HashMap<InputKey, Action> {
+        &self.bindings
+    }
+
+    /// Serialize bindings to JSON string.
+    pub fn save_to_json(&self) -> String {
+        let pairs: Vec<(&InputKey, &Action)> = self.bindings.iter().collect();
+        serde_json::to_string_pretty(&pairs).unwrap_or_default()
+    }
+
+    /// Load bindings from JSON string (replaces existing bindings).
+    pub fn load_from_json(&mut self, json: &str) -> Result<(), String> {
+        let pairs: Vec<(InputKey, Action)> =
+            serde_json::from_str(json).map_err(|e| format!("Invalid bindings JSON: {e}"))?;
+        self.bindings = pairs.into_iter().collect();
+        Ok(())
+    }
 }
 
 /// Timestamped input snapshot for networking.
@@ -245,5 +362,69 @@ mod tests {
 
         input.begin_frame();
         assert_eq!(input.mouse_delta, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn input_context_stack() {
+        let mut stack = InputContextStack::new();
+        assert_eq!(*stack.active(), InputContext::Gameplay);
+
+        stack.push(InputContext::Menu);
+        assert_eq!(*stack.active(), InputContext::Menu);
+
+        stack.push(InputContext::Editor);
+        assert_eq!(*stack.active(), InputContext::Editor);
+
+        assert_eq!(stack.pop(), Some(InputContext::Editor));
+        assert_eq!(*stack.active(), InputContext::Menu);
+
+        stack.pop();
+        assert_eq!(*stack.active(), InputContext::Gameplay);
+
+        // Can't pop the last one
+        assert_eq!(stack.pop(), None);
+    }
+
+    #[test]
+    fn action_map_unbind() {
+        let mut map = ActionMap::new();
+        map.bind(InputKey::Key("W".into()), "move_forward");
+        assert!(map.action_for(&InputKey::Key("W".into())).is_some());
+
+        map.unbind(&InputKey::Key("W".into()));
+        assert!(map.action_for(&InputKey::Key("W".into())).is_none());
+    }
+
+    #[test]
+    fn action_map_json_roundtrip() {
+        let mut map = ActionMap::new();
+        map.bind(InputKey::Key("W".into()), "move_forward");
+        map.bind(InputKey::Key("Space".into()), "jump");
+
+        let json = map.save_to_json();
+        assert!(!json.is_empty());
+
+        let mut restored = ActionMap::new();
+        restored.load_from_json(&json).unwrap();
+        assert_eq!(
+            restored.action_for(&InputKey::Key("W".into())),
+            Some("move_forward")
+        );
+        assert_eq!(
+            restored.action_for(&InputKey::Key("Space".into())),
+            Some("jump")
+        );
+    }
+
+    #[test]
+    fn gamepad_state() {
+        let mut gp = GamepadState::default();
+        gp.set_axis(0, GamepadAxisType::LeftStickX, 0.75);
+        assert!((gp.axis_value(0, &GamepadAxisType::LeftStickX) - 0.75).abs() < 0.01);
+
+        gp.press_button(0, 1);
+        assert!(gp.is_button_pressed(0, 1));
+        gp.release_button(0, 1);
+        assert!(!gp.is_button_pressed(0, 1));
     }
 }

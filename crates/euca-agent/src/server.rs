@@ -86,6 +86,11 @@ impl AgentServer {
             .route("/navmesh/generate", post(routes::navmesh_generate))
             .route("/path/compute", post(routes::path_compute))
             .route("/path/set", post(routes::path_set))
+            .route("/input/bind", post(routes::input_bind))
+            .route("/input/unbind", post(routes::input_unbind))
+            .route("/input/list", get(routes::input_list))
+            .route("/input/context/push", post(routes::input_context_push))
+            .route("/input/context/pop", post(routes::input_context_pop))
             .with_state(self.shared.clone())
     }
 

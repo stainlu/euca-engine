@@ -84,6 +84,12 @@ enum Commands {
         command: AudioCommands,
     },
 
+    /// Input: key bindings and input contexts
+    Input {
+        #[command(subcommand)]
+        command: InputCommands,
+    },
+
     /// Navigation: navmesh + pathfinding
     Nav {
         #[command(subcommand)]
@@ -369,6 +375,31 @@ enum AudioCommands {
     },
     /// List active audio sources
     List,
+}
+
+#[derive(Subcommand)]
+enum InputCommands {
+    /// Bind a key to an action
+    Bind {
+        /// Key name (e.g., "W", "Space", "MouseLeft")
+        key: String,
+        /// Action name (e.g., "move_forward", "jump")
+        action: String,
+    },
+    /// Remove a key binding
+    Unbind {
+        /// Key name
+        key: String,
+    },
+    /// List all current bindings
+    List,
+    /// Push an input context
+    ContextPush {
+        /// Context name: gameplay, menu, editor
+        context: String,
+    },
+    /// Pop the current input context
+    ContextPop,
 }
 
 #[derive(Subcommand)]
@@ -1163,6 +1194,42 @@ fn main() {
             }
             AudioCommands::List => {
                 let resp = client.get(format!("{server}/audio/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Input ──
+        Commands::Input { command } => match command {
+            InputCommands::Bind { key, action } => {
+                let resp = client
+                    .post(format!("{server}/input/bind"))
+                    .json(&serde_json::json!({"key": key, "action": action}))
+                    .send();
+                handle_response(resp)
+            }
+            InputCommands::Unbind { key } => {
+                let resp = client
+                    .post(format!("{server}/input/unbind"))
+                    .json(&serde_json::json!({"key": key}))
+                    .send();
+                handle_response(resp)
+            }
+            InputCommands::List => {
+                let resp = client.get(format!("{server}/input/list")).send();
+                handle_response(resp)
+            }
+            InputCommands::ContextPush { context } => {
+                let resp = client
+                    .post(format!("{server}/input/context/push"))
+                    .json(&serde_json::json!({"context": context}))
+                    .send();
+                handle_response(resp)
+            }
+            InputCommands::ContextPop => {
+                let resp = client
+                    .post(format!("{server}/input/context/pop"))
+                    .json(&serde_json::json!({}))
+                    .send();
                 handle_response(resp)
             }
         },
