@@ -83,6 +83,9 @@ impl AgentServer {
             .route("/particle/create", post(routes::particle_create))
             .route("/particle/stop", post(routes::particle_stop))
             .route("/particle/list", get(routes::particle_list))
+            .route("/navmesh/generate", post(routes::navmesh_generate))
+            .route("/path/compute", post(routes::path_compute))
+            .route("/path/set", post(routes::path_set))
             .with_state(self.shared.clone())
     }
 

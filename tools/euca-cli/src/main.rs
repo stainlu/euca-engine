@@ -84,6 +84,12 @@ enum Commands {
         command: AudioCommands,
     },
 
+    /// Navigation: navmesh + pathfinding
+    Nav {
+        #[command(subcommand)]
+        command: NavCommands,
+    },
+
     /// Visual effects: particle emitters
     Vfx {
         #[command(subcommand)]
@@ -363,6 +369,36 @@ enum AudioCommands {
     },
     /// List active audio sources
     List,
+}
+
+#[derive(Subcommand)]
+enum NavCommands {
+    /// Generate navmesh from scene colliders
+    Generate {
+        /// Cell size
+        #[arg(long, default_value = "1.0")]
+        cell_size: f32,
+    },
+    /// Compute A* path between two points
+    Compute {
+        /// Start position as "x,y,z"
+        #[arg(long)]
+        from: String,
+        /// Goal position as "x,y,z"
+        #[arg(long)]
+        to: String,
+    },
+    /// Set pathfinding goal on an entity
+    Set {
+        /// Entity ID
+        entity_id: u32,
+        /// Target position as "x,y,z"
+        #[arg(long)]
+        target: String,
+        /// Movement speed
+        #[arg(long, default_value = "5.0")]
+        speed: f32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1127,6 +1163,50 @@ fn main() {
             }
             AudioCommands::List => {
                 let resp = client.get(format!("{server}/audio/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Navigation ──
+        Commands::Nav { command } => match command {
+            NavCommands::Generate { cell_size } => {
+                let resp = client
+                    .post(format!("{server}/navmesh/generate"))
+                    .json(&serde_json::json!({"cell_size": cell_size}))
+                    .send();
+                handle_response(resp)
+            }
+            NavCommands::Compute { from, to } => {
+                let parse_vec3 = |s: &str| -> Vec<f32> {
+                    s.split(',').filter_map(|p| p.trim().parse().ok()).collect()
+                };
+                let from_parts = parse_vec3(&from);
+                let to_parts = parse_vec3(&to);
+                let body = serde_json::json!({
+                    "from": from_parts,
+                    "to": to_parts,
+                });
+                let resp = client
+                    .post(format!("{server}/path/compute"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            NavCommands::Set {
+                entity_id,
+                target,
+                speed,
+            } => {
+                let parts: Vec<f32> = target
+                    .split(',')
+                    .filter_map(|p| p.trim().parse().ok())
+                    .collect();
+                let body = serde_json::json!({
+                    "entity_id": entity_id,
+                    "target": parts,
+                    "speed": speed,
+                });
+                let resp = client.post(format!("{server}/path/set")).json(&body).send();
                 handle_response(resp)
             }
         },

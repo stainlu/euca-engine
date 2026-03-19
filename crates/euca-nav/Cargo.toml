@@ -1,0 +1,12 @@
+[package]
+name = "euca-nav"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-scene = { path = "../euca-scene" }
+euca-physics = { path = "../euca-physics" }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }

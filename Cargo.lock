@@ -1153,6 +1153,7 @@ dependencies = [
  "euca-gameplay",
  "euca-input",
  "euca-math",
+ "euca-nav",
  "euca-net",
  "euca-particle",
  "euca-physics",
@@ -1296,6 +1297,18 @@ dependencies = [
 name = "euca-math"
 version = "0.1.0"
 dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "euca-nav"
+version = "0.1.0"
+dependencies = [
+ "euca-ecs",
+ "euca-math",
+ "euca-physics",
+ "euca-scene",
+ "log",
  "serde",
 ]
 
