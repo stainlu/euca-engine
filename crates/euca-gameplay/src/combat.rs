@@ -176,9 +176,7 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
                 continue;
             }
             let dist = (other_pos - pos).length();
-            if dist < combat.detect_range
-                && (nearest.is_none() || dist < nearest.unwrap().2)
-            {
+            if dist < combat.detect_range && (nearest.is_none() || dist < nearest.unwrap().2) {
                 nearest = Some((other, other_pos, dist));
             }
         }

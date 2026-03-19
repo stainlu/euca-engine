@@ -491,6 +491,84 @@ impl EditorApp {
             spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
             inspector_panel(ctx, &mut self.editor_state, world);
 
+            // Auto-generate health bars for all entities with Health
+            {
+                let vp = ctx.available_rect();
+                let mut hp_painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("health_bars"),
+                ));
+                hp_painter.set_clip_rect(vp);
+
+                let camera = world.resource::<Camera>().cloned();
+                if let Some(cam) = camera {
+                    let gpu = self.gpu.as_ref().unwrap();
+                    let aspect = gpu.surface_config.width as f32 / gpu.surface_config.height as f32;
+                    let view_proj = cam.view_projection_matrix(aspect);
+
+                    let hp_entities: Vec<(Vec3, f32, u8)> = {
+                        let query = Query::<(
+                            euca_ecs::Entity,
+                            &GlobalTransform,
+                            &euca_gameplay::Health,
+                        )>::new(world);
+                        query
+                            .iter()
+                            .filter(|(e, _, h)| {
+                                !h.is_dead() && world.get::<euca_gameplay::Dead>(*e).is_none()
+                            })
+                            .map(|(e, gt, h)| {
+                                let team = world
+                                    .get::<euca_gameplay::Team>(e)
+                                    .map(|t| t.0)
+                                    .unwrap_or(0);
+                                (gt.0.translation, h.fraction(), team)
+                            })
+                            .collect()
+                    };
+
+                    for (world_pos, fraction, team) in &hp_entities {
+                        // Project world position to screen
+                        let offset_pos = *world_pos + Vec3::new(0.0, 1.2, 0.0);
+                        let clip = view_proj
+                            * euca_math::Vec4::new(offset_pos.x, offset_pos.y, offset_pos.z, 1.0);
+                        if clip.w <= 0.0 {
+                            continue; // behind camera
+                        }
+                        let ndc_x = clip.x / clip.w;
+                        let ndc_y = clip.y / clip.w;
+                        // NDC to viewport pixel
+                        let screen_x = vp.min.x + (ndc_x * 0.5 + 0.5) * vp.width();
+                        let screen_y = vp.min.y + (1.0 - (ndc_y * 0.5 + 0.5)) * vp.height();
+
+                        let bar_w = 40.0;
+                        let bar_h = 5.0;
+                        let bar_rect = egui::Rect::from_min_size(
+                            egui::pos2(screen_x - bar_w / 2.0, screen_y),
+                            egui::vec2(bar_w, bar_h),
+                        );
+
+                        // Background
+                        hp_painter.rect_filled(
+                            bar_rect,
+                            2.0,
+                            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 160),
+                        );
+                        // Fill
+                        let fill_rect = egui::Rect::from_min_size(
+                            bar_rect.min,
+                            egui::vec2(bar_w * fraction, bar_h),
+                        );
+                        let bar_color = if *team == 1 {
+                            egui::Color32::from_rgb(220, 50, 50)
+                        } else {
+                            egui::Color32::from_rgb(50, 100, 220)
+                        };
+                        hp_painter.rect_filled(fill_rect, 2.0, bar_color);
+                    }
+                }
+            }
+
             // Render in-game HUD elements INSIDE the 3D viewport only.
             // Like UE5: game UI renders inside the viewport, never bleeds into editor panels.
             if let Some(canvas) = world.resource::<HudCanvas>() {
