@@ -80,6 +80,9 @@ impl AgentServer {
             .route("/animation/play", post(routes::animation_play))
             .route("/animation/stop", post(routes::animation_stop))
             .route("/animation/list", get(routes::animation_list))
+            .route("/particle/create", post(routes::particle_create))
+            .route("/particle/stop", post(routes::particle_stop))
+            .route("/particle/list", get(routes::particle_list))
             .with_state(self.shared.clone())
     }
 

@@ -84,6 +84,12 @@ enum Commands {
         command: AudioCommands,
     },
 
+    /// Visual effects: particle emitters
+    Vfx {
+        #[command(subcommand)]
+        command: VfxCommands,
+    },
+
     /// Animation: load glTF models, play/stop skeletal animation
     Animation {
         #[command(subcommand)]
@@ -386,6 +392,32 @@ enum AnimationCommands {
         entity_id: u32,
     },
     /// List loaded animation clips
+    List,
+}
+
+#[derive(Subcommand)]
+enum VfxCommands {
+    /// Spawn a particle emitter at a position
+    Spawn {
+        /// Position as "x,y,z"
+        #[arg(long)]
+        position: Option<String>,
+        /// Emission rate (particles/second)
+        #[arg(long, default_value = "50")]
+        rate: f32,
+        /// Particle lifetime (seconds)
+        #[arg(long, default_value = "2.0")]
+        lifetime: f32,
+        /// Max particles alive at once
+        #[arg(long, default_value = "1000")]
+        max: u32,
+    },
+    /// Stop a particle emitter
+    Stop {
+        /// Entity ID of the emitter
+        entity_id: u32,
+    },
+    /// List active particle emitters
     List,
 }
 
@@ -1095,6 +1127,47 @@ fn main() {
             }
             AudioCommands::List => {
                 let resp = client.get(format!("{server}/audio/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── VFX (Particles) ──
+        Commands::Vfx { command } => match command {
+            VfxCommands::Spawn {
+                position,
+                rate,
+                lifetime,
+                max,
+            } => {
+                let mut body = serde_json::json!({
+                    "rate": rate,
+                    "lifetime": lifetime,
+                    "max": max,
+                });
+                if let Some(pos_str) = position {
+                    let parts: Vec<f32> = pos_str
+                        .split(',')
+                        .filter_map(|p| p.trim().parse().ok())
+                        .collect();
+                    if parts.len() == 3 {
+                        body["position"] = serde_json::json!([parts[0], parts[1], parts[2]]);
+                    }
+                }
+                let resp = client
+                    .post(format!("{server}/particle/create"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            VfxCommands::Stop { entity_id } => {
+                let resp = client
+                    .post(format!("{server}/particle/stop"))
+                    .json(&serde_json::json!({"entity_id": entity_id}))
+                    .send();
+                handle_response(resp)
+            }
+            VfxCommands::List => {
+                let resp = client.get(format!("{server}/particle/list")).send();
                 handle_response(resp)
             }
         },

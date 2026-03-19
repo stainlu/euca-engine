@@ -1146,6 +1146,7 @@ dependencies = [
  "bincode",
  "ed25519-dalek",
  "env_logger",
+ "euca-asset",
  "euca-audio",
  "euca-ecs",
  "euca-game",
@@ -1153,6 +1154,7 @@ dependencies = [
  "euca-input",
  "euca-math",
  "euca-net",
+ "euca-particle",
  "euca-physics",
  "euca-render",
  "euca-scene",
@@ -1176,6 +1178,7 @@ dependencies = [
  "euca-scene",
  "gltf",
  "log",
+ "serde",
  "winit",
 ]
 
@@ -1303,6 +1306,17 @@ dependencies = [
  "bincode",
  "euca-ecs",
  "euca-input",
+ "log",
+ "serde",
+]
+
+[[package]]
+name = "euca-particle"
+version = "0.1.0"
+dependencies = [
+ "euca-ecs",
+ "euca-math",
+ "euca-scene",
  "log",
  "serde",
 ]

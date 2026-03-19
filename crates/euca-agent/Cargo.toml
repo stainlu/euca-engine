@@ -14,6 +14,7 @@ euca-render = { path = "../euca-render" }
 euca-gameplay = { path = "../euca-gameplay" }
 euca-audio = { path = "../euca-audio" }
 euca-asset = { path = "../euca-asset" }
+euca-particle = { path = "../euca-particle" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
