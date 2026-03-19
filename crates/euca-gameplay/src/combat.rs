@@ -1,13 +1,15 @@
-//! Projectiles — moving damaging entities.
+//! Combat — projectiles and auto-PvP melee.
 //!
-//! Components: `Projectile`.
-//! Systems: `projectile_system`.
+//! Components: `Projectile`, `AutoCombat`.
+//! Systems: `projectile_system`, `auto_combat_system`.
 
 use euca_ecs::{Entity, Events, Query, World};
 use euca_math::Vec3;
+use euca_physics::Velocity;
 use euca_scene::LocalTransform;
 
-use crate::health::DamageEvent;
+use crate::health::{DamageEvent, Health};
+use crate::teams::Team;
 
 /// Entity that moves in a direction and damages what it hits.
 #[derive(Clone, Debug)]
@@ -104,6 +106,140 @@ pub fn projectile_system(world: &mut World, dt: f32) {
     // Despawn expired/hit projectiles
     for entity in to_despawn {
         world.despawn(entity);
+    }
+}
+
+// ── Auto-PvP Combat ──
+
+/// Entity automatically detects nearby enemies, chases, and attacks.
+/// Just add this + Health + Team to make an entity fight.
+#[derive(Clone, Debug)]
+pub struct AutoCombat {
+    pub damage: f32,
+    pub range: f32,
+    pub cooldown: f32,
+    pub elapsed: f32,
+    pub detect_range: f32,
+    pub speed: f32,
+}
+
+impl AutoCombat {
+    pub fn new() -> Self {
+        Self {
+            damage: 10.0,
+            range: 1.5,
+            cooldown: 1.0,
+            elapsed: 0.0,
+            detect_range: 20.0,
+            speed: 3.0,
+        }
+    }
+}
+
+impl Default for AutoCombat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Auto-PvP: entities with AutoCombat + Health + Team detect enemies, chase, and attack.
+pub fn auto_combat_system(world: &mut World, dt: f32) {
+    // Collect all combat entities: position, team, alive
+    let fighters: Vec<(Entity, Vec3, u8, bool)> = {
+        let query = Query::<(Entity, &LocalTransform, &Team, &Health)>::new(world);
+        query
+            .iter()
+            .filter(|(e, _, _, _)| world.get::<AutoCombat>(*e).is_some())
+            .map(|(e, lt, team, health)| (e, lt.0.translation, team.0, health.is_dead()))
+            .collect()
+    };
+
+    // For each alive fighter, find nearest enemy and decide: chase or attack
+    let mut velocity_updates: Vec<(Entity, Vec3)> = Vec::new();
+    let mut damage_events: Vec<DamageEvent> = Vec::new();
+    let mut cooldown_resets: Vec<Entity> = Vec::new();
+
+    for &(entity, pos, team, dead) in &fighters {
+        if dead {
+            continue;
+        }
+
+        let combat = match world.get::<AutoCombat>(entity) {
+            Some(c) => c.clone(),
+            None => continue,
+        };
+
+        // Find nearest alive enemy
+        let mut nearest: Option<(Entity, Vec3, f32)> = None;
+        for &(other, other_pos, other_team, other_dead) in &fighters {
+            if other == entity || other_team == team || other_dead {
+                continue;
+            }
+            let dist = (other_pos - pos).length();
+            if dist < combat.detect_range
+                && (nearest.is_none() || dist < nearest.unwrap().2)
+            {
+                nearest = Some((other, other_pos, dist));
+            }
+        }
+
+        if let Some((target, target_pos, dist)) = nearest {
+            if dist <= combat.range {
+                // In attack range — deal damage if cooldown ready
+                if combat.elapsed >= combat.cooldown {
+                    damage_events.push(DamageEvent {
+                        target,
+                        amount: combat.damage,
+                        source: Some(entity),
+                    });
+                    cooldown_resets.push(entity);
+                }
+                // Stop moving when in range
+                velocity_updates.push((entity, Vec3::ZERO));
+            } else {
+                // Chase: move toward target
+                let dir = (target_pos - pos).normalize();
+                velocity_updates.push((
+                    entity,
+                    Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed),
+                ));
+            }
+        } else {
+            // No enemy found — stand still
+            velocity_updates.push((entity, Vec3::ZERO));
+        }
+    }
+
+    // Apply velocity updates
+    for (entity, vel) in velocity_updates {
+        if let Some(v) = world.get_mut::<Velocity>(entity) {
+            v.linear.x = vel.x;
+            v.linear.z = vel.z;
+        }
+    }
+
+    // Emit damage events
+    if let Some(events) = world.resource_mut::<Events>() {
+        for event in damage_events {
+            events.send(event);
+        }
+    }
+
+    // Reset cooldowns for entities that attacked
+    for entity in cooldown_resets {
+        if let Some(combat) = world.get_mut::<AutoCombat>(entity) {
+            combat.elapsed = 0.0;
+        }
+    }
+
+    // Tick cooldowns for all fighters
+    for &(entity, _, _, dead) in &fighters {
+        if dead {
+            continue;
+        }
+        if let Some(combat) = world.get_mut::<AutoCombat>(entity) {
+            combat.elapsed += dt;
+        }
     }
 }
 

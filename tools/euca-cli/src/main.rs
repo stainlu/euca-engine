@@ -196,6 +196,9 @@ enum EntityCommands {
         /// Team ID (adds Team component)
         #[arg(long)]
         team: Option<u8>,
+        /// Enable auto-combat (detect enemies, chase, attack)
+        #[arg(long)]
+        combat: bool,
         /// Full JSON body (overrides other flags)
         #[arg(long)]
         json: Option<String>,
@@ -434,6 +437,9 @@ enum TemplateCommands {
         /// Collider
         #[arg(long)]
         collider: Option<String>,
+        /// Enable auto-combat
+        #[arg(long)]
+        combat: bool,
     },
     /// Spawn an entity from a template
     Spawn {
@@ -544,6 +550,7 @@ fn build_create_body(
     collider: &Option<String>,
     health: Option<f32>,
     team: Option<u8>,
+    combat: bool,
 ) -> Value {
     let mut body = serde_json::json!({});
     if let Some(m) = mesh {
@@ -575,6 +582,9 @@ fn build_create_body(
     }
     if let Some(t) = team {
         body["team"] = serde_json::json!(t);
+    }
+    if combat {
+        body["combat"] = serde_json::json!(true);
     }
     body
 }
@@ -667,6 +677,7 @@ fn main() {
                 collider,
                 health,
                 team,
+                combat,
                 json,
                 dry_run,
             } => {
@@ -674,7 +685,7 @@ fn main() {
                     parse_json_flag(raw)
                 } else {
                     build_create_body(
-                        &mesh, &color, &position, &scale, &physics, &collider, health, team,
+                        &mesh, &color, &position, &scale, &physics, &collider, health, team, combat,
                     )
                 };
                 if dry_run {
@@ -899,8 +910,12 @@ fn main() {
                 team,
                 physics,
                 collider,
+                combat,
             } => {
                 let mut body = serde_json::json!({"name": name});
+                if combat {
+                    body["combat"] = serde_json::json!(true);
+                }
                 if let Some(m) = mesh {
                     body["mesh"] = serde_json::json!(m);
                 }
@@ -1041,7 +1056,7 @@ fn main() {
             collider,
         } => {
             let body = build_create_body(
-                &None, &None, &position, &scale, &physics, &collider, None, None,
+                &None, &None, &position, &scale, &physics, &collider, None, None, false,
             );
             let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)

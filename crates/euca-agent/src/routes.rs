@@ -290,6 +290,9 @@ pub struct SpawnRequest {
     /// Team ID (adds Team component)
     #[serde(default)]
     pub team: Option<u8>,
+    /// Enable auto-combat (adds AutoCombat component)
+    #[serde(default)]
+    pub combat: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -576,6 +579,9 @@ pub async fn spawn(
         }
         if let Some(team_id) = req.team {
             w.insert(entity, euca_gameplay::Team(team_id));
+        }
+        if req.combat == Some(true) {
+            w.insert(entity, euca_gameplay::AutoCombat::new());
         }
 
         SpawnResponse {
@@ -1709,6 +1715,9 @@ pub async fn template_spawn(
         }
         if let Some(team_id) = spawn_req.team {
             w.insert(entity, euca_gameplay::Team(team_id));
+        }
+        if spawn_req.combat == Some(true) {
+            w.insert(entity, euca_gameplay::AutoCombat::new());
         }
 
         entity.index()

@@ -305,6 +305,7 @@ impl EditorApp {
             euca_gameplay::projectile_system(world, dt);
             euca_gameplay::trigger_system(world);
             euca_gameplay::ai_system(world, dt);
+            euca_gameplay::auto_combat_system(world, dt);
             euca_gameplay::game_state_system(world, dt);
 
             // Data-driven rules (evaluate conditions → execute actions)
