@@ -135,11 +135,18 @@ pub struct Renderer {
     hdr_view: wgpu::TextureView,
     postprocess_bind_group: wgpu::BindGroup,
 
+    // MSAA (4x anti-aliasing)
+    msaa_hdr_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    msaa_hdr_texture: wgpu::Texture,
+
     meshes: Vec<GpuMesh>,
     depth_texture: wgpu::TextureView,
     depth_format: wgpu::TextureFormat,
     surface_format: wgpu::TextureFormat,
 }
+
+const MSAA_SAMPLE_COUNT: u32 = 4;
 
 impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
@@ -482,7 +489,11 @@ impl Renderer {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: Default::default(),
+                multisample: wgpu::MultisampleState {
+                    count: MSAA_SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
                 multiview: None,
                 cache: None,
             });
@@ -523,13 +534,19 @@ impl Renderer {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: Default::default(),
+                multisample: wgpu::MultisampleState {
+                    count: MSAA_SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
                 multiview: None,
                 cache: None,
             });
 
         // ── HDR offscreen texture ──
         let (hdr_texture, hdr_view) = Self::create_hdr_texture(&gpu.device, &gpu.surface_config);
+        let (msaa_hdr_texture, msaa_hdr_view) =
+            Self::create_msaa_hdr_texture(&gpu.device, &gpu.surface_config);
 
         // ── Post-processing pipeline (HDR → surface) ──
         let postprocess_shader = gpu
@@ -642,6 +659,8 @@ impl Renderer {
             hdr_texture,
             hdr_view,
             postprocess_bind_group,
+            msaa_hdr_texture,
+            msaa_hdr_view,
             meshes: Vec::new(),
             depth_texture,
             depth_format,
@@ -770,6 +789,10 @@ impl Renderer {
         let (hdr_texture, hdr_view) = Self::create_hdr_texture(&gpu.device, &gpu.surface_config);
         self.hdr_texture = hdr_texture;
         self.hdr_view = hdr_view;
+        let (msaa_hdr_texture, msaa_hdr_view) =
+            Self::create_msaa_hdr_texture(&gpu.device, &gpu.surface_config);
+        self.msaa_hdr_texture = msaa_hdr_texture;
+        self.msaa_hdr_view = msaa_hdr_view;
         self.postprocess_bind_group = Self::create_postprocess_bind_group(
             &gpu.device,
             &self.postprocess_bgl,
@@ -1061,13 +1084,13 @@ impl Renderer {
         gpu.queue
             .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
 
-        // ── Main PBR pass (renders to HDR offscreen texture) ──
+        // ── Main PBR pass (renders to MSAA HDR, resolves to single-sample HDR) ──
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("PBR Pass"),
+                label: Some("PBR Pass (MSAA)"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.hdr_view,
-                    resolve_target: None,
+                    view: &self.msaa_hdr_view,
+                    resolve_target: Some(&self.hdr_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.05,
@@ -1144,17 +1167,17 @@ impl Renderer {
         format: wgpu::TextureFormat,
     ) -> wgpu::TextureView {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
+            label: Some("Depth Texture (MSAA)"),
             size: wgpu::Extent3d {
                 width: config.width.max(1),
                 height: config.height.max(1),
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: MSAA_SAMPLE_COUNT,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         texture.create_view(&wgpu::TextureViewDescriptor::default())
@@ -1165,7 +1188,7 @@ impl Renderer {
         config: &wgpu::SurfaceConfiguration,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("HDR Texture"),
+            label: Some("HDR Resolve Texture"),
             size: wgpu::Extent3d {
                 width: config.width.max(1),
                 height: config.height.max(1),
@@ -1176,6 +1199,28 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
+    }
+
+    fn create_msaa_hdr_texture(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("MSAA HDR Texture"),
+            size: wgpu::Extent3d {
+                width: config.width.max(1),
+                height: config.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLE_COUNT,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

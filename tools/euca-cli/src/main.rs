@@ -78,6 +78,12 @@ enum Commands {
         command: TemplateCommands,
     },
 
+    /// Audio: play, stop, list sounds
+    Audio {
+        #[command(subcommand)]
+        command: AudioCommands,
+    },
+
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -317,6 +323,34 @@ enum CameraCommands {
         /// Entity ID to focus on
         id: u32,
     },
+}
+
+#[derive(Subcommand)]
+enum AudioCommands {
+    /// Play a sound file
+    Play {
+        /// Path to audio file (WAV, MP3, OGG, FLAC)
+        path: String,
+        /// Position as "x,y,z" (makes it spatial)
+        #[arg(long)]
+        position: Option<String>,
+        /// Volume (0.0-1.0)
+        #[arg(long, default_value = "1.0")]
+        volume: f32,
+        /// Loop the sound
+        #[arg(long, name = "loop")]
+        looping: bool,
+        /// Max audible distance (spatial only)
+        #[arg(long, default_value = "50")]
+        max_distance: f32,
+    },
+    /// Stop an audio source
+    Stop {
+        /// Entity ID of the audio source
+        entity_id: u32,
+    },
+    /// List active audio sources
+    List,
 }
 
 #[derive(Subcommand)]
@@ -985,6 +1019,49 @@ fn main() {
         },
 
         Commands::Auth { command } => run_auth(command, &client, server),
+
+        // ── Audio ──
+        Commands::Audio { command } => match command {
+            AudioCommands::Play {
+                path,
+                position,
+                volume,
+                looping,
+                max_distance,
+            } => {
+                let mut body = serde_json::json!({
+                    "path": path,
+                    "volume": volume,
+                    "loop": looping,
+                    "max_distance": max_distance,
+                });
+                if let Some(pos_str) = position {
+                    let parts: Vec<f32> = pos_str
+                        .split(',')
+                        .filter_map(|p| p.trim().parse().ok())
+                        .collect();
+                    if parts.len() == 3 {
+                        body["position"] = serde_json::json!([parts[0], parts[1], parts[2]]);
+                    }
+                }
+                let resp = client
+                    .post(format!("{server}/audio/play"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            AudioCommands::Stop { entity_id } => {
+                let resp = client
+                    .post(format!("{server}/audio/stop"))
+                    .json(&serde_json::json!({"entity_id": entity_id}))
+                    .send();
+                handle_response(resp)
+            }
+            AudioCommands::List => {
+                let resp = client.get(format!("{server}/audio/list")).send();
+                handle_response(resp)
+            }
+        },
 
         // ── HUD ──
         Commands::Ui { command } => match command {

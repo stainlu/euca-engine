@@ -22,9 +22,9 @@ euca status
 # 3. Create a game
 euca game create --mode deathmatch --score-limit 5
 
-# 4. Spawn fighters
-euca entity create --mesh cube --position 0,2,0 --health 100 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
-euca entity create --mesh sphere --position 3,2,0 --health 100 --team 2 --color blue --physics Dynamic --collider sphere:0.5
+# 4. Spawn fighters (--combat enables auto-detect, chase, melee attack)
+euca entity create --mesh cube --position 0,2,0 --health 100 --team 1 --color red --combat --physics Dynamic --collider aabb:0.5,0.5,0.5
+euca entity create --mesh sphere --position 3,2,0 --health 100 --team 2 --color blue --combat --physics Dynamic --collider sphere:0.5
 
 # 5. Add HUD
 euca ui text "DEATHMATCH" --x 0.5 --y 0.02 --size 28 --color yellow
@@ -49,7 +49,7 @@ euca entity get <id>                          # Single entity (health, team, tra
 # Create
 euca entity create --mesh cube --position 0,2,0 --color red
 euca entity create --mesh sphere --position 3,2,0 --physics Dynamic --collider sphere:0.5
-euca entity create --mesh cube --position 0,1,0 --health 100 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
+euca entity create --mesh cube --position 0,1,0 --health 100 --team 1 --color red --combat --physics Dynamic --collider aabb:0.5,0.5,0.5
 euca entity create --json '{"position": [1,2,3], "mesh": "cube", "color": "gold", "health": 50}'
 
 # Update
@@ -80,7 +80,7 @@ euca sim reset                   # Reset to initial scene
 ```
 
 When simulation is playing, these systems run each tick:
-physics → damage → death → projectiles → triggers → AI → game state → respawn
+physics → damage → death → projectiles → triggers → AI → auto_combat → game state → respawn
 
 ### Game Match
 
@@ -138,6 +138,28 @@ euca ai set <id> --behavior flee --target <threat_id> --speed 4
 ```
 
 AI sets entity Velocity each tick based on behavior. Requires entity to have a position (LocalTransform).
+
+### AutoCombat (Auto-PvP)
+
+Add `--combat` to any entity with `--health` and `--team` to enable automatic combat:
+
+```bash
+# Entities with --combat auto-detect enemies, chase, and melee attack
+euca entity create --mesh cube --position -3,1,0 --health 100 --team 1 --color red --combat --physics Dynamic --collider aabb:0.5,0.5,0.5
+euca entity create --mesh sphere --position 3,1,0 --health 80 --team 2 --color blue --combat --physics Dynamic --collider sphere:0.5
+```
+
+**Defaults:** damage: 10, range: 1.5, cooldown: 1.0s, detect_range: 20, chase_speed: 3.0
+
+**Behavior per tick:**
+1. Detect nearest alive entity on a different team within detect_range
+2. If in attack range (1.5): deal damage (DamageEvent), wait cooldown
+3. If out of range: chase (set Velocity toward target)
+4. If no enemy found: stand still
+
+No `ai set` command needed — `--combat` handles everything automatically.
+
+**Auto Health Bars:** Entities with a `Health` component automatically display a health bar above them in the viewport. Bars are colored by team (red = team 1, blue = team 2, green = other) and shrink as health decreases.
 
 ### Rules (Data-Driven Game Logic)
 
@@ -246,6 +268,7 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 | health | [current, max] | Only if --health was set |
 | team | u8 | Only if --team was set |
 | dead | true | Only if health reached 0 |
+| auto_combat | damage, range, cooldown, detect_range, speed | Only if --combat was set |
 
 ## Flag Reference
 
@@ -260,6 +283,7 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 | `--collider` | aabb:h,h,h / sphere:r | entity create |
 | `--health` | f32 | entity create |
 | `--team` | u8 | entity create |
+| `--combat` | flag | entity create, template create |
 | `--json` | JSON string | entity create, entity update |
 | `--dry-run` | flag | entity create, entity update |
 | `--amount` | f32 | entity damage, entity heal |
@@ -281,9 +305,9 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 ### Arena Survival (full showcase)
 
 ```bash
-# 1. Define templates
-euca template create soldier --mesh cube --health 100 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
-euca template create enemy --mesh sphere --health 60 --team 2 --color blue --physics Dynamic --collider sphere:0.5
+# 1. Define templates (--combat enables auto-fight)
+euca template create soldier --mesh cube --health 100 --team 1 --color red --combat --physics Dynamic --collider aabb:0.5,0.5,0.5
+euca template create enemy --mesh sphere --health 60 --team 2 --color blue --combat --physics Dynamic --collider sphere:0.5
 
 # 2. Create match
 euca game create --mode deathmatch --score-limit 10

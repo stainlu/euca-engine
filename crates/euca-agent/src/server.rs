@@ -73,6 +73,9 @@ impl AgentServer {
             .route("/auth/login", post(routes::auth_login))
             .route("/auth/status", get(routes::auth_status))
             .route("/schema", get(routes::schema))
+            .route("/audio/play", post(routes::audio_play))
+            .route("/audio/stop", post(routes::audio_stop))
+            .route("/audio/list", get(routes::audio_list))
             .with_state(self.shared.clone())
     }
 
