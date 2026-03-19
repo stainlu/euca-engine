@@ -160,6 +160,14 @@ pub struct RichEntityData {
     pub trigger_zone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projectile: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gold: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mana: Option<[f32; 2]>,
 }
 
 pub(crate) fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
@@ -233,6 +241,15 @@ pub(crate) fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntit
         None
     };
 
+    let gold = w.get::<euca_gameplay::Gold>(entity).map(|g| g.0);
+    let level = w.get::<euca_gameplay::Level>(entity).map(|l| l.level);
+    let role = w
+        .get::<euca_gameplay::EntityRole>(entity)
+        .map(|r| format!("{:?}", r));
+    let mana = w
+        .get::<euca_gameplay::Mana>(entity)
+        .map(|m| [m.current, m.max]);
+
     RichEntityData {
         id: entity.index(),
         generation: entity.generation(),
@@ -246,6 +263,10 @@ pub(crate) fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntit
         ai,
         trigger_zone,
         projectile,
+        gold,
+        level,
+        role,
+        mana,
     }
 }
 

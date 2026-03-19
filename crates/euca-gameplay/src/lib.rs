@@ -10,21 +10,28 @@
 //! = a deathmatch game
 //! ```
 
+pub mod abilities;
 pub mod ai;
 pub mod combat;
 pub mod data_table;
+pub mod economy;
 pub mod game_state;
 pub mod health;
+pub mod leveling;
 pub mod rules;
 pub mod teams;
 pub mod triggers;
 
 // Re-export key types at crate root for convenience
 pub use ai::{AiBehavior, AiGoal, ai_system};
-pub use combat::{AttackStyle, AutoCombat, Projectile, auto_combat_system, projectile_system};
+pub use combat::{
+    AttackStyle, AutoCombat, EntityRole, Projectile, auto_combat_system, projectile_system,
+};
 pub use data_table::DataTable;
 pub use game_state::{GamePhase, GameState, MatchConfig, ScoreEvent, game_state_system};
-pub use health::{DamageEvent, Dead, DeathEvent, Health, apply_damage_system, death_check_system};
+pub use health::{
+    DamageEvent, Dead, DeathEvent, Health, LastAttacker, apply_damage_system, death_check_system,
+};
 pub use rules::{
     ActionTarget, GameAction, HealthBelowRule, OnDeathRule, OnPhaseRule, OnScoreRule,
     RuleCondition, RuleFilter, RuleSpawnEvent, TimerRule, health_below_rule_system,
@@ -33,3 +40,10 @@ pub use rules::{
 };
 pub use teams::{RespawnTimer, SpawnPoint, Team, respawn_system, start_respawn_on_death};
 pub use triggers::{TriggerAction, TriggerZone, trigger_system};
+
+pub use abilities::{
+    Ability, AbilityEffect, AbilitySet, AbilitySlot, Mana, SpeedBuff, UseAbilityEvent,
+    ability_tick_system, use_ability_system,
+};
+pub use economy::{Gold, GoldBounty, gold_on_kill_system};
+pub use leveling::{Level, XpBounty, xp_on_kill_system};

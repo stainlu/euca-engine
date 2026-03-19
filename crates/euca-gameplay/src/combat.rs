@@ -109,6 +109,27 @@ pub fn projectile_system(world: &mut World, dt: f32) {
     }
 }
 
+/// What kind of entity this is (for targeting priority and bounties).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityRole {
+    Minion,
+    Hero,
+    Tower,
+    Structure,
+}
+
+impl EntityRole {
+    /// Lower = higher targeting priority (towers prefer minions).
+    pub fn target_priority(&self) -> u8 {
+        match self {
+            Self::Minion => 0, // attacked first
+            Self::Hero => 1,   // attacked second
+            Self::Tower => 2,
+            Self::Structure => 3, // attacked last
+        }
+    }
+}
+
 // ── Auto-PvP Combat ──
 
 /// How the entity attacks.
@@ -199,15 +220,31 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             None => continue,
         };
 
-        // Find nearest alive enemy
+        // Find best target: sort by (role_priority, distance)
         let mut nearest: Option<(Entity, Vec3, f32)> = None;
+        let mut nearest_priority: u8 = u8::MAX;
         for &(other, other_pos, other_team, other_dead) in &fighters {
             if other == entity || other_team == team || other_dead {
                 continue;
             }
             let dist = (other_pos - pos).length();
-            if dist < combat.detect_range && (nearest.is_none() || dist < nearest.unwrap().2) {
+            if dist >= combat.detect_range {
+                continue;
+            }
+            let priority = world
+                .get::<EntityRole>(other)
+                .map(|r| r.target_priority())
+                .unwrap_or(1); // default: hero-level priority
+            let better = match nearest {
+                None => true,
+                Some((_, _, best_dist)) => {
+                    priority < nearest_priority
+                        || (priority == nearest_priority && dist < best_dist)
+                }
+            };
+            if better {
                 nearest = Some((other, other_pos, dist));
+                nearest_priority = priority;
             }
         }
 

@@ -36,6 +36,10 @@ impl Health {
 #[derive(Clone, Copy, Debug)]
 pub struct Dead;
 
+/// Tracks who last dealt damage to this entity (for kill attribution).
+#[derive(Clone, Copy, Debug)]
+pub struct LastAttacker(pub Option<Entity>);
+
 /// Request to apply damage to an entity.
 #[derive(Clone, Debug)]
 pub struct DamageEvent {
@@ -63,6 +67,10 @@ pub fn apply_damage_system(world: &mut World) {
         if let Some(health) = world.get_mut::<Health>(event.target) {
             health.current = (health.current - event.amount).max(0.0);
         }
+        // Track who dealt this damage for kill attribution
+        if event.source.is_some() {
+            world.insert(event.target, LastAttacker(event.source));
+        }
     }
 }
 
@@ -75,7 +83,10 @@ pub fn death_check_system(world: &mut World) {
         query
             .iter()
             .filter(|(e, h)| h.is_dead() && world.get::<Dead>(*e).is_none())
-            .map(|(e, _)| (e, None)) // killer tracking via last DamageEvent would need more state
+            .map(|(e, _)| {
+                let killer = world.get::<LastAttacker>(e).and_then(|la| la.0);
+                (e, killer)
+            })
             .collect()
     };
 

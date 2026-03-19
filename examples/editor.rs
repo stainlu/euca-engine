@@ -358,6 +358,12 @@ impl EditorApp {
                 }
             }
 
+            // Economy + leveling + abilities
+            euca_gameplay::gold_on_kill_system(world);
+            euca_gameplay::xp_on_kill_system(world);
+            euca_gameplay::ability_tick_system(world, dt);
+            euca_gameplay::use_ability_system(world);
+
             // Audio, animation, particles, navigation
             euca_audio::audio_update_system_mut(world);
             euca_asset::skeletal_animation_system(world, dt);

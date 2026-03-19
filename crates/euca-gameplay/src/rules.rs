@@ -21,6 +21,7 @@ pub struct RuleSpawnEvent {
     pub entity: Entity,
     pub mesh: String,
     pub color: Option<String>,
+    pub scale: Option<[f32; 3]>,
 }
 
 // ── Actions ──
@@ -46,6 +47,8 @@ pub enum GameAction {
         /// Patrol waypoints as Vec of [x,y,z].
         #[serde(default)]
         waypoints: Option<Vec<[f32; 3]>>,
+        #[serde(default)]
+        scale: Option<[f32; 3]>,
     },
     #[serde(rename = "damage")]
     Damage { target: ActionTarget, amount: f32 },
@@ -380,12 +383,16 @@ pub fn execute_action(
             combat,
             speed,
             waypoints,
+            scale,
         } => {
-            let transform = euca_math::Transform::from_translation(Vec3::new(
+            let mut transform = euca_math::Transform::from_translation(Vec3::new(
                 position[0],
                 position[1],
                 position[2],
             ));
+            if let Some(s) = scale {
+                transform.scale = Vec3::new(s[0], s[1], s[2]);
+            }
             let entity = world.spawn(LocalTransform(transform));
             world.insert(entity, euca_scene::GlobalTransform::default());
             if let Some(h) = health {
@@ -416,6 +423,7 @@ pub fn execute_action(
                     entity,
                     mesh: _mesh.clone(),
                     color: _color.clone(),
+                    scale: *scale,
                 });
             }
             log::info!(
@@ -517,6 +525,7 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
                 .get(6)
                 .map(|s| s.split(':').filter_map(parse_vec3).collect::<Vec<_>>());
             let speed = args.get(7).and_then(|s| s.parse::<f32>().ok());
+            let scale = args.get(8).and_then(|s| parse_vec3(s));
             Some(GameAction::Spawn {
                 mesh,
                 position: pos,
@@ -526,6 +535,7 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
                 combat,
                 speed,
                 waypoints,
+                scale,
             })
         }
         "damage" => {
@@ -746,6 +756,7 @@ mod tests {
                 combat: None,
                 speed: None,
                 waypoints: None,
+                scale: None,
             }],
         });
         let _ = rule;
@@ -776,6 +787,7 @@ mod tests {
                 combat: None,
                 speed: None,
                 waypoints: None,
+                scale: None,
             }],
         });
 
