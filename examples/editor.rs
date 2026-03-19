@@ -475,13 +475,32 @@ impl EditorApp {
             spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
             inspector_panel(ctx, &mut self.editor_state, world);
 
-            // Render in-game HUD elements from HudCanvas
+            // Render in-game HUD elements INSIDE the 3D viewport only.
+            // Like UE5: game UI renders inside the viewport, never bleeds into editor panels.
             if let Some(canvas) = world.resource::<HudCanvas>() {
-                let screen = ctx.available_rect();
+                let vp = ctx.available_rect(); // viewport = area after panels
                 let painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Foreground,
                     egui::Id::new("hud"),
                 ));
+                painter.set_clip_rect(vp); // clip: nothing renders outside viewport
+
+                // Helper: map HUD (0,0)-(1,1) to viewport pixel coordinates
+                let vp_pos = |hx: f32, hy: f32| -> egui::Pos2 {
+                    egui::pos2(vp.min.x + hx * vp.width(), vp.min.y + hy * vp.height())
+                };
+                let vp_size = |hw: f32, hh: f32| -> egui::Vec2 {
+                    egui::vec2(hw * vp.width(), hh * vp.height())
+                };
+                let to_color = |rgba: [f32; 4]| -> egui::Color32 {
+                    egui::Color32::from_rgba_unmultiplied(
+                        (rgba[0] * 255.0) as u8,
+                        (rgba[1] * 255.0) as u8,
+                        (rgba[2] * 255.0) as u8,
+                        (rgba[3] * 255.0) as u8,
+                    )
+                };
+
                 for element in &canvas.elements {
                     match element {
                         HudElement::Text {
@@ -491,19 +510,12 @@ impl EditorApp {
                             size,
                             color,
                         } => {
-                            let rgba = parse_color(color);
-                            let pos = egui::pos2(x * screen.width(), y * screen.height());
                             painter.text(
-                                pos,
+                                vp_pos(*x, *y),
                                 egui::Align2::CENTER_TOP,
                                 text,
                                 egui::FontId::proportional(*size),
-                                egui::Color32::from_rgba_unmultiplied(
-                                    (rgba[0] * 255.0) as u8,
-                                    (rgba[1] * 255.0) as u8,
-                                    (rgba[2] * 255.0) as u8,
-                                    (rgba[3] * 255.0) as u8,
-                                ),
+                                to_color(parse_color(color)),
                             );
                         }
                         HudElement::Bar {
@@ -514,32 +526,18 @@ impl EditorApp {
                             fill,
                             color,
                         } => {
-                            let rgba = parse_color(color);
-                            let rect = egui::Rect::from_min_size(
-                                egui::pos2(x * screen.width(), y * screen.height()),
-                                egui::vec2(width * screen.width(), height * screen.height()),
-                            );
-                            // Background (dark)
+                            let rect =
+                                egui::Rect::from_min_size(vp_pos(*x, *y), vp_size(*width, *height));
                             painter.rect_filled(
                                 rect,
                                 2.0,
                                 egui::Color32::from_rgba_unmultiplied(20, 20, 20, 180),
                             );
-                            // Fill
                             let fill_rect = egui::Rect::from_min_size(
                                 rect.min,
                                 egui::vec2(rect.width() * fill.clamp(0.0, 1.0), rect.height()),
                             );
-                            painter.rect_filled(
-                                fill_rect,
-                                2.0,
-                                egui::Color32::from_rgba_unmultiplied(
-                                    (rgba[0] * 255.0) as u8,
-                                    (rgba[1] * 255.0) as u8,
-                                    (rgba[2] * 255.0) as u8,
-                                    (rgba[3] * 255.0) as u8,
-                                ),
-                            );
+                            painter.rect_filled(fill_rect, 2.0, to_color(parse_color(color)));
                         }
                         HudElement::Rect {
                             x,
@@ -548,21 +546,9 @@ impl EditorApp {
                             height,
                             color,
                         } => {
-                            let rgba = parse_color(color);
-                            let rect = egui::Rect::from_min_size(
-                                egui::pos2(x * screen.width(), y * screen.height()),
-                                egui::vec2(width * screen.width(), height * screen.height()),
-                            );
-                            painter.rect_filled(
-                                rect,
-                                0.0,
-                                egui::Color32::from_rgba_unmultiplied(
-                                    (rgba[0] * 255.0) as u8,
-                                    (rgba[1] * 255.0) as u8,
-                                    (rgba[2] * 255.0) as u8,
-                                    (rgba[3] * 255.0) as u8,
-                                ),
-                            );
+                            let rect =
+                                egui::Rect::from_min_size(vp_pos(*x, *y), vp_size(*width, *height));
+                            painter.rect_filled(rect, 0.0, to_color(parse_color(color)));
                         }
                     }
                 }
