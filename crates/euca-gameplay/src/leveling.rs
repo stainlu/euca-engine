@@ -89,7 +89,6 @@ pub fn xp_on_kill_system(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use euca_ecs::Entity;
 
     #[test]
     fn xp_for_level_scales() {

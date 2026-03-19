@@ -58,7 +58,6 @@ pub fn gold_on_kill_system(world: &mut World) {
 mod tests {
     use super::*;
     use crate::health::{DeathEvent, Health};
-    use euca_ecs::Entity;
 
     #[test]
     fn gold_on_kill_awards_bounty() {
