@@ -1,3 +1,4 @@
+mod animation;
 mod audio;
 mod camera;
 mod entity;
@@ -7,6 +8,7 @@ mod sim;
 mod templates;
 mod ui;
 
+pub use animation::*;
 pub use audio::*;
 pub use camera::*;
 pub use entity::*;

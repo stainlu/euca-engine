@@ -1,16 +1,27 @@
 use euca_render::{Material, Mesh, Vertex};
 use std::path::Path;
 
+use crate::animation::{AnimationClipData, parse_animations};
+use crate::skeleton::{Skeleton, parse_skeleton};
+
 /// A loaded glTF mesh with its associated material.
 pub struct GltfMesh {
     pub mesh: Mesh,
     pub material: Material,
     pub name: Option<String>,
+    /// Per-vertex joint indices (4 joints per vertex). Present if model has a skin.
+    pub joint_indices: Option<Vec<[u16; 4]>>,
+    /// Per-vertex joint weights (4 weights per vertex). Present if model has a skin.
+    pub joint_weights: Option<Vec<[f32; 4]>>,
 }
 
 /// A complete glTF scene: all meshes with their materials.
 pub struct GltfScene {
     pub meshes: Vec<GltfMesh>,
+    /// Skeleton data (if the model has a skin).
+    pub skeleton: Option<Skeleton>,
+    /// Animation clips (if the model has animations).
+    pub animations: Vec<AnimationClipData>,
 }
 
 /// Load a glTF/glb file, extracting meshes and PBR materials.
@@ -56,6 +67,14 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
                 .map(|iter| iter.into_u32().collect())
                 .unwrap_or_else(|| (0..positions.len() as u32).collect());
 
+            // Read joint indices (optional, for skinned meshes)
+            let joint_indices: Option<Vec<[u16; 4]>> =
+                reader.read_joints(0).map(|iter| iter.into_u16().collect());
+
+            // Read joint weights (optional, for skinned meshes)
+            let joint_weights: Option<Vec<[f32; 4]>> =
+                reader.read_weights(0).map(|iter| iter.into_f32().collect());
+
             // Build vertices
             let vertices: Vec<Vertex> = positions
                 .iter()
@@ -86,6 +105,8 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
                 mesh: Mesh { vertices, indices },
                 material,
                 name: mesh_name.clone(),
+                joint_indices,
+                joint_weights,
             });
         }
     }
@@ -94,8 +115,23 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
         return Err("No meshes found in glTF file".into());
     }
 
+    // Parse skeleton (first skin in the document)
+    let skeleton = parse_skeleton(&document, &buffers);
+
+    // Parse animations (requires joint node indices from skeleton)
+    let animations = skeleton
+        .as_ref()
+        .map(|skel| parse_animations(&document, &buffers, &skel.joint_node_indices))
+        .unwrap_or_default();
+
+    if !animations.is_empty() {
+        log::info!("Loaded {} animation clips from glTF", animations.len(),);
+    }
+
     Ok(GltfScene {
         meshes: scene_meshes,
+        skeleton,
+        animations,
     })
 }
 

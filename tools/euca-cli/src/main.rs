@@ -84,6 +84,12 @@ enum Commands {
         command: AudioCommands,
     },
 
+    /// Animation: load glTF models, play/stop skeletal animation
+    Animation {
+        #[command(subcommand)]
+        command: AnimationCommands,
+    },
+
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -350,6 +356,36 @@ enum AudioCommands {
         entity_id: u32,
     },
     /// List active audio sources
+    List,
+}
+
+#[derive(Subcommand)]
+enum AnimationCommands {
+    /// Load a glTF file with animations and skeleton
+    Load {
+        /// Path to glTF/glb file
+        path: String,
+    },
+    /// Play an animation clip on an entity
+    Play {
+        /// Entity ID
+        entity_id: u32,
+        /// Clip index (from animation list)
+        #[arg(long, default_value = "0")]
+        clip: usize,
+        /// Playback speed
+        #[arg(long, default_value = "1.0")]
+        speed: f32,
+        /// Loop the animation
+        #[arg(long, name = "loop")]
+        looping: bool,
+    },
+    /// Stop animation on an entity
+    Stop {
+        /// Entity ID
+        entity_id: u32,
+    },
+    /// List loaded animation clips
     List,
 }
 
@@ -1059,6 +1095,45 @@ fn main() {
             }
             AudioCommands::List => {
                 let resp = client.get(format!("{server}/audio/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Animation ──
+        Commands::Animation { command } => match command {
+            AnimationCommands::Load { path } => {
+                let resp = client
+                    .post(format!("{server}/animation/load"))
+                    .json(&serde_json::json!({"path": path}))
+                    .send();
+                handle_response(resp)
+            }
+            AnimationCommands::Play {
+                entity_id,
+                clip,
+                speed,
+                looping,
+            } => {
+                let resp = client
+                    .post(format!("{server}/animation/play"))
+                    .json(&serde_json::json!({
+                        "entity_id": entity_id,
+                        "clip": clip,
+                        "speed": speed,
+                        "loop": looping,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+            AnimationCommands::Stop { entity_id } => {
+                let resp = client
+                    .post(format!("{server}/animation/stop"))
+                    .json(&serde_json::json!({"entity_id": entity_id}))
+                    .send();
+                handle_response(resp)
+            }
+            AnimationCommands::List => {
+                let resp = client.get(format!("{server}/animation/list")).send();
                 handle_response(resp)
             }
         },

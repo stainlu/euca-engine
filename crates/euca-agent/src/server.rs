@@ -76,6 +76,10 @@ impl AgentServer {
             .route("/audio/play", post(routes::audio_play))
             .route("/audio/stop", post(routes::audio_stop))
             .route("/audio/list", get(routes::audio_list))
+            .route("/animation/load", post(routes::animation_load))
+            .route("/animation/play", post(routes::animation_play))
+            .route("/animation/stop", post(routes::animation_stop))
+            .route("/animation/list", get(routes::animation_list))
             .with_state(self.shared.clone())
     }
 
