@@ -5,7 +5,7 @@
 //! to world state change.
 
 use euca_agent::EngineControl;
-use euca_agent::routes::{DefaultAssets, TemplateRegistry};
+use euca_agent::routes::TemplateRegistry;
 use euca_ecs::{Events, Schedule, SharedWorld, World};
 
 /// Create a shared world with all resources initialized.
