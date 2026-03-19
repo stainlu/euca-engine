@@ -111,6 +111,21 @@ pub fn projectile_system(world: &mut World, dt: f32) {
 
 // ── Auto-PvP Combat ──
 
+/// How the entity attacks.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttackStyle {
+    /// Chase enemies and melee attack in range.
+    Melee,
+    /// Stay in place, only attack enemies that enter range (towers).
+    Stationary,
+}
+
+impl Default for AttackStyle {
+    fn default() -> Self {
+        Self::Melee
+    }
+}
+
 /// Entity automatically detects nearby enemies, chases, and attacks.
 /// Just add this + Health + Team to make an entity fight.
 #[derive(Clone, Debug)]
@@ -121,6 +136,7 @@ pub struct AutoCombat {
     pub elapsed: f32,
     pub detect_range: f32,
     pub speed: f32,
+    pub attack_style: AttackStyle,
 }
 
 impl AutoCombat {
@@ -132,6 +148,20 @@ impl AutoCombat {
             elapsed: 0.0,
             detect_range: 20.0,
             speed: 3.0,
+            attack_style: AttackStyle::Melee,
+        }
+    }
+
+    /// Create a stationary combatant (tower).
+    pub fn stationary(damage: f32, range: f32, cooldown: f32) -> Self {
+        Self {
+            damage,
+            range,
+            cooldown,
+            elapsed: 0.0,
+            detect_range: range, // detect = attack range for towers
+            speed: 0.0,
+            attack_style: AttackStyle::Stationary,
         }
     }
 }
@@ -181,7 +211,7 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             }
         }
 
-        if let Some((target, target_pos, dist)) = nearest {
+        if let Some((target, _target_pos, dist)) = nearest {
             if dist <= combat.range {
                 // In attack range — deal damage if cooldown ready
                 if combat.elapsed >= combat.cooldown {
@@ -194,17 +224,49 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
                 }
                 // Stop moving when in range
                 velocity_updates.push((entity, Vec3::ZERO));
+            } else if combat.attack_style == AttackStyle::Stationary {
+                // Stationary: enemy in detect range but not attack range — do nothing
+                velocity_updates.push((entity, Vec3::ZERO));
             } else {
                 // Chase: move toward target
-                let dir = (target_pos - pos).normalize();
+                let dir = (_target_pos - pos).normalize();
                 velocity_updates.push((
                     entity,
                     Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed),
                 ));
             }
         } else {
-            // No enemy found — stand still
-            velocity_updates.push((entity, Vec3::ZERO));
+            // No enemy found — check if entity has patrol waypoints to follow
+            let patrol_vel = world.get::<crate::ai::AiGoal>(entity).and_then(|goal| {
+                if matches!(goal.behavior, crate::ai::AiBehavior::Patrol)
+                    && !goal.waypoints.is_empty()
+                {
+                    let wp = goal.waypoints[goal.waypoint_index % goal.waypoints.len()];
+                    let to_wp = wp - pos;
+                    let dist = Vec3::new(to_wp.x, 0.0, to_wp.z).length();
+                    if dist > 0.5 {
+                        let dir = Vec3::new(to_wp.x, 0.0, to_wp.z).normalize();
+                        Some(Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed))
+                    } else {
+                        None // at waypoint, advance index below
+                    }
+                } else {
+                    None
+                }
+            });
+
+            if let Some(vel) = patrol_vel {
+                velocity_updates.push((entity, vel));
+            } else {
+                // Advance patrol waypoint if close enough
+                if let Some(goal) = world.get_mut::<crate::ai::AiGoal>(entity)
+                    && matches!(goal.behavior, crate::ai::AiBehavior::Patrol)
+                    && !goal.waypoints.is_empty()
+                {
+                    goal.waypoint_index = (goal.waypoint_index + 1) % goal.waypoints.len();
+                }
+                velocity_updates.push((entity, Vec3::ZERO));
+            }
         }
     }
 

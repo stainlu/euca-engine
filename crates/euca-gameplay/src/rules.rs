@@ -30,6 +30,13 @@ pub enum GameAction {
         health: Option<f32>,
         #[serde(default)]
         team: Option<u8>,
+        #[serde(default)]
+        combat: Option<bool>,
+        #[serde(default)]
+        speed: Option<f32>,
+        /// Patrol waypoints as Vec of [x,y,z].
+        #[serde(default)]
+        waypoints: Option<Vec<[f32; 3]>>,
     },
     #[serde(rename = "damage")]
     Damage { target: ActionTarget, amount: f32 },
@@ -361,6 +368,9 @@ pub fn execute_action(
             color: _color,
             health,
             team,
+            combat,
+            speed,
+            waypoints,
         } => {
             let transform = euca_math::Transform::from_translation(Vec3::new(
                 position[0],
@@ -375,9 +385,20 @@ pub fn execute_action(
             if let Some(t) = team {
                 world.insert(entity, Team(*t));
             }
-            // Note: mesh + color assignment requires DefaultAssets (render handles).
-            // For now, spawned entities get transform + gameplay components but no visual.
-            // The HTTP spawn handler has render access; rule-spawned entities are gameplay-only.
+            if *combat == Some(true) {
+                let mut ac = crate::combat::AutoCombat::new();
+                if let Some(s) = speed {
+                    ac.speed = *s;
+                }
+                world.insert(entity, ac);
+                // Combat entities need Velocity
+                world.insert(entity, euca_physics::Velocity::default());
+            }
+            if let Some(wps) = waypoints {
+                let wp_vecs: Vec<Vec3> = wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
+                let patrol_speed = speed.unwrap_or(3.0);
+                world.insert(entity, crate::ai::AiGoal::patrol(wp_vecs, patrol_speed));
+            }
             log::info!(
                 "Rule spawned entity {} at ({}, {}, {})",
                 entity.index(),
@@ -463,17 +484,31 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
     }
 
     match parts[0] {
+        // spawn mesh x,y,z [color] [health] [team] [combat:true] [wp1:wp2:wp3]
         "spawn" => {
             let args: Vec<&str> = parts.get(1)?.split_whitespace().collect();
             let mesh = args.first()?.to_string();
             let pos = parse_vec3(args.get(1)?)?;
             let color = args.get(2).map(|s| s.to_string());
+            let health = args.get(3).and_then(|s| s.parse::<f32>().ok());
+            let team = args.get(4).and_then(|s| s.parse::<u8>().ok());
+            let combat = args.get(5).map(|s| *s == "true");
+            // Waypoints: colon-separated "x,y,z:x,y,z:x,y,z"
+            let waypoints = args.get(6).map(|s| {
+                s.split(':')
+                    .filter_map(parse_vec3)
+                    .collect::<Vec<_>>()
+            });
+            let speed = args.get(7).and_then(|s| s.parse::<f32>().ok());
             Some(GameAction::Spawn {
                 mesh,
                 position: pos,
                 color,
-                health: None,
-                team: None,
+                health,
+                team,
+                combat,
+                speed,
+                waypoints,
             })
         }
         "damage" => {
@@ -691,6 +726,9 @@ mod tests {
                 color: None,
                 health: Some(50.0),
                 team: Some(2),
+                combat: None,
+                speed: None,
+                waypoints: None,
             }],
         });
         let _ = rule;
@@ -718,6 +756,9 @@ mod tests {
                 color: None,
                 health: None,
                 team: None,
+                combat: None,
+                speed: None,
+                waypoints: None,
             }],
         });
 

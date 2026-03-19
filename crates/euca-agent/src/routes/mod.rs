@@ -307,6 +307,20 @@ pub struct SpawnRequest {
     pub team: Option<u8>,
     #[serde(default)]
     pub combat: Option<bool>,
+    #[serde(default)]
+    pub combat_damage: Option<f32>,
+    #[serde(default)]
+    pub combat_range: Option<f32>,
+    #[serde(default)]
+    pub combat_speed: Option<f32>,
+    #[serde(default)]
+    pub combat_cooldown: Option<f32>,
+    /// "melee" (default) or "stationary" (towers)
+    #[serde(default)]
+    pub combat_style: Option<String>,
+    /// AI patrol waypoints as colon-separated "x,y,z:x,y,z"
+    #[serde(default)]
+    pub ai_patrol: Option<Vec<[f32; 3]>>,
 }
 
 #[derive(Serialize)]

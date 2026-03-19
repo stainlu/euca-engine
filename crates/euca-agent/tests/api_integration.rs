@@ -144,6 +144,12 @@ fn test_template_create_and_spawn() {
                 health: Some(100.0),
                 team: Some(1),
                 combat: Some(true),
+                combat_damage: None,
+                combat_range: None,
+                combat_speed: None,
+                combat_cooldown: None,
+                combat_style: None,
+                ai_patrol: None,
             },
         );
     });

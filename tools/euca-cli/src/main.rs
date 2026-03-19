@@ -229,6 +229,24 @@ enum EntityCommands {
         /// Enable auto-combat (detect enemies, chase, attack)
         #[arg(long)]
         combat: bool,
+        /// Combat damage per hit
+        #[arg(long)]
+        combat_damage: Option<f32>,
+        /// Combat attack range
+        #[arg(long)]
+        combat_range: Option<f32>,
+        /// Combat chase speed (0 for stationary)
+        #[arg(long)]
+        combat_speed: Option<f32>,
+        /// Combat attack cooldown (seconds)
+        #[arg(long)]
+        combat_cooldown: Option<f32>,
+        /// Combat style: "melee" (default) or "stationary" (towers)
+        #[arg(long)]
+        combat_style: Option<String>,
+        /// AI patrol waypoints as "x,y,z:x,y,z:x,y,z"
+        #[arg(long)]
+        ai_patrol: Option<String>,
         /// Full JSON body (overrides other flags)
         #[arg(long)]
         json: Option<String>,
@@ -609,6 +627,24 @@ enum TemplateCommands {
         /// Enable auto-combat
         #[arg(long)]
         combat: bool,
+        /// Combat damage
+        #[arg(long)]
+        combat_damage: Option<f32>,
+        /// Combat range
+        #[arg(long)]
+        combat_range: Option<f32>,
+        /// Combat speed
+        #[arg(long)]
+        combat_speed: Option<f32>,
+        /// Combat cooldown
+        #[arg(long)]
+        combat_cooldown: Option<f32>,
+        /// Combat style: melee or stationary
+        #[arg(long)]
+        combat_style: Option<String>,
+        /// AI patrol waypoints
+        #[arg(long)]
+        ai_patrol: Option<String>,
     },
     /// Spawn an entity from a template
     Spawn {
@@ -710,6 +746,7 @@ fn parse_collider(s: &str) -> Option<Value> {
 
 /// Build a spawn/create JSON body from friendly flags.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn build_create_body(
     mesh: &Option<String>,
     color: &Option<String>,
@@ -720,6 +757,12 @@ fn build_create_body(
     health: Option<f32>,
     team: Option<u8>,
     combat: bool,
+    combat_damage: Option<f32>,
+    combat_range: Option<f32>,
+    combat_speed: Option<f32>,
+    combat_cooldown: Option<f32>,
+    combat_style: &Option<String>,
+    ai_patrol: &Option<String>,
 ) -> Value {
     let mut body = serde_json::json!({});
     if let Some(m) = mesh {
@@ -754,6 +797,37 @@ fn build_create_body(
     }
     if combat {
         body["combat"] = serde_json::json!(true);
+    }
+    if let Some(d) = combat_damage {
+        body["combat_damage"] = serde_json::json!(d);
+    }
+    if let Some(r) = combat_range {
+        body["combat_range"] = serde_json::json!(r);
+    }
+    if let Some(s) = combat_speed {
+        body["combat_speed"] = serde_json::json!(s);
+    }
+    if let Some(c) = combat_cooldown {
+        body["combat_cooldown"] = serde_json::json!(c);
+    }
+    if let Some(s) = combat_style {
+        body["combat_style"] = serde_json::json!(s);
+    }
+    if let Some(patrol_str) = ai_patrol {
+        // Parse "x,y,z:x,y,z:x,y,z" into [[x,y,z],[x,y,z]]
+        let waypoints: Vec<Vec<f32>> = patrol_str
+            .split(':')
+            .filter_map(|wp| {
+                let parts: Vec<f32> = wp
+                    .split(',')
+                    .filter_map(|p| p.trim().parse().ok())
+                    .collect();
+                if parts.len() == 3 { Some(parts) } else { None }
+            })
+            .collect();
+        if !waypoints.is_empty() {
+            body["ai_patrol"] = serde_json::json!(waypoints);
+        }
     }
     body
 }
@@ -847,6 +921,12 @@ fn main() {
                 health,
                 team,
                 combat,
+                combat_damage,
+                combat_range,
+                combat_speed,
+                combat_cooldown,
+                combat_style,
+                ai_patrol,
                 json,
                 dry_run,
             } => {
@@ -854,7 +934,21 @@ fn main() {
                     parse_json_flag(raw)
                 } else {
                     build_create_body(
-                        &mesh, &color, &position, &scale, &physics, &collider, health, team, combat,
+                        &mesh,
+                        &color,
+                        &position,
+                        &scale,
+                        &physics,
+                        &collider,
+                        health,
+                        team,
+                        combat,
+                        combat_damage,
+                        combat_range,
+                        combat_speed,
+                        combat_cooldown,
+                        &combat_style,
+                        &ai_patrol,
                     )
                 };
                 if dry_run {
@@ -1080,31 +1174,31 @@ fn main() {
                 physics,
                 collider,
                 combat,
+                combat_damage,
+                combat_range,
+                combat_speed,
+                combat_cooldown,
+                combat_style,
+                ai_patrol,
             } => {
-                let mut body = serde_json::json!({"name": name});
-                if combat {
-                    body["combat"] = serde_json::json!(true);
-                }
-                if let Some(m) = mesh {
-                    body["mesh"] = serde_json::json!(m);
-                }
-                if let Some(c) = color {
-                    body["color"] = serde_json::json!(c);
-                }
-                if let Some(h) = health {
-                    body["health"] = serde_json::json!(h);
-                }
-                if let Some(t) = team {
-                    body["team"] = serde_json::json!(t);
-                }
-                if let Some(p) = physics {
-                    body["physics_body"] = serde_json::json!(p);
-                }
-                if let Some(c) = collider
-                    && let Some(v) = parse_collider(&c)
-                {
-                    body["collider"] = v;
-                }
+                let mut body = build_create_body(
+                    &mesh,
+                    &color,
+                    &None,
+                    &None,
+                    &physics,
+                    &collider,
+                    health,
+                    team,
+                    combat,
+                    combat_damage,
+                    combat_range,
+                    combat_speed,
+                    combat_cooldown,
+                    &combat_style,
+                    &ai_patrol,
+                );
+                body["name"] = serde_json::json!(name);
                 let resp = client
                     .post(format!("{server}/template/create"))
                     .json(&body)
@@ -1428,7 +1522,8 @@ fn main() {
             collider,
         } => {
             let body = build_create_body(
-                &None, &None, &position, &scale, &physics, &collider, None, None, false,
+                &None, &None, &position, &scale, &physics, &collider, None, None, false, None,
+                None, None, None, &None, &None,
             );
             let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)

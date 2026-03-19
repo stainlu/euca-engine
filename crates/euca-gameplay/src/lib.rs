@@ -21,7 +21,7 @@ pub mod triggers;
 
 // Re-export key types at crate root for convenience
 pub use ai::{AiBehavior, AiGoal, ai_system};
-pub use combat::{AutoCombat, Projectile, auto_combat_system, projectile_system};
+pub use combat::{AttackStyle, AutoCombat, Projectile, auto_combat_system, projectile_system};
 pub use data_table::DataTable;
 pub use game_state::{GamePhase, GameState, MatchConfig, ScoreEvent, game_state_system};
 pub use health::{DamageEvent, Dead, DeathEvent, Health, apply_damage_system, death_check_system};

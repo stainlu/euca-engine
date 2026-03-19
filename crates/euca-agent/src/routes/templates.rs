@@ -129,7 +129,35 @@ pub async fn template_spawn(
             w.insert(entity, euca_gameplay::Team(team_id));
         }
         if spawn_req.combat == Some(true) {
-            w.insert(entity, euca_gameplay::AutoCombat::new());
+            let mut ac = euca_gameplay::AutoCombat::new();
+            if let Some(d) = spawn_req.combat_damage {
+                ac.damage = d;
+            }
+            if let Some(r) = spawn_req.combat_range {
+                ac.range = r;
+                ac.detect_range = r.max(ac.detect_range);
+            }
+            if let Some(s) = spawn_req.combat_speed {
+                ac.speed = s;
+            }
+            if let Some(c) = spawn_req.combat_cooldown {
+                ac.cooldown = c;
+            }
+            if let Some(ref style) = spawn_req.combat_style
+                && style == "stationary"
+            {
+                ac.attack_style = euca_gameplay::AttackStyle::Stationary;
+                ac.speed = 0.0;
+            }
+            w.insert(entity, ac);
+        }
+        if let Some(ref waypoints) = spawn_req.ai_patrol {
+            let wps: Vec<euca_math::Vec3> = waypoints
+                .iter()
+                .map(|w| euca_math::Vec3::new(w[0], w[1], w[2]))
+                .collect();
+            let speed = spawn_req.combat_speed.unwrap_or(3.0);
+            w.insert(entity, euca_gameplay::AiGoal::patrol(wps, speed));
         }
 
         entity.index()
