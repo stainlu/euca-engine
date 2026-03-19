@@ -249,19 +249,26 @@ pub async fn despawn(
     Json(resp)
 }
 
-/// POST /reset — reset the world
+/// POST /reset — reset the world (preserves Persistent entities like ground/lights)
 pub async fn reset(State(world): State<SharedWorld>) -> Json<MessageResponse> {
     let resp = world.with(|w, _| {
         let entities: Vec<Entity> = {
             let query = Query::<Entity>::new(w);
-            query.iter().collect()
+            query
+                .iter()
+                .filter(|e| w.get::<crate::state::Persistent>(*e).is_none())
+                .collect()
         };
+        let count = entities.len();
         for entity in entities {
             w.despawn(entity);
         }
         MessageResponse {
             ok: true,
-            message: Some(format!("World reset. Tick: {}", w.current_tick())),
+            message: Some(format!(
+                "Reset: despawned {count} entities. Tick: {}",
+                w.current_tick()
+            )),
         }
     });
     Json(resp)

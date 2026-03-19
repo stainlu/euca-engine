@@ -27,9 +27,9 @@ pub use game_state::{GamePhase, GameState, MatchConfig, ScoreEvent, game_state_s
 pub use health::{DamageEvent, Dead, DeathEvent, Health, apply_damage_system, death_check_system};
 pub use rules::{
     ActionTarget, GameAction, HealthBelowRule, OnDeathRule, OnPhaseRule, OnScoreRule,
-    RuleCondition, RuleFilter, TimerRule, health_below_rule_system, on_death_rule_system,
-    on_phase_rule_system, on_score_rule_system, parse_action, parse_filter, parse_when,
-    timer_rule_system,
+    RuleCondition, RuleFilter, RuleSpawnEvent, TimerRule, health_below_rule_system,
+    on_death_rule_system, on_phase_rule_system, on_score_rule_system, parse_action, parse_filter,
+    parse_when, timer_rule_system,
 };
 pub use teams::{RespawnTimer, SpawnPoint, Team, respawn_system, start_respawn_on_death};
 pub use triggers::{TriggerAction, TriggerZone, trigger_system};

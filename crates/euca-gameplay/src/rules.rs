@@ -14,6 +14,15 @@ use serde::{Deserialize, Serialize};
 use crate::health::{DamageEvent, DeathEvent, Health};
 use crate::teams::Team;
 
+/// Event emitted when a rule spawns an entity that needs visual components.
+/// The rendering layer listens for these and attaches MeshRenderer + MaterialRef.
+#[derive(Clone, Debug)]
+pub struct RuleSpawnEvent {
+    pub entity: Entity,
+    pub mesh: String,
+    pub color: Option<String>,
+}
+
 // ── Actions ──
 
 /// What to do when a rule fires.
@@ -398,6 +407,14 @@ pub fn execute_action(
                 let wp_vecs: Vec<Vec3> = wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
                 let patrol_speed = speed.unwrap_or(3.0);
                 world.insert(entity, crate::ai::AiGoal::patrol(wp_vecs, patrol_speed));
+            }
+            // Emit event so the rendering layer can attach MeshRenderer + MaterialRef
+            if let Some(events) = world.resource_mut::<Events>() {
+                events.send(RuleSpawnEvent {
+                    entity,
+                    mesh: _mesh.clone(),
+                    color: _color.clone(),
+                });
             }
             log::info!(
                 "Rule spawned entity {} at ({}, {}, {})",

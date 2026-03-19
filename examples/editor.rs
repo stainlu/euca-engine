@@ -238,20 +238,22 @@ impl EditorApp {
             default_material: blue,
         });
 
-        // Ground plane with grid texture
+        // Ground plane with grid texture (Persistent — survives reset)
         let g = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         world.insert(g, GlobalTransform::default());
         world.insert(g, MeshRenderer { mesh: plane });
         world.insert(g, MaterialRef { handle: grid_mat });
         world.insert(g, PhysicsBody::fixed());
         world.insert(g, Collider::aabb(10.0, 0.01, 10.0));
+        world.insert(g, euca_agent::Persistent);
 
-        // Directional light — warm sunlight
-        world.spawn(DirectionalLight {
+        // Directional light — warm sunlight (Persistent)
+        let light = world.spawn(DirectionalLight {
             direction: [0.4, -0.9, 0.25],
             color: [1.0, 0.95, 0.88],
             intensity: 2.5,
         });
+        world.insert(light, euca_agent::Persistent);
     }
 
     fn reset_scene(&mut self) {
@@ -329,6 +331,31 @@ impl EditorApp {
             if let Some(delay) = respawn_delay {
                 euca_gameplay::respawn_system(world, dt);
                 euca_gameplay::start_respawn_on_death(world, delay);
+            }
+
+            // Attach visuals to rule-spawned entities
+            {
+                let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = world
+                    .resource::<Events>()
+                    .map(|e| e.read::<euca_gameplay::RuleSpawnEvent>().cloned().collect())
+                    .unwrap_or_default();
+                if let Some(assets) = world
+                    .resource::<euca_agent::routes::DefaultAssets>()
+                    .cloned()
+                {
+                    for ev in spawn_events {
+                        if let Some(mesh_handle) = assets.mesh(&ev.mesh) {
+                            world
+                                .insert(ev.entity, euca_render::MeshRenderer { mesh: mesh_handle });
+                            let mat = ev
+                                .color
+                                .as_deref()
+                                .and_then(|c| assets.material(c))
+                                .unwrap_or(assets.default_material);
+                            world.insert(ev.entity, euca_render::MaterialRef { handle: mat });
+                        }
+                    }
+                }
             }
 
             // Audio, animation, particles, navigation
