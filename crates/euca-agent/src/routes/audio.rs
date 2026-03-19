@@ -112,8 +112,7 @@ pub async fn audio_stop(
 /// GET /audio/list — list active audio sources
 pub async fn audio_list(State(world): State<SharedWorld>) -> Json<serde_json::Value> {
     let sources = world.with_world(|w| {
-        let query =
-            euca_ecs::Query::<(euca_ecs::Entity, &euca_audio::AudioSource)>::new(w);
+        let query = euca_ecs::Query::<(euca_ecs::Entity, &euca_audio::AudioSource)>::new(w);
         query
             .iter()
             .map(|(e, src)| {

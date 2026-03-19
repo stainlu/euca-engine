@@ -21,8 +21,8 @@
 use euca_ecs::World;
 use euca_math::Vec3;
 use euca_scene::GlobalTransform;
-use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::Tween;
+use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -168,8 +168,7 @@ impl AudioSource {
 pub fn audio_update_system(world: &World) {
     // Get listener position
     let listener_pos = {
-        let query =
-            euca_ecs::Query::<(&AudioListener, &GlobalTransform)>::new(world);
+        let query = euca_ecs::Query::<(&AudioListener, &GlobalTransform)>::new(world);
         query.iter().next().map(|(_, gt)| gt.0.translation)
     };
     let listener_pos = listener_pos.unwrap_or(Vec3::ZERO);
@@ -195,14 +194,22 @@ pub fn audio_update_system(world: &World) {
 pub fn audio_update_system_mut(world: &mut World) {
     // Get listener position
     let listener_pos = {
-        let query =
-            euca_ecs::Query::<(&AudioListener, &GlobalTransform)>::new(world);
+        let query = euca_ecs::Query::<(&AudioListener, &GlobalTransform)>::new(world);
         query.iter().next().map(|(_, gt)| gt.0.translation)
     };
     let listener_pos = listener_pos.unwrap_or(Vec3::ZERO);
 
     // Collect source data
-    let sources: Vec<(euca_ecs::Entity, bool, bool, f32, f32, bool, AudioClipHandle, Option<Vec3>)> = {
+    let sources: Vec<(
+        euca_ecs::Entity,
+        bool,
+        bool,
+        f32,
+        f32,
+        bool,
+        AudioClipHandle,
+        Option<Vec3>,
+    )> = {
         let query = euca_ecs::Query::<(euca_ecs::Entity, &AudioSource)>::new(world);
         query
             .iter()
@@ -227,9 +234,7 @@ pub fn audio_update_system_mut(world: &mut World) {
             // Start playback
             let handle = {
                 let engine = world.resource_mut::<AudioEngine>();
-                engine.and_then(|eng| {
-                    eng.play(clip, base_volume, false).ok()
-                })
+                engine.and_then(|eng| eng.play(clip, base_volume, false).ok())
             };
             if let Some(handle) = handle {
                 if let Some(src) = world.get_mut::<AudioSource>(entity) {
