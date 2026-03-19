@@ -477,7 +477,7 @@ impl EditorApp {
 
             // Render in-game HUD elements from HudCanvas
             if let Some(canvas) = world.resource::<HudCanvas>() {
-                let screen = ctx.input(|i| i.viewport_rect());
+                let screen = ctx.available_rect();
                 let painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Foreground,
                     egui::Id::new("hud"),
