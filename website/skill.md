@@ -278,33 +278,53 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 
 ## Workflows
 
-### Build a Deathmatch
+### Arena Survival (full showcase)
 
 ```bash
-euca game create --mode deathmatch --score-limit 5
-euca entity create --mesh cube --position="-3,1,0" --health 100 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
-euca entity create --mesh sphere --position 3,1,0 --health 100 --team 2 --color blue --physics Dynamic --collider sphere:0.5
-euca trigger create --position 0,0,0 --zone 1,1,1 --action damage:5
-euca ai set 3 --behavior chase --target 2 --speed 3
-euca rule create --when death --filter team:2 --do-action "score source +1"
-euca rule create --when death --filter team:2 --do-action "spawn sphere 3,3,0 blue"
-euca rule create --when timer:15 --do-action "spawn sphere 0,1,0 gold"
-euca ui text "DEATHMATCH" --x 0.5 --y 0.02 --size 28 --color yellow
-euca sim play
-```
+# 1. Define templates
+euca template create soldier --mesh cube --health 100 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
+euca template create enemy --mesh sphere --health 60 --team 2 --color blue --physics Dynamic --collider sphere:0.5
 
-### Wave Survival (using rules)
+# 2. Create match
+euca game create --mode deathmatch --score-limit 10
 
-```bash
-euca game create --mode deathmatch --score-limit 20
-euca entity create --mesh cube --position 0,1,0 --health 200 --team 1 --color red --physics Dynamic --collider aabb:0.5,0.5,0.5
-# Spawn enemies every 8 seconds
-euca rule create --when timer:8 --do-action "spawn sphere 5,2,0 blue"
-# Enemies chase the player
+# 3. Spawn teams using templates
+euca template spawn soldier --position="-4,1,0"
+euca template spawn soldier --position="-4,1,3"
+euca template spawn enemy --position 4,1,0
+euca template spawn enemy --position 4,1,3
+euca template spawn enemy --position 2,1,1
+
+# 4. Center hazard zone
+euca trigger create --position 0,0,0 --zone 1.5,1,1.5 --action damage:10
+
+# 5. AI — enemies chase soldiers
+euca ai set 4 --behavior chase --target 2 --speed 4
+euca ai set 5 --behavior chase --target 3 --speed 4
+euca ai set 6 --behavior chase --target 2 --speed 3
+
+# 6. Rules — scoring, respawning, milestones
 euca rule create --when death --filter team:2 --do-action "score source +1"
-# Heal player when enemy dies
-euca rule create --when death --filter team:2 --do-action "heal entity:2 10"
+euca rule create --when death --filter team:2 --do-action "spawn sphere 4,3,0"
+euca rule create --when timer:8 --do-action "spawn sphere 5,2,0"
+euca rule create --when score:5 --do-action "text HALFWAY!"
+euca rule create --when phase:post_match --do-action "text GAME OVER!"
+
+# 7. HUD
+euca ui text "ARENA SURVIVAL" --x 0.5 --y 0.01 --size 28 --color yellow
+euca ui bar --x 0.02 --y 0.92 --width 0.12 --height 0.02 --fill 1.0 --color red
+euca ui bar --x 0.86 --y 0.92 --width 0.12 --height 0.02 --fill 1.0 --color blue
+
+# 8. Fire a projectile
+euca projectile spawn --from="-4,1,0" --direction 1,0,0 --speed 15 --damage 30
+
+# 9. Screenshot, simulate, check
+euca screenshot --output setup.png
 euca sim play
+# wait...
+euca sim pause
+euca game state
+euca camera view top && euca screenshot --output topdown.png
 ```
 
 ### Inspect & Debug
