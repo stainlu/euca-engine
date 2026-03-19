@@ -92,7 +92,7 @@ impl AudioEngine {
 
         // Set initial volume
         let mut handle = handle;
-        let _ = handle.set_volume(volume, Tween::default());
+        handle.set_volume(volume, Tween::default());
 
         Ok(handle)
     }
@@ -200,78 +200,79 @@ pub fn audio_update_system_mut(world: &mut World) {
     let listener_pos = listener_pos.unwrap_or(Vec3::ZERO);
 
     // Collect source data
-    let sources: Vec<(
-        euca_ecs::Entity,
-        bool,
-        bool,
-        f32,
-        f32,
-        bool,
-        AudioClipHandle,
-        Option<Vec3>,
-    )> = {
+    struct SourceData {
+        entity: euca_ecs::Entity,
+        playing: bool,
+        has_handle: bool,
+        volume: f32,
+        max_distance: f32,
+        spatial: bool,
+        clip: AudioClipHandle,
+        pos: Option<Vec3>,
+    }
+
+    let sources: Vec<SourceData> = {
         let query = euca_ecs::Query::<(euca_ecs::Entity, &AudioSource)>::new(world);
         query
             .iter()
             .map(|(e, src)| {
                 let pos = world.get::<GlobalTransform>(e).map(|gt| gt.0.translation);
-                (
-                    e,
-                    src.playing,
-                    src.handle.is_some(),
-                    src.volume,
-                    src.max_distance,
-                    src.spatial,
-                    src.clip,
+                SourceData {
+                    entity: e,
+                    playing: src.playing,
+                    has_handle: src.handle.is_some(),
+                    volume: src.volume,
+                    max_distance: src.max_distance,
+                    spatial: src.spatial,
+                    clip: src.clip,
                     pos,
-                )
+                }
             })
             .collect()
     };
 
-    for (entity, playing, has_handle, base_volume, max_dist, spatial, clip, pos) in sources {
-        if playing && !has_handle {
+    for s in sources {
+        if s.playing && !s.has_handle {
             // Start playback
-            let handle = {
-                let engine = world.resource_mut::<AudioEngine>();
-                engine.and_then(|eng| eng.play(clip, base_volume, false).ok())
-            };
-            if let Some(handle) = handle {
-                if let Some(src) = world.get_mut::<AudioSource>(entity) {
-                    src.handle = Some(handle);
-                }
+            let handle = world
+                .resource_mut::<AudioEngine>()
+                .and_then(|eng| eng.play(s.clip, s.volume, false).ok());
+            if let Some(handle) = handle
+                && let Some(src) = world.get_mut::<AudioSource>(s.entity)
+            {
+                src.handle = Some(handle);
             }
         }
 
-        if !playing {
+        if !s.playing {
             // Stop playback
-            if has_handle {
-                if let Some(src) = world.get_mut::<AudioSource>(entity) {
-                    if let Some(ref mut h) = src.handle {
-                        let _ = h.stop(Tween::default());
-                    }
-                    src.handle = None;
+            if s.has_handle
+                && let Some(src) = world.get_mut::<AudioSource>(s.entity)
+            {
+                if let Some(ref mut h) = src.handle {
+                    h.stop(Tween::default());
                 }
+                src.handle = None;
             }
             continue;
         }
 
         // Update spatial volume
-        if spatial {
-            if let Some(src_pos) = pos {
-                let distance = (src_pos - listener_pos).length();
-                let attenuation = if distance >= max_dist {
-                    0.0
-                } else {
-                    let t = 1.0 - (distance / max_dist);
-                    t * t // quadratic falloff
-                };
-                let final_volume = base_volume * attenuation;
-                if let Some(src) = world.get_mut::<AudioSource>(entity) {
-                    if let Some(ref mut h) = src.handle {
-                        let _ = h.set_volume(final_volume, Tween::default());
-                    }
-                }
+        if s.spatial
+            && let Some(src_pos) = s.pos
+        {
+            let distance = (src_pos - listener_pos).length();
+            let attenuation = if distance >= s.max_distance {
+                0.0
+            } else {
+                let t = 1.0 - (distance / s.max_distance);
+                t * t // quadratic falloff
+            };
+            let final_volume = s.volume * attenuation;
+            if let Some(src) = world.get_mut::<AudioSource>(s.entity)
+                && let Some(ref mut h) = src.handle
+            {
+                h.set_volume(final_volume, Tween::default());
             }
         }
     }
