@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::sync::RwLock;
 
 use crate::archetype::{Archetype, ArchetypeId};
 use crate::component::{Component, ComponentId, ComponentStorage};
 use crate::entity::{Entity, EntityAllocator};
 use crate::event::Events;
+use crate::query::QueryCache;
 use crate::resource::Resources;
 
 #[derive(Clone, Copy, Debug)]
@@ -26,6 +28,10 @@ pub struct World {
     pub(crate) sparse_storage: HashMap<ComponentId, crate::sparse::SparseSet>,
     resources: Resources,
     events: Events,
+    /// Shared query cache. Uses `RwLock` for interior mutability so that
+    /// `Query::new_cached(&World)` can update the cache through a shared reference.
+    /// `RwLock` (unlike `RefCell`) is `Sync`, required for `par_for_each`.
+    pub(crate) query_cache: RwLock<QueryCache>,
 }
 
 impl World {
@@ -42,6 +48,7 @@ impl World {
             sparse_storage: HashMap::new(),
             resources: Resources::new(),
             events: Events::new(),
+            query_cache: crate::query::new_query_cache_lock(),
         }
     }
 
@@ -446,6 +453,11 @@ impl World {
         self.archetypes.push(archetype);
         self.archetype_index.insert(sorted, id);
         self.archetype_generation += 1;
+        // Keep the shared QueryCache generation in sync
+        self.query_cache
+            .write()
+            .expect("query cache lock poisoned")
+            .increment_generation();
         id
     }
 
