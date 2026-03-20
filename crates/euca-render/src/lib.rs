@@ -18,7 +18,7 @@ pub use deferred::{GBuffer, GBufferFormats, RenderPath};
 pub use gpu::GpuContext;
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
-pub use material::{Material, MaterialHandle, MaterialRef};
+pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
 pub use mesh::{Mesh, MeshHandle, MeshRenderer};
 pub use plugin::RenderPlugin;
 pub use post_process::PostProcessSettings;
