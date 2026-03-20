@@ -254,31 +254,17 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
 
         if let Some((target, _target_pos, dist)) = nearest {
             if dist <= combat.range {
-                // In attack range
-                let dir = (_target_pos - pos).normalize();
-
+                // In attack range — deal damage if cooldown ready
                 if combat.elapsed >= combat.cooldown {
-                    // Attack: lunge toward target
                     damage_events.push(DamageEvent {
                         target,
                         amount: combat.damage,
                         source: Some(entity),
                     });
                     cooldown_resets.push(entity);
-                    velocity_updates.push((
-                        entity,
-                        Vec3::new(dir.x * combat.speed * 1.5, 0.0, dir.z * combat.speed * 1.5),
-                    ));
-                } else if dist < combat.range * 0.5 {
-                    // Too close — back away to maintain spacing
-                    velocity_updates.push((
-                        entity,
-                        Vec3::new(-dir.x * combat.speed, 0.0, -dir.z * combat.speed),
-                    ));
-                } else {
-                    // In range, waiting for cooldown — hold
-                    velocity_updates.push((entity, Vec3::ZERO));
                 }
+                // Stop moving when in range
+                velocity_updates.push((entity, Vec3::ZERO));
             } else if combat.attack_style == AttackStyle::Stationary {
                 // Stationary: enemy in detect range but not attack range — do nothing
                 velocity_updates.push((entity, Vec3::ZERO));
@@ -325,17 +311,11 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
         }
     }
 
-    // Apply velocity updates + ground snapping
+    // Apply velocity updates
     for (entity, vel) in velocity_updates {
         if let Some(v) = world.get_mut::<Velocity>(entity) {
             v.linear.x = vel.x;
             v.linear.z = vel.z;
-        }
-        // Snap gameplay entities to ground level (Y ≈ half their height)
-        if let Some(lt) = world.get_mut::<LocalTransform>(entity)
-            && lt.0.translation.y > 0.5
-        {
-            lt.0.translation.y = 0.5;
         }
     }
 

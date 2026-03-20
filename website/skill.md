@@ -159,7 +159,111 @@ euca entity create --mesh sphere --position 3,1,0 --health 80 --team 2 --color b
 
 No `ai set` command needed — `--combat` handles everything automatically.
 
+**Combat Customization:**
+```bash
+euca entity create --mesh cube --position 0,1,0 --health 800 --team 1 \
+  --combat --combat-damage 40 --combat-range 5 --combat-cooldown 1.5 \
+  --combat-speed 0 --combat-style stationary --physics Static --role tower
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--combat-damage` | 10 | Damage per attack |
+| `--combat-range` | 1.5 | Attack range (units) |
+| `--combat-speed` | 3.0 | Chase speed |
+| `--combat-cooldown` | 1.0 | Seconds between attacks |
+| `--combat-style` | melee | `melee` (chase) or `stationary` (tower mode) |
+
+**Physics Body Types:**
+- `--physics Dynamic`: physics-driven (gravity, collision response). For projectiles, falling objects.
+- `--physics Kinematic`: gameplay-driven (no gravity, no collision blocking). For heroes, minions.
+- `--physics Static`: immovable obstacle. For towers, walls, ground.
+
+**Entity Roles:** `--role hero|minion|tower|structure` — affects targeting priority (towers attack minions before heroes).
+
+**AI Patrol:** `--ai-patrol "-7,0,0:0,0,0:7,0,0"` — colon-separated waypoints. Entities patrol then fight when enemies appear.
+
+**Spawn Points:** `--spawn-point <team>` — marks an entity as a respawn location for that team.
+
 **Auto Health Bars:** Entities with a `Health` component automatically display a health bar above them in the viewport. Bars are colored by team (red = team 1, blue = team 2, green = other) and shrink as health decreases.
+
+### Economy
+
+```bash
+# Hero with gold wallet and bounty
+euca entity create --mesh sphere --position 0,1,0 --health 500 --team 1 \
+  --combat --role hero --gold 0 --gold-bounty 300 --xp-bounty 200
+
+# Check hero's gold, level, XP
+euca ability list <id>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--gold` | Starting gold amount |
+| `--gold-bounty` | Gold awarded to killer on death |
+| `--xp-bounty` | XP awarded to killer on death |
+
+Heroes level up automatically when XP reaches threshold. Each level: +50 max HP, +5 attack damage.
+
+### Abilities
+
+```bash
+euca ability use <entity_id> --slot Q    # Cast ability (Q/W/E/R)
+euca ability list <entity_id>            # Show abilities, mana, gold, level
+```
+
+Abilities have cooldowns, mana costs, and effects (AreaDamage, Heal, SpeedBoost).
+
+### Diagnostics
+
+```bash
+euca diagnose    # Scan all entities for problems
+euca events      # Show pending damage/death/spawn events
+```
+
+`diagnose` checks: missing Velocity on combat entities, dead entities stuck without respawn timer, teams without spawn points, invisible entities.
+
+### Visual Effects (Particles)
+
+```bash
+euca vfx spawn --position 0,3,0 --rate 100 --lifetime 1.5
+euca vfx stop <entity_id>
+euca vfx list
+```
+
+### Navigation
+
+```bash
+euca nav generate --cell-size 1.0    # Build navmesh from colliders
+euca nav compute --from 0,0,0 --to 10,0,10    # A* pathfinding
+euca nav set <entity_id> --target 10,0,5 --speed 5
+```
+
+### Audio
+
+```bash
+euca audio play <path> [--position x,y,z] [--volume 0.8] [--loop]
+euca audio stop <entity_id>
+euca audio list
+```
+
+### Animation
+
+```bash
+euca animation load <path.glb>       # Load glTF with animations
+euca animation play <entity_id> --clip 0 [--speed 1.0] [--loop]
+euca animation stop <entity_id>
+euca animation list
+```
+
+### Input
+
+```bash
+euca input bind W move_forward
+euca input unbind W
+euca input list
+```
 
 ### Rules (Data-Driven Game Logic)
 
