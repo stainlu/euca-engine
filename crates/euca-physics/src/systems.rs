@@ -228,16 +228,19 @@ struct Body {
     body_type: RigidBodyType,
     restitution: f32,
     friction: f32,
+    layer: u32,
+    mask: u32,
+    inverse_mass: f32,
 }
 
 /// Spatial hash broadphase: returns candidate pairs (indices into bodies slice).
 /// Only pairs sharing at least one grid cell are returned. Eliminates most
-/// non-colliding pairs for O(n * avg_neighbors) instead of O(n²).
+/// non-colliding pairs for O(n * avg_neighbors) instead of O(n^2).
 fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
     use std::collections::{HashMap, HashSet};
 
     if bodies.len() < 20 {
-        // For small body counts, O(n²) is faster than hashing overhead
+        // For small body counts, O(n^2) is faster than hashing overhead
         let mut pairs = Vec::new();
         for i in 0..bodies.len() {
             for j in (i + 1)..bodies.len() {
@@ -249,7 +252,7 @@ fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
 
     let inv_cell = 1.0 / BROADPHASE_CELL_SIZE;
 
-    // Map: cell_key → list of body indices
+    // Map: cell_key -> list of body indices
     let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
 
     for (idx, body) in bodies.iter().enumerate() {
@@ -300,6 +303,16 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
             .iter()
             .filter_map(|(e, lt, col)| {
                 let body = world.get::<PhysicsBody>(e)?;
+                let inv_mass = world
+                    .get::<Mass>(e)
+                    .map(|m| m.inverse_mass)
+                    .unwrap_or_else(|| {
+                        if body.body_type == RigidBodyType::Dynamic {
+                            1.0 // default: 1 kg
+                        } else {
+                            0.0 // static/kinematic: immovable
+                        }
+                    });
                 Some(Body {
                     entity: e,
                     pos: lt.0.translation,
@@ -307,12 +320,18 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
                     body_type: body.body_type,
                     restitution: col.restitution,
                     friction: col.friction,
+                    layer: col.layer,
+                    mask: col.mask,
+                    inverse_mass: inv_mass,
                 })
             })
             .collect()
     };
 
-    for _iteration in 0..SOLVER_ITERATIONS {
+    // Collect collision events to emit after solver
+    let mut events: Vec<CollisionEvent> = Vec::new();
+
+    for iteration in 0..SOLVER_ITERATIONS {
         // Recompute broadphase each iteration (positions change)
         let candidate_pairs = broadphase_spatial_hash(&bodies);
 
@@ -323,67 +342,61 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
                 continue;
             }
 
+            // Layer/mask filtering
+            if !layers_interact(
+                bodies[i].layer,
+                bodies[i].mask,
+                bodies[j].layer,
+                bodies[j].mask,
+            ) {
+                continue;
+            }
+
             if let Some((normal, depth)) = intersect_shapes(
                 bodies[i].pos,
                 &bodies[i].shape,
                 bodies[j].pos,
                 &bodies[j].shape,
             ) {
-                // Position correction in local bodies array (not world yet)
-                match (bodies[i].body_type, bodies[j].body_type) {
-                    (RigidBodyType::Dynamic, RigidBodyType::Static) => {
-                        bodies[i].pos = bodies[i].pos + normal * (-depth);
-                    }
-                    (RigidBodyType::Static, RigidBodyType::Dynamic) => {
-                        bodies[j].pos = bodies[j].pos + normal * depth;
-                    }
-                    (RigidBodyType::Dynamic, RigidBodyType::Dynamic) => {
-                        bodies[i].pos = bodies[i].pos + normal * (-depth * 0.5);
-                        bodies[j].pos = bodies[j].pos + normal * (depth * 0.5);
-                    }
-                    _ => {}
+                // Emit collision event on the first iteration only
+                if iteration == 0 {
+                    events.push(CollisionEvent {
+                        entity_a: bodies[i].entity,
+                        entity_b: bodies[j].entity,
+                        normal,
+                        penetration: depth,
+                    });
+                }
+
+                // Mass-weighted position correction
+                let inv_mass_a = bodies[i].inverse_mass;
+                let inv_mass_b = bodies[j].inverse_mass;
+                let total_inv_mass = inv_mass_a + inv_mass_b;
+
+                if total_inv_mass > 0.0 {
+                    let ratio_a = inv_mass_a / total_inv_mass;
+                    let ratio_b = inv_mass_b / total_inv_mass;
+                    bodies[i].pos = bodies[i].pos + normal * (-depth * ratio_a);
+                    bodies[j].pos = bodies[j].pos + normal * (depth * ratio_b);
                 }
 
                 // Velocity correction (only on last iteration to avoid over-damping)
-                if _iteration == SOLVER_ITERATIONS - 1 {
+                if iteration == SOLVER_ITERATIONS - 1 {
                     let restitution = bodies[i].restitution * bodies[j].restitution;
                     let friction = (bodies[i].friction * bodies[j].friction).sqrt();
 
-                    if bodies[i].body_type == RigidBodyType::Dynamic
-                        && let Some(vel) = world.get_mut::<Velocity>(bodies[i].entity)
-                    {
-                        let n = normal * (-1.0);
-                        let vn = vel.linear.dot(n);
-                        if vn < 0.0 {
-                            let approach_speed = -vn;
-                            let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
-                                0.0
-                            } else {
-                                approach_speed * restitution
-                            };
-                            vel.linear = vel.linear + n * (new_normal_vel - vn);
-                            let tangent_vel = vel.linear - n * vel.linear.dot(n);
-                            vel.linear = vel.linear - tangent_vel * friction;
-                        }
-                    }
-
-                    if bodies[j].body_type == RigidBodyType::Dynamic
-                        && let Some(vel) = world.get_mut::<Velocity>(bodies[j].entity)
-                    {
-                        let n = normal;
-                        let vn = vel.linear.dot(n);
-                        if vn < 0.0 {
-                            let approach_speed = -vn;
-                            let new_normal_vel = if approach_speed < REST_VELOCITY_THRESHOLD {
-                                0.0
-                            } else {
-                                approach_speed * restitution
-                            };
-                            vel.linear = vel.linear + n * (new_normal_vel - vn);
-                            let tangent_vel = vel.linear - n * vel.linear.dot(n);
-                            vel.linear = vel.linear - tangent_vel * friction;
-                        }
-                    }
+                    apply_velocity_response(
+                        world,
+                        bodies[i].entity,
+                        bodies[i].body_type,
+                        bodies[j].entity,
+                        bodies[j].body_type,
+                        normal,
+                        restitution,
+                        friction,
+                        inv_mass_a,
+                        inv_mass_b,
+                    );
                 }
             }
         }
@@ -391,7 +404,7 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
 
     // ── Solve joint constraints (using body positions from the solver) ──
     if !joints.is_empty() {
-        // Build entity → body index map for fast lookup
+        // Build entity -> body index map for fast lookup
         let entity_to_idx: std::collections::HashMap<Entity, usize> = bodies
             .iter()
             .enumerate()
@@ -431,6 +444,96 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
         {
             lt.0.translation = body.pos;
         }
+    }
+
+    // Emit collision events
+    for event in events {
+        world.send_event(event);
+    }
+}
+
+/// Apply impulse-based velocity response between two colliding bodies.
+/// Uses mass-weighted impulse distribution.
+#[allow(clippy::too_many_arguments)]
+fn apply_velocity_response(
+    world: &mut World,
+    entity_a: Entity,
+    type_a: RigidBodyType,
+    entity_b: Entity,
+    type_b: RigidBodyType,
+    normal: Vec3,
+    restitution: f32,
+    friction: f32,
+    inv_mass_a: f32,
+    inv_mass_b: f32,
+) {
+    let total_inv_mass = inv_mass_a + inv_mass_b;
+    if total_inv_mass < 1e-12 {
+        return; // Both immovable
+    }
+
+    // Read velocities
+    let vel_a = if type_a == RigidBodyType::Dynamic {
+        world
+            .get::<Velocity>(entity_a)
+            .map(|v| v.linear)
+            .unwrap_or(Vec3::ZERO)
+    } else {
+        Vec3::ZERO
+    };
+    let vel_b = if type_b == RigidBodyType::Dynamic {
+        world
+            .get::<Velocity>(entity_b)
+            .map(|v| v.linear)
+            .unwrap_or(Vec3::ZERO)
+    } else {
+        Vec3::ZERO
+    };
+
+    // Relative velocity of B with respect to A along normal
+    let relative_vel = vel_b - vel_a;
+    let vn = relative_vel.dot(normal);
+
+    // Only resolve if bodies are approaching
+    if vn >= 0.0 {
+        return;
+    }
+
+    let approach_speed = -vn;
+    let bounce_factor = if approach_speed < REST_VELOCITY_THRESHOLD {
+        0.0
+    } else {
+        restitution
+    };
+
+    // Impulse magnitude: j = -(1 + e) * v_rel . n / (1/m_a + 1/m_b)
+    let j = -(1.0 + bounce_factor) * vn / total_inv_mass;
+    let impulse = normal * j;
+
+    // Friction impulse (tangent direction)
+    let tangent_vel = relative_vel - normal * vn;
+    let tangent_speed = tangent_vel.length();
+    let friction_impulse = if tangent_speed > 1e-6 {
+        let tangent_dir = tangent_vel * (1.0 / tangent_speed);
+        // Coulomb friction: clamp tangential impulse to mu * normal impulse
+        let jt = (-tangent_speed / total_inv_mass).max(-friction * j.abs());
+        tangent_dir * jt
+    } else {
+        Vec3::ZERO
+    };
+
+    let total_impulse = impulse + friction_impulse;
+
+    // Apply impulses (v += impulse * inverse_mass)
+    if type_a == RigidBodyType::Dynamic
+        && let Some(vel) = world.get_mut::<Velocity>(entity_a)
+    {
+        vel.linear = vel.linear - total_impulse * inv_mass_a;
+    }
+    if type_b == RigidBodyType::Dynamic
+        && let Some(vel) = world.get_mut::<Velocity>(entity_b)
+    {
+        vel.linear = vel.linear + total_impulse * inv_mass_b;
     }
 }
 
@@ -602,5 +705,165 @@ mod tests {
             "Bullet should not tunnel through wall, x={}",
             lt.0.translation.x
         );
+    }
+
+    #[test]
+    fn collision_layers_prevent_interaction() {
+        // Two dynamic bodies on different layers should not collide.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        // Body A on layer 1, mask = layer 1 only
+        let a = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(a, GlobalTransform::default());
+        world.insert(a, PhysicsBody::dynamic());
+        world.insert(a, Velocity::default());
+        world.insert(a, Collider::sphere(1.0).with_layer(1).with_mask(1));
+
+        // Body B on layer 2, mask = layer 2 only — should NOT collide with A
+        let b = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.5, 0.0, 0.0,
+        ))));
+        world.insert(b, GlobalTransform::default());
+        world.insert(b, PhysicsBody::dynamic());
+        world.insert(b, Velocity::default());
+        world.insert(b, Collider::sphere(1.0).with_layer(2).with_mask(2));
+
+        // They overlap geometrically but layers don't interact
+        physics_step_system(&mut world);
+
+        // Positions should be unchanged (no separation applied)
+        let pos_a = world.get::<LocalTransform>(a).unwrap().0.translation;
+        let pos_b = world.get::<LocalTransform>(b).unwrap().0.translation;
+        assert!(
+            (pos_a.x).abs() < 0.01,
+            "A should not have moved, x={}",
+            pos_a.x
+        );
+        assert!(
+            (pos_b.x - 0.5).abs() < 0.01,
+            "B should not have moved, x={}",
+            pos_b.x
+        );
+    }
+
+    #[test]
+    fn collision_layers_allow_interaction() {
+        // Two dynamic bodies on matching layers should collide normally.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        // Body A on layer 1, mask = all
+        let a = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(a, GlobalTransform::default());
+        world.insert(a, PhysicsBody::dynamic());
+        world.insert(a, Velocity::default());
+        world.insert(a, Collider::sphere(1.0).with_layer(1).with_mask(u32::MAX));
+
+        // Body B on layer 1, mask = all — should collide with A
+        let b = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.5, 0.0, 0.0,
+        ))));
+        world.insert(b, GlobalTransform::default());
+        world.insert(b, PhysicsBody::dynamic());
+        world.insert(b, Velocity::default());
+        world.insert(b, Collider::sphere(1.0).with_layer(1).with_mask(u32::MAX));
+
+        physics_step_system(&mut world);
+
+        // Bodies should have been pushed apart
+        let pos_a = world.get::<LocalTransform>(a).unwrap().0.translation;
+        let pos_b = world.get::<LocalTransform>(b).unwrap().0.translation;
+        let dist = (pos_b.x - pos_a.x).abs();
+        assert!(
+            dist > 0.5,
+            "Bodies should have been separated, dist={}",
+            dist
+        );
+    }
+
+    #[test]
+    fn mass_weighted_collision_response() {
+        // A heavy body and a light body collide. The light body should move more.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        // Heavy body (mass=10) at origin
+        let heavy = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(heavy, GlobalTransform::default());
+        world.insert(heavy, PhysicsBody::dynamic());
+        world.insert(heavy, Mass::new(10.0, 1.0));
+        world.insert(heavy, Velocity::default());
+        world.insert(heavy, Collider::sphere(1.0));
+
+        // Light body (mass=1) overlapping
+        let light = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            1.0, 0.0, 0.0,
+        ))));
+        world.insert(light, GlobalTransform::default());
+        world.insert(light, PhysicsBody::dynamic());
+        world.insert(light, Mass::new(1.0, 0.1));
+        world.insert(light, Velocity::default());
+        world.insert(light, Collider::sphere(1.0));
+
+        physics_step_system(&mut world);
+
+        let pos_heavy = world.get::<LocalTransform>(heavy).unwrap().0.translation;
+        let pos_light = world.get::<LocalTransform>(light).unwrap().0.translation;
+
+        // Light body should have moved further from origin than heavy body
+        let heavy_displacement = pos_heavy.x.abs();
+        let light_displacement = (pos_light.x - 1.0).abs();
+        assert!(
+            light_displacement > heavy_displacement,
+            "Light body should move more: light_d={}, heavy_d={}",
+            light_displacement,
+            heavy_displacement
+        );
+    }
+
+    #[test]
+    fn collision_events_are_emitted() {
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        let a = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(a, GlobalTransform::default());
+        world.insert(a, PhysicsBody::dynamic());
+        world.insert(a, Velocity::default());
+        world.insert(a, Collider::sphere(1.0));
+
+        let b = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            1.0, 0.0, 0.0,
+        ))));
+        world.insert(b, GlobalTransform::default());
+        world.insert(b, PhysicsBody::dynamic());
+        world.insert(b, Velocity::default());
+        world.insert(b, Collider::sphere(1.0));
+
+        physics_step_system(&mut world);
+
+        let events: Vec<&CollisionEvent> = world.read_events::<CollisionEvent>().collect();
+        assert!(
+            !events.is_empty(),
+            "Should have emitted at least one collision event"
+        );
+        assert!(events[0].penetration > 0.0);
     }
 }

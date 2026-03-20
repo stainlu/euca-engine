@@ -1,3 +1,4 @@
+use euca_ecs::Entity;
 use euca_math::Vec3;
 use euca_reflect::Reflect;
 
@@ -36,6 +37,53 @@ impl PhysicsBody {
     }
 }
 
+/// Mass and inertia properties for physics bodies.
+///
+/// Static bodies should use `Mass::infinite()` (zero inverse mass).
+/// Dynamic bodies use `Mass::new(mass, inertia)`.
+#[derive(Clone, Copy, Debug, Reflect)]
+pub struct Mass {
+    pub mass: f32,
+    pub inverse_mass: f32,
+    pub inertia: f32,
+    pub inverse_inertia: f32,
+}
+
+impl Mass {
+    /// Create a mass component with the given mass and scalar inertia.
+    /// For a solid sphere of uniform density: `inertia = 0.4 * mass * radius^2`.
+    /// For a solid box: `inertia = mass * (w^2 + h^2) / 12`.
+    pub fn new(mass: f32, inertia: f32) -> Self {
+        assert!(
+            mass > 0.0,
+            "Mass must be positive; use Mass::infinite() for static bodies"
+        );
+        assert!(inertia > 0.0, "Inertia must be positive");
+        Self {
+            mass,
+            inverse_mass: 1.0 / mass,
+            inertia,
+            inverse_inertia: 1.0 / inertia,
+        }
+    }
+
+    /// Infinite mass (for static/kinematic bodies). Zero inverse mass means
+    /// the body is immovable in mass-weighted calculations.
+    pub fn infinite() -> Self {
+        Self {
+            mass: f32::INFINITY,
+            inverse_mass: 0.0,
+            inertia: f32::INFINITY,
+            inverse_inertia: 0.0,
+        }
+    }
+
+    /// Default mass for a 1-unit cube of density 1.
+    pub fn default_dynamic() -> Self {
+        Self::new(1.0, 1.0 / 6.0)
+    }
+}
+
 /// Velocity component for dynamic bodies.
 #[derive(Clone, Copy, Debug, Default, Reflect)]
 pub struct Velocity {
@@ -68,12 +116,21 @@ pub enum ColliderShape {
     Capsule { radius: f32, half_height: f32 },
 }
 
-/// ECS component defining collision shape.
+/// ECS component defining collision shape and filtering.
+///
+/// `layer` is a bitmask indicating which layer(s) this collider belongs to.
+/// `mask` is a bitmask indicating which layers this collider can collide with.
+/// Two colliders A and B collide only if `(a.layer & b.mask) != 0 && (b.layer & a.mask) != 0`.
 #[derive(Clone, Debug, Reflect)]
 pub struct Collider {
     pub shape: ColliderShape,
     pub restitution: f32,
     pub friction: f32,
+    /// Collision layer bits this collider belongs to. Default: 1 (layer 0 only).
+    pub layer: u32,
+    /// Collision mask bits indicating which layers this collider interacts with.
+    /// Default: `u32::MAX` (all layers).
+    pub mask: u32,
 }
 
 impl Collider {
@@ -82,6 +139,8 @@ impl Collider {
             shape: ColliderShape::Aabb { hx, hy, hz },
             restitution: 0.3,
             friction: 0.5,
+            layer: 1,
+            mask: u32::MAX,
         }
     }
 
@@ -90,6 +149,8 @@ impl Collider {
             shape: ColliderShape::Sphere { radius },
             restitution: 0.3,
             friction: 0.5,
+            layer: 1,
+            mask: u32::MAX,
         }
     }
 
@@ -102,6 +163,8 @@ impl Collider {
             },
             restitution: 0.3,
             friction: 0.5,
+            layer: 1,
+            mask: u32::MAX,
         }
     }
 
@@ -114,4 +177,32 @@ impl Collider {
         self.friction = f;
         self
     }
+
+    /// Set the collision layer bits.
+    pub fn with_layer(mut self, layer: u32) -> Self {
+        self.layer = layer;
+        self
+    }
+
+    /// Set the collision mask bits.
+    pub fn with_mask(mut self, mask: u32) -> Self {
+        self.mask = mask;
+        self
+    }
+}
+
+/// Returns true if two colliders should interact based on their layer/mask.
+pub fn layers_interact(layer_a: u32, mask_a: u32, layer_b: u32, mask_b: u32) -> bool {
+    (layer_a & mask_b) != 0 && (layer_b & mask_a) != 0
+}
+
+/// Event emitted when two colliders overlap during collision resolution.
+#[derive(Clone, Debug)]
+pub struct CollisionEvent {
+    pub entity_a: Entity,
+    pub entity_b: Entity,
+    /// Contact normal (from A toward B).
+    pub normal: Vec3,
+    /// Penetration depth (positive when overlapping).
+    pub penetration: f32,
 }
