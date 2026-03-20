@@ -21,7 +21,7 @@ members = [
     "crates/euca-particle",
     "crates/euca-animation",
     "crates/euca-nav",
-    "crates/euca-ui",
+    "crates/euca-script",
     "tools/euca-cli",
 ]
 
