@@ -365,7 +365,7 @@ impl EditorApp {
             euca_gameplay::use_ability_system(world);
 
             // Audio, animation, particles, navigation
-            euca_audio::audio_update_system_mut(world);
+            euca_audio::audio_update_system_mut(world, dt);
             euca_asset::skeletal_animation_system(world, dt);
             euca_particle::emit_particles_system(world, dt);
             euca_particle::particle_update_system(world, dt);
