@@ -118,7 +118,7 @@ pub async fn template_spawn(
         }
         if let Some(pb) = &spawn_req.physics_body {
             apply_physics_body(w, entity, pb);
-            if pb == "Dynamic" && w.get::<Velocity>(entity).is_none() {
+            if pb != "Static" && w.get::<Velocity>(entity).is_none() {
                 w.insert(entity, Velocity::default());
             }
         }
@@ -150,6 +150,9 @@ pub async fn template_spawn(
                 ac.speed = 0.0;
             }
             w.insert(entity, ac);
+            if w.get::<Velocity>(entity).is_none() {
+                w.insert(entity, Velocity::default());
+            }
         }
         if let Some(ref waypoints) = spawn_req.ai_patrol {
             let wps: Vec<euca_math::Vec3> = waypoints

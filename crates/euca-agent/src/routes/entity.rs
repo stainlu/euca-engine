@@ -163,7 +163,7 @@ pub async fn spawn(
         }
         if let Some(pb) = &req.physics_body {
             apply_physics_body(w, entity, pb);
-            if pb == "Dynamic" && w.get::<Velocity>(entity).is_none() {
+            if pb != "Static" && w.get::<Velocity>(entity).is_none() {
                 w.insert(entity, Velocity::default());
             }
         }
@@ -196,6 +196,10 @@ pub async fn spawn(
                 ac.speed = 0.0;
             }
             w.insert(entity, ac);
+            // Combat entities always need Velocity for movement
+            if w.get::<Velocity>(entity).is_none() {
+                w.insert(entity, Velocity::default());
+            }
         }
         if let Some(ref waypoints) = req.ai_patrol {
             let wps: Vec<euca_math::Vec3> = waypoints
