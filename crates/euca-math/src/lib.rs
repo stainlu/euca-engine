@@ -34,7 +34,8 @@ pub(crate) use cfg_simd;
 mod aabb;
 mod mat;
 mod quat;
-cfg_simd! { mod simd; }
+#[cfg(feature = "reflect")]
+mod reflect_impls;
 mod transform;
 mod vec;
 

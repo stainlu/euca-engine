@@ -2,8 +2,15 @@
 name = "euca-animation"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Runtime animation system: blending, state machines, root motion, events, montages"
+keywords = ["animation", "gamedev", "state-machine", "blending"]
+categories = ["game-development"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
 euca-asset = { path = "../euca-asset" }
+log = "0.4"

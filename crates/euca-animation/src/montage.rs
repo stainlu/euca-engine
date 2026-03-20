@@ -1,138 +1,114 @@
-//! Animation montages — interruptable one-shot animations that play over the state machine.
+//! Animation montages: interruptible one-shot animations that play on top
+//! of the state machine (attacks, reloads, emotes).
 //!
-//! Montages are used for actions like attacks, reloads, and emotes that temporarily
-//! override the state machine's output.
+//! A montage overrides the state machine's output for a specific set of bones
+//! (or all bones) for a limited duration, with blend-in and blend-out.
 
-/// Definition of a montage (reusable template).
+/// A montage definition: which clip to play, how to blend, which bones to affect.
 #[derive(Clone, Debug)]
-pub struct MontageDefinition {
-    /// Human-readable name.
-    pub name: String,
-    /// Index into the animation library's clip list.
+pub struct AnimationMontage {
+    /// Index into the clip library.
     pub clip_index: usize,
-    /// Playback speed multiplier.
+    /// Playback speed.
     pub speed: f32,
-    /// Duration of the blend-in from the current pose (seconds).
+    /// Duration of blend-in (seconds).
     pub blend_in: f32,
-    /// Duration of the blend-out back to the state machine (seconds).
+    /// Duration of blend-out (seconds).
     pub blend_out: f32,
-    /// Whether this montage can be interrupted by another montage.
-    pub interruptible: bool,
+    /// Which bones this montage affects. `None` = all bones.
+    pub bone_mask: Option<Vec<usize>>,
 }
 
-/// Runtime state of an active montage on an entity.
+/// Runtime state for an active montage instance.
 #[derive(Clone, Debug)]
 pub struct ActiveMontage {
-    /// The montage definition being played.
-    pub definition: MontageDefinition,
-    /// Current playback time within the montage clip (seconds).
+    /// The montage definition.
+    pub montage: AnimationMontage,
+    /// Current playback time.
     pub time: f32,
-    /// The duration of the clip (cached from the animation library).
+    /// Total clip duration (cached from the clip library).
     pub clip_duration: f32,
-    /// Current phase of the montage lifecycle.
-    pub phase: MontagePhase,
-}
-
-/// Lifecycle phases of a montage.
-#[derive(Clone, Debug, PartialEq)]
-pub enum MontagePhase {
-    /// Blending in from the underlying pose.
-    BlendingIn,
-    /// Fully active — montage has full control.
-    Playing,
-    /// Blending out back to the underlying pose.
-    BlendingOut,
-    /// Montage is finished and should be removed.
-    Finished,
+    /// Whether this montage has been interrupted (begins blend-out immediately).
+    pub interrupted: bool,
 }
 
 impl ActiveMontage {
-    /// Create a new active montage from a definition.
-    pub fn new(definition: MontageDefinition, clip_duration: f32) -> Self {
-        let phase = if definition.blend_in > 0.0 {
-            MontagePhase::BlendingIn
-        } else {
-            MontagePhase::Playing
-        };
+    /// Start a new montage.
+    pub fn new(montage: AnimationMontage, clip_duration: f32) -> Self {
         Self {
-            definition,
+            montage,
             time: 0.0,
             clip_duration,
-            phase,
+            interrupted: false,
         }
     }
 
-    /// Advance the montage by `dt` seconds and update the phase.
-    pub fn advance(&mut self, dt: f32) {
-        self.time += dt * self.definition.speed;
-        self.update_phase();
+    /// Advance the montage by `dt` seconds. Returns `true` when fully finished.
+    pub fn advance(&mut self, dt: f32) -> bool {
+        self.time += dt * self.montage.speed;
+        self.is_finished()
     }
 
-    /// Update the phase based on current time.
-    fn update_phase(&mut self) {
-        if self.phase == MontagePhase::Finished {
-            return;
-        }
-
-        let blend_out_start = self.clip_duration - self.definition.blend_out;
-
-        if self.time >= self.clip_duration {
-            self.phase = MontagePhase::Finished;
-        } else if self.time >= blend_out_start && self.definition.blend_out > 0.0 {
-            self.phase = MontagePhase::BlendingOut;
-        } else if self.time >= self.definition.blend_in {
-            self.phase = MontagePhase::Playing;
-        }
-        // Otherwise stays in BlendingIn.
-    }
-
-    /// Returns the blend weight of the montage over the state machine.
-    ///
-    /// - During blend-in: ramps from 0.0 to 1.0.
-    /// - During playing: 1.0 (full override).
-    /// - During blend-out: ramps from 1.0 to 0.0.
-    /// - Finished: 0.0.
-    pub fn blend_weight(&self) -> f32 {
-        match self.phase {
-            MontagePhase::BlendingIn => {
-                if self.definition.blend_in <= 0.0 {
-                    1.0
-                } else {
-                    (self.time / self.definition.blend_in).clamp(0.0, 1.0)
-                }
-            }
-            MontagePhase::Playing => 1.0,
-            MontagePhase::BlendingOut => {
-                let blend_out_start = self.clip_duration - self.definition.blend_out;
-                let elapsed = self.time - blend_out_start;
-                if self.definition.blend_out <= 0.0 {
-                    0.0
-                } else {
-                    1.0 - (elapsed / self.definition.blend_out).clamp(0.0, 1.0)
-                }
-            }
-            MontagePhase::Finished => 0.0,
-        }
-    }
-
-    /// Returns true if the montage is finished and should be removed.
+    /// Whether the montage has fully completed (including blend-out).
     pub fn is_finished(&self) -> bool {
-        self.phase == MontagePhase::Finished
+        self.time >= self.clip_duration
     }
 
-    /// Returns true if this montage can be interrupted by another montage.
-    pub fn is_interruptible(&self) -> bool {
-        self.definition.interruptible
+    /// The current blend weight of the montage (0.0 to 1.0).
+    ///
+    /// Ramps up during blend-in, holds at 1.0, ramps down during blend-out.
+    pub fn weight(&self) -> f32 {
+        if self.is_finished() {
+            return 0.0;
+        }
+
+        let blend_in = self.montage.blend_in;
+        let blend_out = self.montage.blend_out;
+
+        // Blend-in phase
+        let w_in = if blend_in > 0.0 && self.time < blend_in {
+            self.time / blend_in
+        } else {
+            1.0
+        };
+
+        // Blend-out phase
+        let blend_out_start = self.clip_duration - blend_out;
+        let w_out = if blend_out > 0.0 && self.time > blend_out_start {
+            let remaining = self.clip_duration - self.time;
+            (remaining / blend_out).max(0.0)
+        } else {
+            1.0
+        };
+
+        w_in * w_out
+    }
+
+    /// Interrupt the montage (begin blend-out from current position).
+    pub fn interrupt(&mut self) {
+        if !self.interrupted {
+            self.interrupted = true;
+            // Move the clip_duration so blend-out happens from now
+            self.clip_duration = self.time + self.montage.blend_out;
+        }
+    }
+
+    /// Whether this montage affects a specific bone.
+    pub fn affects_bone(&self, bone_index: usize) -> bool {
+        match &self.montage.bone_mask {
+            Some(mask) => mask.contains(&bone_index),
+            None => true,
+        }
     }
 }
 
-/// ECS component: active montage slot for an entity.
+/// ECS component: manages the montage stack for an entity.
 ///
-/// An entity can have at most one active montage at a time. When a montage
-/// finishes or is interrupted, this component should be removed or replaced.
-#[derive(Clone, Debug)]
+/// Only one montage plays at a time. Playing a new montage interrupts
+/// the current one.
+#[derive(Clone, Debug, Default)]
 pub struct MontagePlayer {
-    pub active: Option<ActiveMontage>,
+    active: Option<ActiveMontage>,
 }
 
 impl MontagePlayer {
@@ -140,42 +116,48 @@ impl MontagePlayer {
         Self { active: None }
     }
 
-    /// Start playing a montage. Returns false if a non-interruptible montage is active.
-    pub fn play(&mut self, definition: MontageDefinition, clip_duration: f32) -> bool {
-        if let Some(ref current) = self.active
-            && !current.is_interruptible()
-            && !current.is_finished()
-        {
-            return false;
+    /// Play a montage. Interrupts any currently-playing montage.
+    pub fn play(&mut self, montage: AnimationMontage, clip_duration: f32) {
+        if let Some(ref mut current) = self.active {
+            current.interrupt();
         }
-        self.active = Some(ActiveMontage::new(definition, clip_duration));
-        true
+        self.active = Some(ActiveMontage::new(montage, clip_duration));
     }
 
-    /// Stop the current montage immediately.
+    /// Stop the current montage (with blend-out).
     pub fn stop(&mut self) {
-        self.active = None;
-    }
-
-    /// Advance the active montage. Clears it automatically when finished.
-    pub fn advance(&mut self, dt: f32) {
-        if let Some(ref mut montage) = self.active {
-            montage.advance(dt);
-            if montage.is_finished() {
-                self.active = None;
-            }
+        if let Some(ref mut current) = self.active {
+            current.interrupt();
         }
     }
 
-    /// Returns the montage blend weight (0.0 if no montage is active).
-    pub fn blend_weight(&self) -> f32 {
-        self.active.as_ref().map_or(0.0, |m| m.blend_weight())
+    /// Whether a montage is currently active (playing or blending out).
+    pub fn is_playing(&self) -> bool {
+        self.active.is_some()
     }
-}
 
-impl Default for MontagePlayer {
-    fn default() -> Self {
-        Self::new()
+    /// Get the active montage (if any).
+    pub fn active(&self) -> Option<&ActiveMontage> {
+        self.active.as_ref()
+    }
+
+    /// Get a mutable reference to the active montage.
+    pub fn active_mut(&mut self) -> Option<&mut ActiveMontage> {
+        self.active.as_mut()
+    }
+
+    /// Advance the montage player. Removes finished montages.
+    pub fn advance(&mut self, dt: f32) {
+        if let Some(ref mut montage) = self.active
+            && montage.advance(dt)
+        {
+            self.active = None;
+        }
+    }
+
+    /// Get the current montage weight (0.0 if no montage active).
+    pub fn weight(&self) -> f32 {
+        self.active.as_ref().map_or(0.0, |m| m.weight())
     }
 }
 
@@ -183,103 +165,111 @@ impl Default for MontagePlayer {
 mod tests {
     use super::*;
 
-    fn attack_montage() -> MontageDefinition {
-        MontageDefinition {
-            name: "attack".into(),
+    fn test_montage() -> AnimationMontage {
+        AnimationMontage {
             clip_index: 5,
             speed: 1.0,
             blend_in: 0.1,
-            blend_out: 0.2,
-            interruptible: true,
+            blend_out: 0.1,
+            bone_mask: None,
         }
     }
 
     #[test]
     fn montage_lifecycle() {
-        let def = attack_montage();
-        let mut montage = ActiveMontage::new(def, 1.0);
-
-        // Starts in BlendingIn.
-        assert_eq!(montage.phase, MontagePhase::BlendingIn);
-        assert!(montage.blend_weight() < 1.0);
-
-        // Advance past blend_in (0.1).
-        montage.advance(0.15);
-        assert_eq!(montage.phase, MontagePhase::Playing);
-        assert!((montage.blend_weight() - 1.0).abs() < 0.01);
-
-        // Advance to blend_out region (1.0 - 0.2 = 0.8).
-        montage.advance(0.7);
-        assert_eq!(montage.phase, MontagePhase::BlendingOut);
-        assert!(montage.blend_weight() < 1.0);
-
-        // Advance past end.
-        montage.advance(0.5);
-        assert_eq!(montage.phase, MontagePhase::Finished);
-        assert!((montage.blend_weight() - 0.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn player_auto_clears_finished_montage() {
         let mut player = MontagePlayer::new();
-        player.play(attack_montage(), 0.5);
-        assert!(player.active.is_some());
+        assert!(!player.is_playing());
 
-        // Advance past the clip.
-        player.advance(1.0);
-        assert!(player.active.is_none());
+        player.play(test_montage(), 1.0);
+        assert!(player.is_playing());
+
+        // Advance through blend-in
+        player.advance(0.05);
+        assert!(player.weight() > 0.0);
+        assert!(player.weight() < 1.0);
+
+        // Advance to full weight
+        player.advance(0.1);
+        assert!((player.weight() - 1.0).abs() < 1e-3);
+
+        // Advance to blend-out region
+        player.advance(0.8);
+        assert!(player.weight() < 1.0);
+        assert!(player.weight() > 0.0);
+
+        // Advance past end
+        player.advance(0.5);
+        assert!(!player.is_playing());
     }
 
     #[test]
-    fn non_interruptible_montage_blocks_new_play() {
-        let mut non_interruptible = attack_montage();
-        non_interruptible.interruptible = false;
-
+    fn montage_interrupt() {
         let mut player = MontagePlayer::new();
-        assert!(player.play(non_interruptible, 1.0));
+        player.play(test_montage(), 2.0);
+        player.advance(0.5);
 
-        // Try to interrupt — should fail.
-        assert!(!player.play(attack_montage(), 1.0));
-    }
-
-    #[test]
-    fn interruptible_montage_allows_replacement() {
-        let mut player = MontagePlayer::new();
-        player.play(attack_montage(), 1.0);
-
-        let new_def = MontageDefinition {
-            name: "dodge".into(),
-            clip_index: 6,
-            speed: 1.5,
-            blend_in: 0.05,
-            blend_out: 0.1,
-            interruptible: true,
-        };
-        assert!(player.play(new_def, 0.8));
-        assert_eq!(player.active.as_ref().unwrap().definition.name, "dodge");
-    }
-
-    #[test]
-    fn zero_blend_in_skips_to_playing() {
-        let def = MontageDefinition {
-            name: "instant".into(),
-            clip_index: 0,
-            speed: 1.0,
-            blend_in: 0.0,
-            blend_out: 0.0,
-            interruptible: true,
-        };
-        let montage = ActiveMontage::new(def, 1.0);
-        assert_eq!(montage.phase, MontagePhase::Playing);
-        assert!((montage.blend_weight() - 1.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn stop_clears_active_montage() {
-        let mut player = MontagePlayer::new();
-        player.play(attack_montage(), 1.0);
-        assert!(player.active.is_some());
         player.stop();
-        assert!(player.active.is_none());
+        assert!(player.is_playing());
+
+        // Advance through blend-out
+        player.advance(0.2);
+        assert!(!player.is_playing());
+    }
+
+    #[test]
+    fn montage_replaces_previous() {
+        let mut player = MontagePlayer::new();
+        player.play(test_montage(), 1.0);
+        player.advance(0.5);
+
+        let mut new_montage = test_montage();
+        new_montage.clip_index = 10;
+        player.play(new_montage, 1.0);
+
+        assert_eq!(player.active().unwrap().montage.clip_index, 10);
+        assert!((player.active().unwrap().time).abs() < 1e-5);
+    }
+
+    #[test]
+    fn bone_mask() {
+        let montage = ActiveMontage::new(
+            AnimationMontage {
+                clip_index: 0,
+                speed: 1.0,
+                blend_in: 0.0,
+                blend_out: 0.0,
+                bone_mask: Some(vec![0, 1, 5]),
+            },
+            1.0,
+        );
+
+        assert!(montage.affects_bone(0));
+        assert!(montage.affects_bone(1));
+        assert!(!montage.affects_bone(2));
+        assert!(montage.affects_bone(5));
+    }
+
+    #[test]
+    fn no_bone_mask_affects_all() {
+        let montage = ActiveMontage::new(test_montage(), 1.0);
+        assert!(montage.affects_bone(0));
+        assert!(montage.affects_bone(99));
+    }
+
+    #[test]
+    fn blend_in_ramp() {
+        let montage = ActiveMontage {
+            montage: AnimationMontage {
+                clip_index: 0,
+                speed: 1.0,
+                blend_in: 0.2,
+                blend_out: 0.0,
+                bone_mask: None,
+            },
+            time: 0.1,
+            clip_duration: 1.0,
+            interrupted: false,
+        };
+        assert!((montage.weight() - 0.5).abs() < 1e-5);
     }
 }

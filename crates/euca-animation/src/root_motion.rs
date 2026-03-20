@@ -1,187 +1,220 @@
-//! Root motion extraction — captures per-frame translation/rotation delta from the
-//! root (hip) bone and applies it to the entity's world transform instead of the bone.
+//! Root motion: extract movement from a designated root bone and apply
+//! it to the entity's transform instead of the bone.
+//!
+//! In many animations (walk cycles, attacks), the root bone moves through
+//! space. Rather than letting the skeleton drift, we capture that delta
+//! and apply it to the entity's world-space transform, keeping the skeleton
+//! centered.
 
-use euca_asset::animation::{AnimationClipData, AnimationProperty, sample_quat, sample_vec3};
-use euca_math::{Quat, Vec3};
+use euca_math::{Quat, Transform, Vec3};
 
-/// Per-frame root motion delta extracted from an animation clip.
-#[derive(Clone, Copy, Debug)]
+use crate::clip::AnimPose;
+
+/// Configuration for root motion extraction.
+///
+/// Attach this as an ECS component to entities that should use root motion.
+#[derive(Clone, Debug)]
+pub struct RootMotionReceiver {
+    /// Index of the root bone in the skeleton (typically 0 = hip/pelvis).
+    pub root_bone_index: usize,
+    /// Whether to extract translation from the root bone.
+    pub extract_translation: bool,
+    /// Whether to extract rotation from the root bone.
+    pub extract_rotation: bool,
+    /// Lock the vertical (Y) component -- useful for ground-based characters
+    /// where vertical motion should come from physics, not animation.
+    pub lock_vertical: bool,
+}
+
+impl Default for RootMotionReceiver {
+    fn default() -> Self {
+        Self {
+            root_bone_index: 0,
+            extract_translation: true,
+            extract_rotation: true,
+            lock_vertical: false,
+        }
+    }
+}
+
+/// The per-frame root motion delta extracted from animation.
+///
+/// The system writes this each frame; gameplay code reads it to move the entity.
+#[derive(Clone, Debug, Default)]
 pub struct RootMotionDelta {
-    /// World-space translation to apply to the entity this frame.
+    /// Translation delta in the entity's local space.
     pub translation: Vec3,
-    /// World-space rotation to apply to the entity this frame.
+    /// Rotation delta.
     pub rotation: Quat,
 }
 
-impl Default for RootMotionDelta {
-    fn default() -> Self {
-        Self {
-            translation: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
+impl RootMotionDelta {
+    /// Combine with an entity's current transform to get the new transform.
+    pub fn apply_to(&self, transform: &Transform) -> Transform {
+        let new_rotation = (transform.rotation * self.rotation).normalize();
+        let world_translation = transform.rotation * self.translation;
+        Transform {
+            translation: Vec3::new(
+                transform.translation.x + world_translation.x,
+                transform.translation.y + world_translation.y,
+                transform.translation.z + world_translation.z,
+            ),
+            rotation: new_rotation,
+            scale: transform.scale,
         }
     }
 }
 
-/// ECS component: marks an entity for root motion extraction.
+/// Extract root motion from two consecutive pose samples and zero out
+/// the root bone's movement in the pose.
 ///
-/// When present, the `root_motion_system` extracts motion from the specified bone
-/// and writes the delta to `RootMotionOutput` instead of animating the bone.
-#[derive(Clone, Debug)]
-pub struct RootMotionConfig {
-    /// The joint index considered the "root" bone (typically the hip).
-    pub root_bone_index: usize,
-}
-
-/// ECS component: output written by the root motion system each frame.
-///
-/// Downstream systems (e.g., character controller) consume this delta to move the entity.
-#[derive(Clone, Debug, Default)]
-pub struct RootMotionOutput {
-    pub delta: RootMotionDelta,
-}
-
-/// Extract the root motion delta from a clip between two time points.
-///
-/// This samples the root bone's translation and rotation at `prev_time` and `curr_time`,
-/// then computes the delta. For looping clips that wrap around, it splits the delta
-/// into two segments: [prev_time..duration] + [0..curr_time].
+/// Returns the delta and modifies `current_pose` to remove root bone movement.
 pub fn extract_root_motion(
-    clip: &AnimationClipData,
-    root_bone_index: usize,
-    prev_time: f32,
-    curr_time: f32,
-    looping: bool,
+    receiver: &RootMotionReceiver,
+    previous_pose: &AnimPose,
+    current_pose: &mut AnimPose,
 ) -> RootMotionDelta {
-    let wrapped = looping && curr_time < prev_time && clip.duration > 0.0;
+    let idx = receiver.root_bone_index;
 
-    if wrapped {
-        // Split across loop boundary.
-        let delta_to_end = extract_delta(clip, root_bone_index, prev_time, clip.duration);
-        let delta_from_start = extract_delta(clip, root_bone_index, 0.0, curr_time);
-        RootMotionDelta {
-            translation: delta_to_end.translation + delta_from_start.translation,
-            rotation: (delta_to_end.rotation * delta_from_start.rotation).normalize(),
-        }
-    } else {
-        extract_delta(clip, root_bone_index, prev_time, curr_time)
+    if idx >= current_pose.joints.len() || idx >= previous_pose.joints.len() {
+        return RootMotionDelta::default();
     }
-}
 
-/// Sample the root bone at two times and compute the delta.
-fn extract_delta(
-    clip: &AnimationClipData,
-    root_bone_index: usize,
-    t0: f32,
-    t1: f32,
-) -> RootMotionDelta {
-    let mut trans_0 = Vec3::ZERO;
-    let mut trans_1 = Vec3::ZERO;
-    let mut rot_0 = Quat::IDENTITY;
-    let mut rot_1 = Quat::IDENTITY;
+    // Copy joint data to avoid borrow conflicts when mutating the pose
+    let prev_translation = previous_pose.joints[idx].translation;
+    let prev_rotation = previous_pose.joints[idx].rotation;
+    let curr_translation = current_pose.joints[idx].translation;
+    let curr_rotation = current_pose.joints[idx].rotation;
 
-    for channel in &clip.channels {
-        if channel.joint_index != root_bone_index {
-            continue;
+    let mut delta_translation = Vec3::ZERO;
+    let mut delta_rotation = Quat::IDENTITY;
+
+    if receiver.extract_translation {
+        delta_translation = Vec3::new(
+            curr_translation.x - prev_translation.x,
+            curr_translation.y - prev_translation.y,
+            curr_translation.z - prev_translation.z,
+        );
+
+        if receiver.lock_vertical {
+            delta_translation.y = 0.0;
         }
-        match channel.property {
-            AnimationProperty::Translation => {
-                trans_0 = sample_vec3(&channel.times, &channel.values, t0);
-                trans_1 = sample_vec3(&channel.times, &channel.values, t1);
-            }
-            AnimationProperty::Rotation => {
-                rot_0 = sample_quat(&channel.times, &channel.values, t0);
-                rot_1 = sample_quat(&channel.times, &channel.values, t1);
-            }
-            AnimationProperty::Scale => {} // Scale is not part of root motion.
+
+        // Zero out the root bone's translation in the pose (keep it centered)
+        if receiver.lock_vertical {
+            current_pose.joints[idx].translation = prev_translation;
+        } else {
+            current_pose.joints[idx].translation = Vec3::ZERO;
         }
+    }
+
+    if receiver.extract_rotation {
+        // Delta rotation: prev.inverse() * curr
+        delta_rotation = prev_rotation.inverse() * curr_rotation;
+        // Zero out root bone rotation
+        current_pose.joints[idx].rotation = prev_rotation;
     }
 
     RootMotionDelta {
-        translation: trans_1 - trans_0,
-        rotation: (rot_0.inverse() * rot_1).normalize(),
+        translation: delta_translation,
+        rotation: delta_rotation,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use euca_asset::animation::{AnimationChannel, KeyframeValue};
-
-    fn make_root_motion_clip() -> AnimationClipData {
-        AnimationClipData {
-            name: "walk_forward".into(),
-            duration: 1.0,
-            channels: vec![
-                AnimationChannel {
-                    joint_index: 0, // root bone
-                    property: AnimationProperty::Translation,
-                    times: vec![0.0, 1.0],
-                    values: vec![
-                        KeyframeValue::Vec3(Vec3::ZERO),
-                        KeyframeValue::Vec3(Vec3::new(0.0, 0.0, 2.0)), // moves 2 units forward
-                    ],
-                },
-                AnimationChannel {
-                    joint_index: 0,
-                    property: AnimationProperty::Rotation,
-                    times: vec![0.0, 1.0],
-                    values: vec![
-                        KeyframeValue::Quat(Quat::IDENTITY),
-                        KeyframeValue::Quat(Quat::IDENTITY),
-                    ],
-                },
-            ],
-        }
-    }
+    use euca_math::Transform;
 
     #[test]
-    fn linear_translation_delta() {
-        let clip = make_root_motion_clip();
-        let delta = extract_root_motion(&clip, 0, 0.0, 0.5, false);
-        // Half of the total 2.0 movement = 1.0 in Z.
-        assert!((delta.translation.z - 1.0).abs() < 0.01);
-        assert!(delta.translation.x.abs() < 0.01);
-    }
-
-    #[test]
-    fn full_clip_delta() {
-        let clip = make_root_motion_clip();
-        let delta = extract_root_motion(&clip, 0, 0.0, 1.0, false);
-        assert!((delta.translation.z - 2.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn zero_delta_at_same_time() {
-        let clip = make_root_motion_clip();
-        let delta = extract_root_motion(&clip, 0, 0.5, 0.5, false);
-        assert!(delta.translation.length() < 0.01);
-    }
-
-    #[test]
-    fn looping_wrap_around() {
-        let clip = make_root_motion_clip();
-        // Wraps from 0.8 to 0.2 (crossed loop boundary).
-        let delta = extract_root_motion(&clip, 0, 0.8, 0.2, true);
-        // [0.8..1.0] = 0.4 units + [0.0..0.2] = 0.4 units = 0.8 total
-        assert!((delta.translation.z - 0.8).abs() < 0.05);
-    }
-
-    #[test]
-    fn non_root_bone_ignored() {
-        let clip = AnimationClipData {
-            name: "test".into(),
-            duration: 1.0,
-            channels: vec![AnimationChannel {
-                joint_index: 5, // not root bone 0
-                property: AnimationProperty::Translation,
-                times: vec![0.0, 1.0],
-                values: vec![
-                    KeyframeValue::Vec3(Vec3::ZERO),
-                    KeyframeValue::Vec3(Vec3::new(10.0, 0.0, 0.0)),
-                ],
-            }],
+    fn no_motion_when_pose_unchanged() {
+        let receiver = RootMotionReceiver::default();
+        let prev = AnimPose {
+            joints: vec![Transform::from_translation(Vec3::new(1.0, 0.0, 0.0))],
         };
-        let delta = extract_root_motion(&clip, 0, 0.0, 1.0, false);
-        assert!(delta.translation.length() < 0.01);
+        let mut curr = prev.clone();
+
+        let delta = extract_root_motion(&receiver, &prev, &mut curr);
+        assert!((delta.translation.x).abs() < 1e-5);
+        assert!((delta.translation.y).abs() < 1e-5);
+        assert!((delta.translation.z).abs() < 1e-5);
+    }
+
+    #[test]
+    fn extracts_translation_delta() {
+        let receiver = RootMotionReceiver::default();
+        let prev = AnimPose {
+            joints: vec![Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))],
+        };
+        let mut curr = AnimPose {
+            joints: vec![Transform::from_translation(Vec3::new(1.0, 0.0, 0.5))],
+        };
+
+        let delta = extract_root_motion(&receiver, &prev, &mut curr);
+        assert!((delta.translation.x - 1.0).abs() < 1e-5);
+        assert!((delta.translation.z - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn locks_vertical() {
+        let receiver = RootMotionReceiver {
+            lock_vertical: true,
+            ..Default::default()
+        };
+        let prev = AnimPose {
+            joints: vec![Transform::from_translation(Vec3::ZERO)],
+        };
+        let mut curr = AnimPose {
+            joints: vec![Transform::from_translation(Vec3::new(1.0, 5.0, 0.0))],
+        };
+
+        let delta = extract_root_motion(&receiver, &prev, &mut curr);
+        assert!((delta.translation.x - 1.0).abs() < 1e-5);
+        assert!((delta.translation.y).abs() < 1e-5);
+    }
+
+    #[test]
+    fn zeros_root_bone_in_pose() {
+        let receiver = RootMotionReceiver {
+            extract_rotation: false,
+            ..Default::default()
+        };
+        let prev = AnimPose {
+            joints: vec![Transform::from_translation(Vec3::ZERO)],
+        };
+        let mut curr = AnimPose {
+            joints: vec![Transform::from_translation(Vec3::new(5.0, 0.0, 0.0))],
+        };
+
+        let _delta = extract_root_motion(&receiver, &prev, &mut curr);
+        assert!((curr.joints[0].translation.x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_delta_to_transform() {
+        let delta = RootMotionDelta {
+            translation: Vec3::new(1.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+        };
+        let transform = Transform::from_translation(Vec3::new(10.0, 0.0, 0.0));
+        let result = delta.apply_to(&transform);
+        assert!((result.translation.x - 11.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn out_of_bounds_bone_returns_zero_delta() {
+        let receiver = RootMotionReceiver {
+            root_bone_index: 99,
+            ..Default::default()
+        };
+        let prev = AnimPose {
+            joints: vec![Transform::IDENTITY],
+        };
+        let mut curr = AnimPose {
+            joints: vec![Transform::IDENTITY],
+        };
+
+        let delta = extract_root_motion(&receiver, &prev, &mut curr);
+        assert!((delta.translation.x).abs() < 1e-5);
     }
 }

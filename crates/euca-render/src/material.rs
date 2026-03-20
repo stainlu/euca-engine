@@ -65,7 +65,8 @@ impl Material {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Handle referencing a GPU-uploaded material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, euca_reflect::Reflect)]
 pub struct MaterialHandle(pub u32);
 
 #[derive(Clone, Copy, Debug, euca_reflect::Reflect)]

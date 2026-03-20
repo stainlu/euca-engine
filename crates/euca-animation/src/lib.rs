@@ -1,37 +1,55 @@
-//! Animation system for the Euca engine: blending, state machines, root motion, events, montages.
+//! Runtime animation system for the Euca engine.
 //!
-//! This crate builds on the clip/skeleton types from `euca-asset` and provides:
-//! - **Blending**: Per-bone lerp/slerp with weighted layers.
-//! - **State machines**: Parametric transitions with crossfade blending.
-//! - **Blend spaces**: 1D parametric blending (e.g., speed -> walk/run).
-//! - **Root motion**: Extract translation/rotation delta from hip bone.
-//! - **Events**: Time-stamped callbacks emitted as ECS events.
-//! - **Montages**: Interruptable one-shot overlays (attacks, reloads, emotes).
+//! This crate handles animation evaluation at runtime: state machines,
+//! pose blending, blend spaces, root motion extraction, animation events,
+//! and montages. It builds on top of the clip data loaded by `euca-asset`.
+//!
+//! # Architecture
+//!
+//! ```text
+//! AnimStateMachine -> selects clip + time
+//!         |
+//!    sample_clip -> AnimPose
+//!         |
+//! AnimationBlender -> blends crossfade poses
+//!         |
+//! MontagePlayer -> overlays one-shot animations
+//!         |
+//! RootMotionReceiver -> extracts entity-level movement
+//!         |
+//! Skeleton::compute_joint_matrices -> BoneTransforms
+//! ```
+//!
+//! # Key types
+//!
+//! - [`Animator`] -- ECS component replacing `SkeletalAnimator`
+//! - [`AnimStateMachine`] -- parametric state machine with conditions
+//! - [`AnimPose`] -- sampled per-joint transforms (the central data type)
+//! - [`AnimationBlender`] -- multi-layer pose blending
+//! - [`BlendSpace1D`] / [`BlendSpace2D`] -- parametric blend spaces
+//! - [`MontagePlayer`] -- one-shot overlay animations
+//! - [`RootMotionReceiver`] -- root bone to entity transform extraction
+//! - [`AnimationEvent`] -- time-stamped clip callbacks
 
 pub mod blend;
 pub mod blend_space;
+pub mod clip;
 pub mod event;
 pub mod montage;
 pub mod root_motion;
 pub mod state_machine;
-pub mod systems;
+pub mod system;
 
-// Re-export key types for convenience.
-pub use blend::{BlendLayer, blend_poses, crossfade_layers};
-pub use blend_space::{BlendSpace1D, BlendSpaceSample};
-pub use event::{AnimationEvent, AnimationEventLibrary, AnimationEventMarker, ClipEventMarkers};
-pub use montage::{ActiveMontage, MontageDefinition, MontagePhase, MontagePlayer};
-pub use root_motion::{RootMotionConfig, RootMotionDelta, RootMotionOutput, extract_root_motion};
+// Re-exports for ergonomic access
+pub use blend::{AnimationBlender, Crossfade};
+pub use blend_space::{BlendSample1D, BlendSample2D, BlendSpace1D, BlendSpace2D};
+pub use clip::AnimPose;
+pub use event::{
+    AnimationEvent, AnimationEventLibrary, ClipEvents, EventValue, FiredAnimationEvents, FiredEvent,
+};
+pub use montage::{ActiveMontage, AnimationMontage, MontagePlayer};
+pub use root_motion::{RootMotionDelta, RootMotionReceiver};
 pub use state_machine::{
-    ActiveTransition, AnimationParameters, AnimationState, AnimationStateMachine,
-    StateTransition, TransitionCondition,
+    AnimState, AnimStateMachine, CompareOp, ParamValue, StateTransition, TransitionCondition,
 };
-pub use systems::{
-    animation_blend_system, animation_event_system, animation_state_machine_system,
-    root_motion_system,
-};
-
-// Re-export foundational types from euca-asset for convenience.
-pub use euca_asset::animation::{AnimationClipData, AnimationProperty};
-pub use euca_asset::skeleton::Skeleton;
-pub use euca_asset::systems::{AnimationLibrary, BoneTransforms, SkeletalAnimator};
+pub use system::{Animator, animation_evaluate_system};

@@ -1,35 +1,65 @@
-//! Animation state machine — states connected by conditional transitions.
+//! Animation state machine: states connected by conditional transitions.
+//!
+//! Each state references an animation clip (or blend tree). Transitions have
+//! conditions evaluated against a parameter map, and crossfade durations.
 
 use std::collections::HashMap;
 
-/// A condition that must be met for a transition to fire.
+use crate::blend::Crossfade;
+
+/// A named parameter value used by transition conditions.
+#[derive(Clone, Debug)]
+pub enum ParamValue {
+    Float(f32),
+    Bool(bool),
+}
+
+/// Comparison operators for transition conditions.
+#[derive(Clone, Debug)]
+pub enum CompareOp {
+    Greater,
+    Less,
+    GreaterOrEqual,
+    LessOrEqual,
+    Equal,
+}
+
+/// A single condition that must be satisfied for a transition to fire.
 #[derive(Clone, Debug)]
 pub enum TransitionCondition {
-    /// Parameter must be greater than the threshold.
-    GreaterThan { param: String, threshold: f32 },
-    /// Parameter must be less than the threshold.
-    LessThan { param: String, threshold: f32 },
-    /// Boolean parameter must be true.
-    IsTrue { param: String },
-    /// Boolean parameter must be false.
-    IsFalse { param: String },
+    /// Compare a float parameter against a threshold.
+    FloatCompare {
+        param: String,
+        op: CompareOp,
+        threshold: f32,
+    },
+    /// Require a bool parameter to have a specific value.
+    BoolEquals { param: String, value: bool },
 }
 
 impl TransitionCondition {
-    /// Evaluate this condition against a parameter set.
-    pub fn evaluate(&self, params: &AnimationParameters) -> bool {
+    /// Evaluate this condition against the current parameter values.
+    pub fn evaluate(&self, params: &HashMap<String, ParamValue>) -> bool {
         match self {
-            TransitionCondition::GreaterThan { param, threshold } => {
-                params.get_float(param).is_some_and(|v| v > *threshold)
+            Self::FloatCompare {
+                param,
+                op,
+                threshold,
+            } => {
+                let val = match params.get(param) {
+                    Some(ParamValue::Float(f)) => *f,
+                    _ => return false,
+                };
+                match op {
+                    CompareOp::Greater => val > *threshold,
+                    CompareOp::Less => val < *threshold,
+                    CompareOp::GreaterOrEqual => val >= *threshold,
+                    CompareOp::LessOrEqual => val <= *threshold,
+                    CompareOp::Equal => (val - threshold).abs() < f32::EPSILON,
+                }
             }
-            TransitionCondition::LessThan { param, threshold } => {
-                params.get_float(param).is_some_and(|v| v < *threshold)
-            }
-            TransitionCondition::IsTrue { param } => {
-                params.get_bool(param).unwrap_or(false)
-            }
-            TransitionCondition::IsFalse { param } => {
-                !params.get_bool(param).unwrap_or(true)
+            Self::BoolEquals { param, value } => {
+                matches!(params.get(param), Some(ParamValue::Bool(b)) if *b == *value)
             }
         }
     }
@@ -38,194 +68,263 @@ impl TransitionCondition {
 /// A transition between two states.
 #[derive(Clone, Debug)]
 pub struct StateTransition {
-    /// Source state index. `None` means "any state" (fires from any current state).
-    pub from: Option<usize>,
     /// Target state index.
-    pub to: usize,
+    pub target: usize,
     /// All conditions must be true for the transition to fire.
     pub conditions: Vec<TransitionCondition>,
-    /// Duration of the crossfade blend (seconds).
-    pub blend_duration: f32,
+    /// Crossfade duration in seconds.
+    pub duration: f32,
 }
 
-/// A single state in the animation state machine.
+/// An animation state: references a clip and has outgoing transitions.
 #[derive(Clone, Debug)]
-pub struct AnimationState {
-    /// Human-readable name.
+pub struct AnimState {
+    /// Display name for debugging.
     pub name: String,
-    /// Index into the animation library's clip list.
+    /// Index into the clip library.
     pub clip_index: usize,
     /// Playback speed multiplier.
     pub speed: f32,
-    /// Whether the clip should loop.
+    /// Whether this state loops.
     pub looping: bool,
-}
-
-/// Typed parameter storage for the state machine.
-#[derive(Clone, Debug, Default)]
-pub struct AnimationParameters {
-    floats: HashMap<String, f32>,
-    bools: HashMap<String, bool>,
-}
-
-impl AnimationParameters {
-    pub fn set_float(&mut self, name: impl Into<String>, value: f32) {
-        self.floats.insert(name.into(), value);
-    }
-
-    pub fn get_float(&self, name: &str) -> Option<f32> {
-        self.floats.get(name).copied()
-    }
-
-    pub fn set_bool(&mut self, name: impl Into<String>, value: bool) {
-        self.bools.insert(name.into(), value);
-    }
-
-    pub fn get_bool(&self, name: &str) -> Option<bool> {
-        self.bools.get(name).copied()
-    }
-}
-
-/// Tracks the runtime state of a crossfade transition.
-#[derive(Clone, Debug)]
-pub struct ActiveTransition {
-    /// State we are blending away from.
-    pub from_state: usize,
-    /// Playback time in the source clip when the transition started.
-    pub from_time: f32,
-    /// Total blend duration (seconds).
-    pub blend_duration: f32,
-    /// Elapsed time since the transition began (seconds).
-    pub elapsed: f32,
-}
-
-impl ActiveTransition {
-    /// Returns the blend progress in [0.0, 1.0].
-    pub fn progress(&self) -> f32 {
-        if self.blend_duration <= 0.0 {
-            1.0
-        } else {
-            (self.elapsed / self.blend_duration).clamp(0.0, 1.0)
-        }
-    }
-
-    /// Returns true when the transition has completed.
-    pub fn is_complete(&self) -> bool {
-        self.elapsed >= self.blend_duration
-    }
-}
-
-/// ECS component: an animation state machine instance attached to an entity.
-#[derive(Clone, Debug)]
-pub struct AnimationStateMachine {
-    /// All defined states.
-    pub states: Vec<AnimationState>,
-    /// All defined transitions (including any-state transitions where `from` is `None`).
+    /// Outgoing transitions (checked in order, first match wins).
     pub transitions: Vec<StateTransition>,
-    /// Index of the currently active state.
-    pub current_state: usize,
-    /// Current playback time in the active state's clip.
-    pub current_time: f32,
-    /// Parameters that drive transition conditions.
-    pub parameters: AnimationParameters,
-    /// Active crossfade transition (if any).
-    pub transition: Option<ActiveTransition>,
 }
 
-impl AnimationStateMachine {
+/// Internal record for an any-state transition.
+#[derive(Clone, Debug)]
+struct AnyStateTransition {
+    transition: StateTransition,
+}
+
+/// A parametric animation state machine.
+///
+/// # Usage
+/// 1. Add states with `add_state`.
+/// 2. Add transitions with `add_transition` or `add_any_state_transition`.
+/// 3. Each frame, set parameters with `set_float` / `set_bool`.
+/// 4. Call `update(dt)` to evaluate transitions and advance playback.
+#[derive(Clone, Debug)]
+pub struct AnimStateMachine {
+    states: Vec<AnimState>,
+    any_state_transitions: Vec<AnyStateTransition>,
+    params: HashMap<String, ParamValue>,
+    /// Current active state index.
+    current_state: usize,
+    /// Current playback time within the active state's clip.
+    pub current_time: f32,
+    /// Active crossfade (if transitioning).
+    active_crossfade: Option<CrossfadeState>,
+}
+
+/// Tracks an in-progress crossfade between states.
+#[derive(Clone, Debug)]
+struct CrossfadeState {
+    /// State we're transitioning from.
+    from_state: usize,
+    from_time: f32,
+    /// The crossfade timing.
+    crossfade: Crossfade,
+}
+
+impl AnimStateMachine {
     /// Create a new state machine starting in the given state.
-    pub fn new(states: Vec<AnimationState>, transitions: Vec<StateTransition>, initial_state: usize) -> Self {
+    pub fn new(initial_state: usize) -> Self {
         Self {
-            states,
-            transitions,
+            states: Vec::new(),
+            any_state_transitions: Vec::new(),
+            params: HashMap::new(),
             current_state: initial_state,
             current_time: 0.0,
-            parameters: AnimationParameters::default(),
-            transition: None,
+            active_crossfade: None,
         }
     }
 
-    /// Evaluate all transitions and begin a crossfade if one fires.
-    ///
-    /// Priority: any-state transitions are checked first (they can escape any state),
-    /// then state-specific transitions in definition order. The first matching transition wins.
-    pub fn evaluate_transitions(&mut self) {
-        // Don't start a new transition while one is in progress.
-        if self.transition.is_some() {
-            return;
-        }
+    /// Add a state and return its index.
+    pub fn add_state(&mut self, name: impl Into<String>, clip_index: usize) -> usize {
+        let idx = self.states.len();
+        self.states.push(AnimState {
+            name: name.into(),
+            clip_index,
+            speed: 1.0,
+            looping: true,
+            transitions: Vec::new(),
+        });
+        idx
+    }
 
-        let current = self.current_state;
+    /// Get a mutable reference to a state for further configuration.
+    pub fn state_mut(&mut self, index: usize) -> Option<&mut AnimState> {
+        self.states.get_mut(index)
+    }
 
-        // Check any-state transitions first, then state-specific.
-        let fired = self
-            .transitions
-            .iter()
-            .filter(|t| {
-                // Any-state transition: from is None, but don't transition to self.
-                // State-specific transition: from matches current state.
-                match t.from {
-                    None => t.to != current,
-                    Some(from) => from == current,
-                }
-            })
-            .find(|t| t.conditions.iter().all(|c| c.evaluate(&self.parameters)));
-
-        if let Some(t) = fired {
-            let to = t.to;
-            let blend_duration = t.blend_duration;
-            self.transition = Some(ActiveTransition {
-                from_state: current,
-                from_time: self.current_time,
-                blend_duration,
-                elapsed: 0.0,
+    /// Add a transition from `from_state` to `target_state`.
+    pub fn add_transition(
+        &mut self,
+        from_state: usize,
+        target_state: usize,
+        conditions: Vec<TransitionCondition>,
+        duration: f32,
+    ) {
+        if let Some(state) = self.states.get_mut(from_state) {
+            state.transitions.push(StateTransition {
+                target: target_state,
+                conditions,
+                duration,
             });
-            self.current_state = to;
-            self.current_time = 0.0;
         }
     }
 
-    /// Advance playback time and transition progress.
-    pub fn advance(&mut self, dt: f32, clip_durations: &[f32]) {
-        // Advance current state time.
-        let state = &self.states[self.current_state];
-        let effective_dt = dt * state.speed;
-        self.current_time += effective_dt;
+    /// Add a transition that can fire from any state.
+    pub fn add_any_state_transition(
+        &mut self,
+        target_state: usize,
+        conditions: Vec<TransitionCondition>,
+        duration: f32,
+    ) {
+        self.any_state_transitions.push(AnyStateTransition {
+            transition: StateTransition {
+                target: target_state,
+                conditions,
+                duration,
+            },
+        });
+    }
 
-        if let Some(duration) = clip_durations.get(state.clip_index)
-            && *duration > 0.0
+    /// Set a float parameter.
+    pub fn set_float(&mut self, name: impl Into<String>, value: f32) {
+        self.params.insert(name.into(), ParamValue::Float(value));
+    }
+
+    /// Set a bool parameter.
+    pub fn set_bool(&mut self, name: impl Into<String>, value: bool) {
+        self.params.insert(name.into(), ParamValue::Bool(value));
+    }
+
+    /// Get a float parameter value.
+    pub fn get_float(&self, name: &str) -> Option<f32> {
+        match self.params.get(name) {
+            Some(ParamValue::Float(f)) => Some(*f),
+            _ => None,
+        }
+    }
+
+    /// Get a bool parameter value.
+    pub fn get_bool(&self, name: &str) -> Option<bool> {
+        match self.params.get(name) {
+            Some(ParamValue::Bool(b)) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// The currently active state index.
+    pub fn current_state(&self) -> usize {
+        self.current_state
+    }
+
+    /// The clip index for the current state.
+    pub fn current_clip_index(&self) -> Option<usize> {
+        self.states.get(self.current_state).map(|s| s.clip_index)
+    }
+
+    /// Whether a crossfade is currently in progress.
+    pub fn is_transitioning(&self) -> bool {
+        self.active_crossfade.is_some()
+    }
+
+    /// Returns the current crossfade info if transitioning:
+    /// `(from_clip_index, from_time, outgoing_weight, incoming_weight)`.
+    ///
+    /// The `from_clip_index` is the clip index of the state we're transitioning from.
+    pub fn crossfade_info(&self) -> Option<(usize, f32, f32, f32)> {
+        self.active_crossfade.as_ref().and_then(|cf| {
+            let from_clip = self.states.get(cf.from_state)?.clip_index;
+            Some((
+                from_clip,
+                cf.from_time,
+                cf.crossfade.outgoing_weight(),
+                cf.crossfade.incoming_weight(),
+            ))
+        })
+    }
+
+    /// Advance time and evaluate transitions. Call once per frame.
+    ///
+    /// Returns `true` if a transition occurred this frame.
+    pub fn update(&mut self, dt: f32, clip_durations: &[f32]) -> bool {
+        let mut transitioned = false;
+
+        // Advance crossfade if active
+        if let Some(ref mut cf_state) = self.active_crossfade
+            && cf_state.crossfade.advance(dt)
         {
-            if state.looping {
-                self.current_time %= *duration;
-            } else {
-                self.current_time = self.current_time.min(*duration);
-            }
+            // Crossfade complete -- fully in the new state
+            self.active_crossfade = None;
         }
 
-        // Advance transition blend.
-        if let Some(ref mut transition) = self.transition {
-            // Also advance the "from" clip time during the blend.
-            if let Some(from_state) = self.states.get(transition.from_state) {
-                transition.from_time += dt * from_state.speed;
-                if let Some(duration) = clip_durations.get(from_state.clip_index)
-                    && *duration > 0.0
-                    && from_state.looping
-                {
-                    transition.from_time %= *duration;
+        // Check transitions only if not already mid-crossfade
+        if self.active_crossfade.is_none() {
+            // Check any-state transitions first (higher priority)
+            let any_target = self
+                .any_state_transitions
+                .iter()
+                .find(|ast| {
+                    ast.transition.target != self.current_state
+                        && ast
+                            .transition
+                            .conditions
+                            .iter()
+                            .all(|c| c.evaluate(&self.params))
+                })
+                .map(|ast| (ast.transition.target, ast.transition.duration));
+
+            if let Some((target, duration)) = any_target {
+                self.begin_transition(target, duration);
+                transitioned = true;
+            } else if let Some(state) = self.states.get(self.current_state) {
+                // Check state-specific transitions
+                let state_target = state
+                    .transitions
+                    .iter()
+                    .find(|t| t.conditions.iter().all(|c| c.evaluate(&self.params)))
+                    .map(|t| (t.target, t.duration));
+
+                if let Some((target, duration)) = state_target {
+                    self.begin_transition(target, duration);
+                    transitioned = true;
                 }
             }
+        }
 
-            transition.elapsed += dt;
-            if transition.is_complete() {
-                self.transition = None;
+        // Advance playback time
+        if let Some(state) = self.states.get(self.current_state) {
+            let speed = state.speed;
+            let looping = state.looping;
+            self.current_time += dt * speed;
+
+            if let Some(&clip_dur) = clip_durations.get(state.clip_index)
+                && clip_dur > 0.0
+            {
+                if looping {
+                    self.current_time %= clip_dur;
+                } else {
+                    self.current_time = self.current_time.min(clip_dur);
+                }
             }
         }
+
+        transitioned
     }
 
-    /// Returns the clip index and time for the current state.
-    pub fn current_clip_and_time(&self) -> (usize, f32) {
-        let state = &self.states[self.current_state];
-        (state.clip_index, self.current_time)
+    /// Begin a transition to a new state.
+    fn begin_transition(&mut self, target: usize, duration: f32) {
+        self.active_crossfade = Some(CrossfadeState {
+            from_state: self.current_state,
+            from_time: self.current_time,
+            crossfade: Crossfade::new(duration),
+        });
+        self.current_state = target;
+        self.current_time = 0.0;
     }
 }
 
@@ -233,149 +332,148 @@ impl AnimationStateMachine {
 mod tests {
     use super::*;
 
-    fn idle_run_machine() -> AnimationStateMachine {
-        let states = vec![
-            AnimationState {
-                name: "idle".into(),
-                clip_index: 0,
-                speed: 1.0,
-                looping: true,
-            },
-            AnimationState {
-                name: "run".into(),
-                clip_index: 1,
-                speed: 1.0,
-                looping: true,
-            },
-        ];
-        let transitions = vec![
-            StateTransition {
-                from: Some(0),
-                to: 1,
-                conditions: vec![TransitionCondition::GreaterThan {
-                    param: "speed".into(),
-                    threshold: 0.5,
-                }],
-                blend_duration: 0.2,
-            },
-            StateTransition {
-                from: Some(1),
-                to: 0,
-                conditions: vec![TransitionCondition::LessThan {
-                    param: "speed".into(),
-                    threshold: 0.5,
-                }],
-                blend_duration: 0.2,
-            },
-        ];
-        AnimationStateMachine::new(states, transitions, 0)
+    fn setup_walk_run_sm() -> AnimStateMachine {
+        let mut sm = AnimStateMachine::new(0);
+        sm.add_state("idle", 0);
+        sm.add_state("walk", 1);
+        sm.add_state("run", 2);
+
+        sm.add_transition(
+            0,
+            1,
+            vec![TransitionCondition::FloatCompare {
+                param: "speed".into(),
+                op: CompareOp::Greater,
+                threshold: 0.1,
+            }],
+            0.2,
+        );
+        sm.add_transition(
+            1,
+            2,
+            vec![TransitionCondition::FloatCompare {
+                param: "speed".into(),
+                op: CompareOp::Greater,
+                threshold: 0.6,
+            }],
+            0.3,
+        );
+        sm.add_transition(
+            1,
+            0,
+            vec![TransitionCondition::FloatCompare {
+                param: "speed".into(),
+                op: CompareOp::LessOrEqual,
+                threshold: 0.1,
+            }],
+            0.2,
+        );
+
+        sm.set_float("speed", 0.0);
+        sm
     }
 
     #[test]
     fn starts_in_initial_state() {
-        let sm = idle_run_machine();
-        assert_eq!(sm.current_state, 0);
-        assert_eq!(sm.current_time, 0.0);
-        assert!(sm.transition.is_none());
+        let sm = setup_walk_run_sm();
+        assert_eq!(sm.current_state(), 0);
     }
 
     #[test]
-    fn transition_fires_when_condition_met() {
-        let mut sm = idle_run_machine();
-        sm.parameters.set_float("speed", 1.0);
-        sm.evaluate_transitions();
-        assert_eq!(sm.current_state, 1); // moved to "run"
-        assert!(sm.transition.is_some());
+    fn transitions_on_condition() {
+        let mut sm = setup_walk_run_sm();
+        let durations = [1.0, 1.0, 1.0];
+
+        sm.set_float("speed", 0.5);
+        let transitioned = sm.update(0.016, &durations);
+        assert!(transitioned);
+        assert_eq!(sm.current_state(), 1);
+        assert!(sm.is_transitioning());
     }
 
     #[test]
     fn no_transition_when_condition_not_met() {
-        let mut sm = idle_run_machine();
-        sm.parameters.set_float("speed", 0.3);
-        sm.evaluate_transitions();
-        assert_eq!(sm.current_state, 0); // still "idle"
-        assert!(sm.transition.is_none());
+        let mut sm = setup_walk_run_sm();
+        let durations = [1.0, 1.0, 1.0];
+
+        sm.set_float("speed", 0.0);
+        let transitioned = sm.update(0.016, &durations);
+        assert!(!transitioned);
+        assert_eq!(sm.current_state(), 0);
     }
 
     #[test]
-    fn transition_completes_after_blend_duration() {
-        let mut sm = idle_run_machine();
-        sm.parameters.set_float("speed", 1.0);
-        sm.evaluate_transitions();
+    fn crossfade_completes() {
+        let mut sm = setup_walk_run_sm();
+        let durations = [1.0, 1.0, 1.0];
 
-        let durations = vec![2.0, 2.0];
-        sm.advance(0.1, &durations);
-        assert!(sm.transition.is_some());
+        sm.set_float("speed", 0.5);
+        sm.update(0.016, &durations);
+        assert!(sm.is_transitioning());
 
-        sm.advance(0.15, &durations);
-        assert!(sm.transition.is_none()); // 0.25 > 0.2 blend duration
-    }
-
-    #[test]
-    fn no_new_transition_during_active_blend() {
-        let mut sm = idle_run_machine();
-        sm.parameters.set_float("speed", 1.0);
-        sm.evaluate_transitions();
-        assert!(sm.transition.is_some());
-
-        // Change params to trigger reverse transition — should NOT fire during blend.
-        sm.parameters.set_float("speed", 0.0);
-        sm.evaluate_transitions();
-        // Still on state 1, transition still in progress.
-        assert_eq!(sm.current_state, 1);
+        for _ in 0..20 {
+            sm.update(0.016, &durations);
+        }
+        assert!(!sm.is_transitioning());
     }
 
     #[test]
     fn any_state_transition() {
-        let states = vec![
-            AnimationState { name: "idle".into(), clip_index: 0, speed: 1.0, looping: true },
-            AnimationState { name: "run".into(), clip_index: 1, speed: 1.0, looping: true },
-            AnimationState { name: "death".into(), clip_index: 2, speed: 1.0, looping: false },
-        ];
-        let transitions = vec![
-            // Any-state -> death when "dead" is true.
-            StateTransition {
-                from: None,
-                to: 2,
-                conditions: vec![TransitionCondition::IsTrue { param: "dead".into() }],
-                blend_duration: 0.1,
-            },
-        ];
-        let mut sm = AnimationStateMachine::new(states, transitions, 0);
-        sm.parameters.set_bool("dead", true);
-        sm.evaluate_transitions();
-        assert_eq!(sm.current_state, 2);
+        let mut sm = AnimStateMachine::new(0);
+        sm.add_state("normal", 0);
+        sm.add_state("flinch", 1);
+
+        sm.add_any_state_transition(
+            1,
+            vec![TransitionCondition::BoolEquals {
+                param: "hit".into(),
+                value: true,
+            }],
+            0.1,
+        );
+
+        let durations = [1.0, 0.5];
+        sm.set_bool("hit", true);
+        assert!(sm.update(0.016, &durations));
+        assert_eq!(sm.current_state(), 1);
     }
 
     #[test]
-    fn advance_wraps_looping_clip() {
-        let mut sm = idle_run_machine();
-        let durations = vec![1.0, 1.0];
-        sm.advance(1.5, &durations);
-        // Looping: 1.5 % 1.0 = 0.5
-        assert!((sm.current_time - 0.5).abs() < 0.01);
-    }
+    fn bool_condition() {
+        let mut params = HashMap::new();
+        params.insert("grounded".into(), ParamValue::Bool(true));
 
-    #[test]
-    fn advance_clamps_non_looping_clip() {
-        let states = vec![
-            AnimationState { name: "attack".into(), clip_index: 0, speed: 1.0, looping: false },
-        ];
-        let mut sm = AnimationStateMachine::new(states, vec![], 0);
-        let durations = vec![1.0];
-        sm.advance(2.0, &durations);
-        assert!((sm.current_time - 1.0).abs() < 0.01);
-    }
+        let cond = TransitionCondition::BoolEquals {
+            param: "grounded".into(),
+            value: true,
+        };
+        assert!(cond.evaluate(&params));
 
-    #[test]
-    fn bool_conditions() {
-        let cond_true = TransitionCondition::IsTrue { param: "jumping".into() };
-        let cond_false = TransitionCondition::IsFalse { param: "jumping".into() };
-
-        let mut params = AnimationParameters::default();
-        params.set_bool("jumping", true);
-
-        assert!(cond_true.evaluate(&params));
+        let cond_false = TransitionCondition::BoolEquals {
+            param: "grounded".into(),
+            value: false,
+        };
         assert!(!cond_false.evaluate(&params));
+    }
+
+    #[test]
+    fn time_advances_with_speed() {
+        let mut sm = AnimStateMachine::new(0);
+        let idx = sm.add_state("fast", 0);
+        sm.state_mut(idx).unwrap().speed = 2.0;
+
+        let durations = [10.0];
+        sm.update(1.0, &durations);
+        assert!((sm.current_time - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn time_loops() {
+        let mut sm = AnimStateMachine::new(0);
+        sm.add_state("loop", 0);
+
+        let durations = [1.0];
+        sm.update(1.5, &durations);
+        assert!((sm.current_time - 0.5).abs() < 1e-5);
     }
 }
