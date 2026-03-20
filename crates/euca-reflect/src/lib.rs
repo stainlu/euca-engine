@@ -4,40 +4,97 @@ use std::any::Any;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
-pub struct FieldInfo { pub name: &'static str, pub type_name: &'static str }
+pub struct FieldInfo {
+    pub name: &'static str,
+    pub type_name: &'static str,
+}
 #[derive(Clone, Debug)]
-pub struct TypeInfo { pub name: &'static str, pub fields: Vec<FieldInfo> }
+pub struct TypeInfo {
+    pub name: &'static str,
+    pub fields: Vec<FieldInfo>,
+}
 
 pub trait Reflect: 'static + Send + Sync {
     fn type_name(&self) -> &'static str;
     fn fields(&self) -> Vec<(&'static str, String)>;
-    fn field_ref(&self, _name: &str) -> Option<&dyn Reflect> { None }
-    fn field_mut(&mut self, _name: &str) -> Option<&mut dyn Reflect> { None }
-    fn set_field(&mut self, _name: &str, _value: &dyn Reflect) -> bool { false }
-    fn type_info(&self) -> TypeInfo { TypeInfo { name: self.type_name(), fields: Vec::new() } }
+    fn field_ref(&self, _name: &str) -> Option<&dyn Reflect> {
+        None
+    }
+    fn field_mut(&mut self, _name: &str) -> Option<&mut dyn Reflect> {
+        None
+    }
+    fn set_field(&mut self, _name: &str, _value: &dyn Reflect) -> bool {
+        false
+    }
+    fn type_info(&self) -> TypeInfo {
+        TypeInfo {
+            name: self.type_name(),
+            fields: Vec::new(),
+        }
+    }
     fn clone_reflect(&self) -> Box<dyn Reflect>;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-pub struct TypeRegistry { registrations: HashMap<&'static str, TypeRegistration> }
-pub struct TypeRegistration { pub name: &'static str, pub info: TypeInfo, factory: Box<dyn Fn() -> Box<dyn Reflect> + Send + Sync> }
-impl TypeRegistry {
-    pub fn new() -> Self { Self { registrations: HashMap::new() } }
-    pub fn register<T: Reflect + Default>(&mut self) { let s = T::default(); let n = s.type_name(); let i = s.type_info(); self.registrations.insert(n, TypeRegistration { name: n, info: i, factory: Box::new(|| Box::new(T::default())) }); }
-    pub fn get_by_name(&self, name: &str) -> Option<&TypeRegistration> { self.registrations.get(name) }
-    pub fn create_default(&self, name: &str) -> Option<Box<dyn Reflect>> { self.registrations.get(name).map(|r| (r.factory)()) }
+pub struct TypeRegistry {
+    registrations: HashMap<&'static str, TypeRegistration>,
 }
-impl Default for TypeRegistry { fn default() -> Self { Self::new() } }
+pub struct TypeRegistration {
+    pub name: &'static str,
+    pub info: TypeInfo,
+    factory: Box<dyn Fn() -> Box<dyn Reflect> + Send + Sync>,
+}
+impl TypeRegistry {
+    pub fn new() -> Self {
+        Self {
+            registrations: HashMap::new(),
+        }
+    }
+    pub fn register<T: Reflect + Default>(&mut self) {
+        let s = T::default();
+        let n = s.type_name();
+        let i = s.type_info();
+        self.registrations.insert(
+            n,
+            TypeRegistration {
+                name: n,
+                info: i,
+                factory: Box::new(|| Box::new(T::default())),
+            },
+        );
+    }
+    pub fn get_by_name(&self, name: &str) -> Option<&TypeRegistration> {
+        self.registrations.get(name)
+    }
+    pub fn create_default(&self, name: &str) -> Option<Box<dyn Reflect>> {
+        self.registrations.get(name).map(|r| (r.factory)())
+    }
+}
+impl Default for TypeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 macro_rules! impl_reflect_primitive {
     ($ty:ty, $name:expr) => {
         impl Reflect for $ty {
-            fn type_name(&self) -> &'static str { $name }
-            fn fields(&self) -> Vec<(&'static str, String)> { Vec::new() }
-            fn clone_reflect(&self) -> Box<dyn Reflect> { Box::new(self.clone()) }
-            fn as_any(&self) -> &dyn Any { self }
-            fn as_any_mut(&mut self) -> &mut dyn Any { self }
+            fn type_name(&self) -> &'static str {
+                $name
+            }
+            fn fields(&self) -> Vec<(&'static str, String)> {
+                Vec::new()
+            }
+            fn clone_reflect(&self) -> Box<dyn Reflect> {
+                Box::new(self.clone())
+            }
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
         }
     };
 }
@@ -57,34 +114,72 @@ pub mod json {
         let fields = value.fields();
         if fields.is_empty() {
             let a = value.as_any();
-            if let Some(v) = a.downcast_ref::<f32>() { return (*v).into(); }
-            if let Some(v) = a.downcast_ref::<f64>() { return (*v).into(); }
-            if let Some(v) = a.downcast_ref::<i32>() { return (*v).into(); }
-            if let Some(v) = a.downcast_ref::<u32>() { return (*v).into(); }
-            if let Some(v) = a.downcast_ref::<i64>() { return (*v).into(); }
-            if let Some(v) = a.downcast_ref::<u64>() { return (*v).into(); }
-            if let Some(v) = a.downcast_ref::<bool>() { return (*v).into(); }
-            if let Some(v) = a.downcast_ref::<String>() { return v.clone().into(); }
+            if let Some(v) = a.downcast_ref::<f32>() {
+                return (*v).into();
+            }
+            if let Some(v) = a.downcast_ref::<f64>() {
+                return (*v).into();
+            }
+            if let Some(v) = a.downcast_ref::<i32>() {
+                return (*v).into();
+            }
+            if let Some(v) = a.downcast_ref::<u32>() {
+                return (*v).into();
+            }
+            if let Some(v) = a.downcast_ref::<i64>() {
+                return (*v).into();
+            }
+            if let Some(v) = a.downcast_ref::<u64>() {
+                return (*v).into();
+            }
+            if let Some(v) = a.downcast_ref::<bool>() {
+                return (*v).into();
+            }
+            if let Some(v) = a.downcast_ref::<String>() {
+                return v.clone().into();
+            }
             serde_json::Value::String(format!("{:?}", value.type_name()))
         } else {
             let mut map = serde_json::Map::new();
             map.insert("__type".into(), value.type_name().into());
             for (name, repr) in &fields {
-                let v = value.field_ref(name).map(|fv| reflect_to_json(fv)).unwrap_or_else(|| serde_json::Value::String(repr.clone()));
+                let v = value
+                    .field_ref(name)
+                    .map(|fv| reflect_to_json(fv))
+                    .unwrap_or_else(|| serde_json::Value::String(repr.clone()));
                 map.insert(name.to_string(), v);
             }
             serde_json::Value::Object(map)
         }
     }
-    pub fn reflect_from_json(json: &serde_json::Value, registry: &TypeRegistry) -> Option<Box<dyn Reflect>> {
-        let obj = json.as_object()?; let tn = obj.get("__type")?.as_str()?;
+    pub fn reflect_from_json(
+        json: &serde_json::Value,
+        registry: &TypeRegistry,
+    ) -> Option<Box<dyn Reflect>> {
+        let obj = json.as_object()?;
+        let tn = obj.get("__type")?.as_str()?;
         let mut inst = registry.create_default(tn)?;
-        for (k, v) in obj { if k == "__type" { continue; } if let Some(fv) = json_to_val(v, registry) { inst.set_field(k, fv.as_ref()); } }
+        for (k, v) in obj {
+            if k == "__type" {
+                continue;
+            }
+            if let Some(fv) = json_to_val(v, registry) {
+                inst.set_field(k, fv.as_ref());
+            }
+        }
         Some(inst)
     }
     fn json_to_val(v: &serde_json::Value, reg: &TypeRegistry) -> Option<Box<dyn Reflect>> {
         match v {
-            serde_json::Value::Number(n) => { if let Some(f) = n.as_f64() { Some(Box::new(f as f32)) } else if let Some(i) = n.as_i64() { Some(Box::new(i)) } else { n.as_u64().map(|u| Box::new(u) as Box<dyn Reflect>) } }
+            serde_json::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    Some(Box::new(f as f32))
+                } else if let Some(i) = n.as_i64() {
+                    Some(Box::new(i))
+                } else {
+                    n.as_u64().map(|u| Box::new(u) as Box<dyn Reflect>)
+                }
+            }
             serde_json::Value::Bool(b) => Some(Box::new(*b)),
             serde_json::Value::String(s) => Some(Box::new(s.clone())),
             serde_json::Value::Object(_) => reflect_from_json(v, reg),
@@ -96,15 +191,67 @@ pub mod json {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn primitive_type_name() { assert_eq!(Reflect::type_name(&42_f32), "f32"); assert_eq!(Reflect::type_name(&true), "bool"); }
-    #[test] fn primitive_clone() { let c = 3.14_f32.clone_reflect(); assert_eq!(*c.as_any().downcast_ref::<f32>().unwrap(), 3.14_f32); }
-    #[test] fn primitive_any_mut() { let mut v = 10_i32; *v.as_any_mut().downcast_mut::<i32>().unwrap() = 42; assert_eq!(v, 42); }
-    #[test] fn primitive_no_fields() { assert!(42_u32.fields().is_empty()); assert!(42_u32.field_ref("x").is_none()); }
-    #[test] fn registry_lifecycle() {
-        #[derive(Clone, Debug, Default)] struct D { x: f32 }
-        impl Reflect for D { fn type_name(&self) -> &'static str { "D" } fn fields(&self) -> Vec<(&'static str, String)> { vec![("x", format!("{:?}", self.x))] } fn clone_reflect(&self) -> Box<dyn Reflect> { Box::new(self.clone()) } fn as_any(&self) -> &dyn Any { self } fn as_any_mut(&mut self) -> &mut dyn Any { self } }
-        let mut r = TypeRegistry::new(); r.register::<D>(); assert!(r.get_by_name("D").is_some());
-        assert_eq!(r.create_default("D").unwrap().as_any().downcast_ref::<D>().unwrap().x, 0.0);
+    #[test]
+    fn primitive_type_name() {
+        assert_eq!(Reflect::type_name(&42_f32), "f32");
+        assert_eq!(Reflect::type_name(&true), "bool");
     }
-    #[test] fn type_info_prim() { let i = 42_f32.type_info(); assert_eq!(i.name, "f32"); assert!(i.fields.is_empty()); }
+    #[test]
+    fn primitive_clone() {
+        let c = 3.14_f32.clone_reflect();
+        assert_eq!(*c.as_any().downcast_ref::<f32>().unwrap(), 3.14_f32);
+    }
+    #[test]
+    fn primitive_any_mut() {
+        let mut v = 10_i32;
+        *v.as_any_mut().downcast_mut::<i32>().unwrap() = 42;
+        assert_eq!(v, 42);
+    }
+    #[test]
+    fn primitive_no_fields() {
+        assert!(42_u32.fields().is_empty());
+        assert!(42_u32.field_ref("x").is_none());
+    }
+    #[test]
+    fn registry_lifecycle() {
+        #[derive(Clone, Debug, Default)]
+        struct D {
+            x: f32,
+        }
+        impl Reflect for D {
+            fn type_name(&self) -> &'static str {
+                "D"
+            }
+            fn fields(&self) -> Vec<(&'static str, String)> {
+                vec![("x", format!("{:?}", self.x))]
+            }
+            fn clone_reflect(&self) -> Box<dyn Reflect> {
+                Box::new(self.clone())
+            }
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+        let mut r = TypeRegistry::new();
+        r.register::<D>();
+        assert!(r.get_by_name("D").is_some());
+        assert_eq!(
+            r.create_default("D")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<D>()
+                .unwrap()
+                .x,
+            0.0
+        );
+    }
+    #[test]
+    fn type_info_prim() {
+        let i = 42_f32.type_info();
+        assert_eq!(i.name, "f32");
+        assert!(i.fields.is_empty());
+    }
 }

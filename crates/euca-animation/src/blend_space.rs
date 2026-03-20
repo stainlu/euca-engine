@@ -152,10 +152,10 @@ where
     // Collect poses with their weights
     let mut pose_weights: Vec<(AnimPose, f32)> = Vec::new();
     for &(clip_idx, weight) in weights {
-        if weight > 0.0 {
-            if let Some(pose) = evaluate_fn(clip_idx) {
-                pose_weights.push((pose, weight));
-            }
+        if weight > 0.0
+            && let Some(pose) = evaluate_fn(clip_idx)
+        {
+            pose_weights.push((pose, weight));
         }
     }
 

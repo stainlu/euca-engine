@@ -1,7 +1,7 @@
 //! Sampled animation poses and clip evaluation.
 
 use euca_asset::animation::{
-    sample_quat, sample_vec3, AnimationChannel, AnimationClipData, AnimationProperty,
+    AnimationChannel, AnimationClipData, AnimationProperty, sample_quat, sample_vec3,
 };
 use euca_asset::skeleton::Skeleton;
 use euca_math::{Transform, Vec3};

@@ -148,10 +148,10 @@ impl MontagePlayer {
 
     /// Advance the montage player. Removes finished montages.
     pub fn advance(&mut self, dt: f32) {
-        if let Some(ref mut montage) = self.active {
-            if montage.advance(dt) {
-                self.active = None;
-            }
+        if let Some(ref mut montage) = self.active
+            && montage.advance(dt)
+        {
+            self.active = None;
         }
     }
 

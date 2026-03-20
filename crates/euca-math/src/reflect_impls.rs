@@ -1,7 +1,7 @@
 //! Reflect impls for math types (enabled by the reflect feature).
+use crate::{Mat4, Quat, Vec3, Vec4};
 use euca_reflect::{FieldInfo, Reflect, TypeInfo};
 use std::any::Any;
-use crate::{Mat4, Quat, Vec3, Vec4};
 
 macro_rules! impl_reflect_vec {
     ($ty:ident, $name:expr, [$($field:ident),+]) => {
@@ -25,10 +25,28 @@ impl_reflect_vec!(Vec4, "Vec4", [x, y, z, w]);
 impl_reflect_vec!(Quat, "Quat", [x, y, z, w]);
 
 impl Reflect for Mat4 {
-    fn type_name(&self) -> &'static str { "Mat4" }
-    fn fields(&self) -> Vec<(&'static str, String)> { vec![("cols", format!("{:?}", self.cols))] }
-    fn type_info(&self) -> TypeInfo { TypeInfo { name: "Mat4", fields: vec![FieldInfo { name: "cols", type_name: "[[f32; 4]; 4]" }] } }
-    fn clone_reflect(&self) -> Box<dyn Reflect> { Box::new(*self) }
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    fn type_name(&self) -> &'static str {
+        "Mat4"
+    }
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        vec![("cols", format!("{:?}", self.cols))]
+    }
+    fn type_info(&self) -> TypeInfo {
+        TypeInfo {
+            name: "Mat4",
+            fields: vec![FieldInfo {
+                name: "cols",
+                type_name: "[[f32; 4]; 4]",
+            }],
+        }
+    }
+    fn clone_reflect(&self) -> Box<dyn Reflect> {
+        Box::new(*self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }

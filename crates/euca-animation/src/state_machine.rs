@@ -255,11 +255,11 @@ impl AnimStateMachine {
         let mut transitioned = false;
 
         // Advance crossfade if active
-        if let Some(ref mut cf_state) = self.active_crossfade {
-            if cf_state.crossfade.advance(dt) {
-                // Crossfade complete -- fully in the new state
-                self.active_crossfade = None;
-            }
+        if let Some(ref mut cf_state) = self.active_crossfade
+            && cf_state.crossfade.advance(dt)
+        {
+            // Crossfade complete -- fully in the new state
+            self.active_crossfade = None;
         }
 
         // Check transitions only if not already mid-crossfade
@@ -302,13 +302,13 @@ impl AnimStateMachine {
             let looping = state.looping;
             self.current_time += dt * speed;
 
-            if let Some(&clip_dur) = clip_durations.get(state.clip_index) {
-                if clip_dur > 0.0 {
-                    if looping {
-                        self.current_time %= clip_dur;
-                    } else {
-                        self.current_time = self.current_time.min(clip_dur);
-                    }
+            if let Some(&clip_dur) = clip_durations.get(state.clip_index)
+                && clip_dur > 0.0
+            {
+                if looping {
+                    self.current_time %= clip_dur;
+                } else {
+                    self.current_time = self.current_time.min(clip_dur);
                 }
             }
         }

@@ -45,12 +45,11 @@ pub use blend::{AnimationBlender, Crossfade};
 pub use blend_space::{BlendSample1D, BlendSample2D, BlendSpace1D, BlendSpace2D};
 pub use clip::AnimPose;
 pub use event::{
-    AnimationEvent, AnimationEventLibrary, ClipEvents, EventValue, FiredAnimationEvents,
-    FiredEvent,
+    AnimationEvent, AnimationEventLibrary, ClipEvents, EventValue, FiredAnimationEvents, FiredEvent,
 };
 pub use montage::{ActiveMontage, AnimationMontage, MontagePlayer};
 pub use root_motion::{RootMotionDelta, RootMotionReceiver};
 pub use state_machine::{
     AnimState, AnimStateMachine, CompareOp, ParamValue, StateTransition, TransitionCondition,
 };
-pub use system::{animation_evaluate_system, Animator};
+pub use system::{Animator, animation_evaluate_system};

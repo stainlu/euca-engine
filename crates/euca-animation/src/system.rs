@@ -16,10 +16,10 @@ use euca_ecs::{Entity, Query, World};
 use euca_math::Transform;
 
 use crate::blend::AnimationBlender;
-use crate::clip::{sample_clip, AnimPose};
+use crate::clip::{AnimPose, sample_clip};
 use crate::event::{AnimationEventLibrary, FiredAnimationEvents, FiredEvent};
 use crate::montage::MontagePlayer;
-use crate::root_motion::{extract_root_motion, RootMotionDelta, RootMotionReceiver};
+use crate::root_motion::{RootMotionDelta, RootMotionReceiver, extract_root_motion};
 use crate::state_machine::AnimStateMachine;
 
 /// ECS component: the main animator attached to skeletal entities.

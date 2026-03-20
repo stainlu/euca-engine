@@ -1313,6 +1313,7 @@ dependencies = [
 name = "euca-math"
 version = "0.1.0"
 dependencies = [
+ "euca-reflect",
  "serde",
 ]
 
@@ -1366,6 +1367,7 @@ name = "euca-reflect"
 version = "0.1.0"
 dependencies = [
  "euca-reflect-derive",
+ "serde_json",
 ]
 
 [[package]]
