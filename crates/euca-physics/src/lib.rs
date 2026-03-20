@@ -1,3 +1,4 @@
+pub mod character;
 mod collision;
 mod components;
 pub mod joints;
@@ -6,6 +7,7 @@ mod systems;
 pub mod vehicle;
 mod world;
 
+pub use character::{CharacterController, character_controller_system};
 pub use collision::{CollisionPair, intersect_aabb};
 pub use components::{
     Collider, ColliderShape, CollisionEvent, Gravity, Mass, PhysicsBody, RigidBodyType,
