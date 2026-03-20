@@ -2,7 +2,7 @@ use crate::vertex::Vertex;
 use euca_reflect::Reflect;
 
 /// A mesh handle referencing a GPU-uploaded mesh by index.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Reflect)]
 pub struct MeshHandle(pub u32);
 
 /// Component that marks an entity for rendering with a specific mesh.

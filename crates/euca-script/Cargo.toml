@@ -1,0 +1,22 @@
+[package]
+name = "euca-script"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Lua scripting with hot reload, sandboxing, and ECS bridge for the Euca engine"
+keywords = ["scripting", "lua", "gamedev", "ecs", "modding"]
+categories = ["game-development"]
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-scene = { path = "../euca-scene" }
+euca-gameplay = { path = "../euca-gameplay" }
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+log = "0.4"
+notify = { version = "7", default-features = false, features = ["macos_fsevent"] }
+
+[dev-dependencies]
+env_logger = "0.11"

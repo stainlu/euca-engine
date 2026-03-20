@@ -1,8 +1,8 @@
 use euca_math::Transform;
 use euca_reflect::Reflect;
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 
-/// Local transform relative to the entity's parent (or world origin if no parent).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LocalTransform(pub Transform);
 
@@ -34,11 +34,52 @@ impl Reflect for LocalTransform {
             ),
         ]
     }
+    fn field_ref(&self, name: &str) -> Option<&dyn Reflect> {
+        match name {
+            "translation" => Some(&self.0.translation),
+            "rotation" => Some(&self.0.rotation),
+            "scale" => Some(&self.0.scale),
+            _ => None,
+        }
+    }
+    fn field_mut(&mut self, name: &str) -> Option<&mut dyn Reflect> {
+        match name {
+            "translation" => Some(&mut self.0.translation),
+            "rotation" => Some(&mut self.0.rotation),
+            "scale" => Some(&mut self.0.scale),
+            _ => None,
+        }
+    }
+    fn type_info(&self) -> euca_reflect::TypeInfo {
+        euca_reflect::TypeInfo {
+            name: "LocalTransform",
+            fields: vec![
+                euca_reflect::FieldInfo {
+                    name: "translation",
+                    type_name: "Vec3",
+                },
+                euca_reflect::FieldInfo {
+                    name: "rotation",
+                    type_name: "Quat",
+                },
+                euca_reflect::FieldInfo {
+                    name: "scale",
+                    type_name: "Vec3",
+                },
+            ],
+        }
+    }
+    fn clone_reflect(&self) -> Box<dyn Reflect> {
+        Box::new(*self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
-/// Computed world-space transform, updated by the transform propagation system.
-///
-/// Do not set this manually — it is overwritten each frame by `transform_propagation_system`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GlobalTransform(pub Transform);
 
@@ -60,5 +101,49 @@ impl Reflect for GlobalTransform {
                 self.0.translation.x, self.0.translation.y, self.0.translation.z
             ),
         )]
+    }
+    fn field_ref(&self, name: &str) -> Option<&dyn Reflect> {
+        match name {
+            "translation" | "world_pos" => Some(&self.0.translation),
+            "rotation" => Some(&self.0.rotation),
+            "scale" => Some(&self.0.scale),
+            _ => None,
+        }
+    }
+    fn field_mut(&mut self, name: &str) -> Option<&mut dyn Reflect> {
+        match name {
+            "translation" | "world_pos" => Some(&mut self.0.translation),
+            "rotation" => Some(&mut self.0.rotation),
+            "scale" => Some(&mut self.0.scale),
+            _ => None,
+        }
+    }
+    fn type_info(&self) -> euca_reflect::TypeInfo {
+        euca_reflect::TypeInfo {
+            name: "GlobalTransform",
+            fields: vec![
+                euca_reflect::FieldInfo {
+                    name: "world_pos",
+                    type_name: "Vec3",
+                },
+                euca_reflect::FieldInfo {
+                    name: "rotation",
+                    type_name: "Quat",
+                },
+                euca_reflect::FieldInfo {
+                    name: "scale",
+                    type_name: "Vec3",
+                },
+            ],
+        }
+    }
+    fn clone_reflect(&self) -> Box<dyn Reflect> {
+        Box::new(*self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }

@@ -11,6 +11,7 @@ members = [
     "crates/euca-agent",
     "crates/euca-physics",
     "crates/euca-asset",
+    "crates/euca-animation",
     "crates/euca-editor",
     "crates/euca-input",
     "crates/euca-net",
@@ -18,8 +19,9 @@ members = [
     "crates/euca-gameplay",
     "crates/euca-audio",
     "crates/euca-particle",
+    "crates/euca-animation",
     "crates/euca-nav",
-    "crates/euca-ai",
+    "crates/euca-script",
     "tools/euca-cli",
 ]
 

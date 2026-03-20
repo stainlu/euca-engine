@@ -12,6 +12,8 @@ categories = ["game-development", "mathematics"]
 [features]
 default = ["simd"]
 simd = []
+reflect = ["dep:euca-reflect"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+euca-reflect = { path = "../euca-reflect", optional = true }

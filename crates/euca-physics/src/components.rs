@@ -3,7 +3,7 @@ use euca_math::Vec3;
 use euca_reflect::Reflect;
 
 /// Rigid body type.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub enum RigidBodyType {
     /// Fully simulated, responds to forces and gravity.
     Dynamic,
@@ -104,7 +104,7 @@ pub struct Sleeping;
 pub const SLEEP_THRESHOLD: f32 = 0.05;
 
 /// Collider shape.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Reflect)]
 pub enum ColliderShape {
     /// Axis-aligned bounding box (half-extents).
     Aabb { hx: f32, hy: f32, hz: f32 },
