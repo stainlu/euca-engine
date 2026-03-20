@@ -80,6 +80,18 @@ impl AgentServer {
             .route("/animation/play", post(routes::animation_play))
             .route("/animation/stop", post(routes::animation_stop))
             .route("/animation/list", get(routes::animation_list))
+            .route(
+                "/animation/state-machine",
+                post(routes::animation_state_machine),
+            )
+            .route("/animation/montage", post(routes::animation_montage))
+            .route("/terrain/create", post(routes::terrain_create))
+            .route("/terrain/edit", post(routes::terrain_edit))
+            .route("/prefab/spawn", post(routes::prefab_spawn))
+            .route("/prefab/list", get(routes::prefab_list))
+            .route("/material/set", post(routes::material_set))
+            .route("/postprocess/settings", get(routes::postprocess_get))
+            .route("/postprocess/settings", post(routes::postprocess_set))
             .route("/diagnose", get(routes::diagnose))
             .route("/events", get(routes::events_list))
             .route("/ability/use", post(routes::ability_use))

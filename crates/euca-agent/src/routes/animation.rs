@@ -148,3 +148,124 @@ pub async fn animation_list(State(world): State<SharedWorld>) -> Json<serde_json
 
     Json(serde_json::json!({"clips": clips, "count": clips.len()}))
 }
+
+// ── State Machine ──
+
+#[derive(serde::Deserialize)]
+pub struct StateMachineRequest {
+    pub entity_id: u32,
+    #[serde(default)]
+    pub initial_state: usize,
+    #[serde(default)]
+    pub states: Vec<StateDef>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct StateDef {
+    pub name: String,
+    pub clip: usize,
+    #[serde(default = "default_true")]
+    pub looping: bool,
+    #[serde(default = "default_speed")]
+    pub speed: f32,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_speed() -> f32 {
+    1.0
+}
+
+/// POST /animation/state-machine
+pub async fn animation_state_machine(
+    State(world): State<SharedWorld>,
+    Json(req): Json<StateMachineRequest>,
+) -> Json<MessageResponse> {
+    let ok = world.with(|w, _| {
+        let entity = match find_entity(w, req.entity_id) {
+            Some(e) => e,
+            None => return false,
+        };
+        let mut sm = euca_animation::AnimStateMachine::new(req.initial_state);
+        for sd in &req.states {
+            let idx = sm.add_state(&sd.name, sd.clip);
+            if let Some(s) = sm.state_mut(idx) {
+                s.speed = sd.speed;
+                s.looping = sd.looping;
+            }
+        }
+        w.insert(entity, sm);
+        true
+    });
+    Json(MessageResponse {
+        ok,
+        message: Some(if ok {
+            format!("State machine set on entity {}", req.entity_id)
+        } else {
+            format!("Entity {} not found", req.entity_id)
+        }),
+    })
+}
+
+// ── Montage ──
+
+#[derive(serde::Deserialize)]
+pub struct MontageRequest {
+    pub entity_id: u32,
+    pub clip: usize,
+    pub clip_duration: f32,
+    #[serde(default = "default_speed")]
+    pub speed: f32,
+    #[serde(default = "default_blend")]
+    pub blend_in: f32,
+    #[serde(default = "default_blend")]
+    pub blend_out: f32,
+    #[serde(default)]
+    pub bone_mask: Option<Vec<usize>>,
+}
+
+fn default_blend() -> f32 {
+    0.1
+}
+
+/// POST /animation/montage
+pub async fn animation_montage(
+    State(world): State<SharedWorld>,
+    Json(req): Json<MontageRequest>,
+) -> Json<MessageResponse> {
+    let ok = world.with(|w, _| {
+        let entity = match find_entity(w, req.entity_id) {
+            Some(e) => e,
+            None => return false,
+        };
+        let montage = euca_animation::AnimationMontage {
+            clip_index: req.clip,
+            speed: req.speed,
+            blend_in: req.blend_in,
+            blend_out: req.blend_out,
+            bone_mask: req.bone_mask,
+        };
+        if w.get::<euca_animation::MontagePlayer>(entity).is_some() {
+            if let Some(player) = w.get_mut::<euca_animation::MontagePlayer>(entity) {
+                player.play(montage, req.clip_duration);
+            }
+        } else {
+            let mut player = euca_animation::MontagePlayer::new();
+            player.play(montage, req.clip_duration);
+            w.insert(entity, player);
+        }
+        true
+    });
+    Json(MessageResponse {
+        ok,
+        message: Some(if ok {
+            format!(
+                "Montage (clip {}) triggered on entity {}",
+                req.clip, req.entity_id
+            )
+        } else {
+            format!("Entity {} not found", req.entity_id)
+        }),
+    })
+}

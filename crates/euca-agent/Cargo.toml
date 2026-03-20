@@ -16,6 +16,8 @@ euca-audio = { path = "../euca-audio" }
 euca-asset = { path = "../euca-asset" }
 euca-particle = { path = "../euca-particle" }
 euca-nav = { path = "../euca-nav" }
+euca-terrain = { path = "../euca-terrain" }
+euca-animation = { path = "../euca-animation" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
