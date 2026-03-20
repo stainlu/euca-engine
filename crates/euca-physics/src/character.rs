@@ -1,8 +1,8 @@
 //! Capsule-based kinematic character controller.
+use crate::raycast::{Ray, WorldRayHit, raycast_world};
 use euca_ecs::{Entity, Query, World};
 use euca_math::Vec3;
 use euca_scene::LocalTransform;
-use crate::raycast::{Ray, WorldRayHit, raycast_world};
 const GROUND_PROBE_OFFSET: f32 = 0.05;
 const GROUND_PROBE_DISTANCE: f32 = 0.15;
 /// Kinematic character controller component.
@@ -177,7 +177,10 @@ mod tests {
         }
         let pre = world.get::<CharacterController>(ch).unwrap().velocity.y;
         world.get_mut::<CharacterController>(ch).unwrap().jump();
-        assert_eq!(world.get::<CharacterController>(ch).unwrap().velocity.y, pre);
+        assert_eq!(
+            world.get::<CharacterController>(ch).unwrap().velocity.y,
+            pre
+        );
     }
     #[test]
     fn coyote_time_allows_late_jump() {
