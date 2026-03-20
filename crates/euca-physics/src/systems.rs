@@ -127,7 +127,7 @@ fn integrate_positions(world: &mut World, dt: f32) {
             Query::<(Entity, &PhysicsBody, &Velocity, &LocalTransform, &Collider)>::new(world);
         query
             .iter()
-            .filter(|(_, body, _, _, _)| body.body_type == RigidBodyType::Dynamic)
+            .filter(|(_, body, _, _, _)| body.body_type != RigidBodyType::Static)
             .map(|(e, _, vel, lt, col)| {
                 (
                     e,
@@ -164,9 +164,12 @@ fn integrate_positions(world: &mut World, dt: f32) {
             }
         }
 
-        // CCD: if displacement > collider extent, sweep-test against statics
+        // CCD: only for Dynamic bodies (Kinematic skip collision entirely)
+        let is_dynamic = world
+            .get::<PhysicsBody>(entity)
+            .is_some_and(|b| b.body_type == RigidBodyType::Dynamic);
         let speed = displacement.length();
-        if speed > extent * 0.5 && speed > 1e-6 {
+        if is_dynamic && speed > extent * 0.5 && speed > 1e-6 {
             let ray = Ray::new(old_pos, displacement);
             let mut closest_t = 1.0_f32; // 1.0 = full displacement
 
@@ -184,16 +187,13 @@ fn integrate_positions(world: &mut World, dt: f32) {
             }
 
             if closest_t < 1.0 {
-                // Only clamp vertical (Y) position and velocity on collision.
-                // Horizontal (XZ) movement is gameplay-driven (AutoCombat, AI)
-                // and must not be blocked by CCD against towers/ground.
+                // Clamp position to just before the hit
                 let safe_t = (closest_t - 0.01).max(0.0);
-                let clamped_y = old_pos.y + displacement.y * safe_t;
-                new_pos.y = clamped_y;
-                // Keep new_pos.x and new_pos.z as computed (full displacement)
+                new_pos = old_pos + displacement * safe_t;
 
+                // Dampen velocity on impact
                 if let Some(vel) = world.get_mut::<Velocity>(entity) {
-                    vel.linear.y *= 0.1;
+                    vel.linear = vel.linear * 0.1;
                 }
             }
         }
@@ -598,12 +598,10 @@ mod tests {
         physics_step_system(&mut world);
 
         let lt = world.get::<LocalTransform>(bullet).unwrap();
-        // CCD currently only clamps Y position (to allow gameplay XZ movement).
-        // XZ tunneling prevention requires collision layers (TODO).
-        // For now, verify the bullet moved (physics ran) and Y was handled.
+        // Dynamic body with CCD should stop before the wall
         assert!(
-            lt.0.translation.x > 0.0,
-            "Bullet should have moved, x={}",
+            lt.0.translation.x < 10.0,
+            "Bullet should not tunnel through wall, x={}",
             lt.0.translation.x
         );
     }

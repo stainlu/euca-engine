@@ -417,10 +417,15 @@ pub fn execute_action(
                     ac.speed = *s;
                 }
                 world.insert(entity, ac);
-                // Combat entities need Velocity + PhysicsBody + Collider for movement
+                // Combat entities need Velocity + Kinematic PhysicsBody for movement.
+                // Kinematic = gameplay-driven movement (no gravity, no collision blocking).
                 world.insert(entity, euca_physics::Velocity::default());
-                world.insert(entity, euca_physics::PhysicsBody::dynamic());
-                world.insert(entity, euca_physics::Collider::aabb(0.3, 0.3, 0.3));
+                world.insert(
+                    entity,
+                    euca_physics::PhysicsBody {
+                        body_type: euca_physics::RigidBodyType::Kinematic,
+                    },
+                );
             }
             if let Some(wps) = waypoints {
                 let wp_vecs: Vec<Vec3> = wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();

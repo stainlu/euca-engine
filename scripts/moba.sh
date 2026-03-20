@@ -24,8 +24,8 @@ $E entity create --mesh cube --position=5,1.5,0 --scale 0.4,2.5,0.4 --color oran
 $E entity create --mesh cube --position=3,1.5,0 --scale 0.4,2.5,0.4 --color orange --health 800 --team 2 --physics Static --collider aabb:0.2,1.25,0.2 --combat --combat-damage 40 --combat-range 5 --combat-cooldown 1.5 --combat-style stationary --role tower --gold-bounty 150 --xp-bounty 100
 
 # === HEROES (gold + level + bounty) ===
-$E entity create --mesh sphere "--position=-7,1,0" --scale 1.2,1.2,1.2 --color cyan --health 500 --team 1 --physics Dynamic --collider sphere:0.6 --combat --combat-damage 30 --combat-range 2 --combat-speed 4 --combat-cooldown 0.8 --role hero --gold 0 --gold-bounty 300 --xp-bounty 200
-$E entity create --mesh sphere --position=7,1,0 --scale 1.2,1.2,1.2 --color orange --health 500 --team 2 --physics Dynamic --collider sphere:0.6 --combat --combat-damage 30 --combat-range 2 --combat-speed 4 --combat-cooldown 0.8 --role hero --gold 0 --gold-bounty 300 --xp-bounty 200
+$E entity create --mesh sphere "--position=-7,1,0" --scale 1.2,1.2,1.2 --color cyan --health 500 --team 1 --physics Kinematic --collider sphere:0.6 --combat --combat-damage 30 --combat-range 2 --combat-speed 4 --combat-cooldown 0.8 --role hero --gold 0 --gold-bounty 300 --xp-bounty 200
+$E entity create --mesh sphere --position=7,1,0 --scale 1.2,1.2,1.2 --color orange --health 500 --team 2 --physics Kinematic --collider sphere:0.6 --combat --combat-damage 30 --combat-range 2 --combat-speed 4 --combat-cooldown 0.8 --role hero --gold 0 --gold-bounty 300 --xp-bounty 200
 
 # === SPAWN POINTS (for hero respawn) ===
 # These are invisible entities with SpawnPoint component — not yet via CLI
