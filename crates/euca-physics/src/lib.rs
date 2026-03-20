@@ -3,6 +3,7 @@ mod components;
 pub mod joints;
 mod raycast;
 mod systems;
+pub mod vehicle;
 mod world;
 
 pub use collision::{CollisionPair, intersect_aabb};
@@ -16,4 +17,8 @@ pub use raycast::{
     raycast_sphere, raycast_world, sweep_sphere,
 };
 pub use systems::{physics_step_system, physics_step_with_dt};
+pub use vehicle::{
+    EngineCurve, TorquePoint, Vehicle, VehicleInput, WheelConfig, WheelState,
+    vehicle_physics_system,
+};
 pub use world::{Joints, PhysicsAccumulator, PhysicsConfig};
