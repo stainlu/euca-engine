@@ -83,6 +83,10 @@ impl EditorApp {
         world.insert_resource(euca_asset::AnimationLibrary::default());
         world.insert_resource(euca_input::ActionMap::new());
         world.insert_resource(euca_input::InputContextStack::new());
+        world.insert_resource(euca_scene::SpatialIndex::new(2.0));
+        world.insert_resource(euca_scene::PrefabRegistry::default());
+        world.insert_resource(LodSettings::default());
+        world.insert_resource(PostProcessSettings::default());
         // AudioEngine init may fail on headless systems — log and continue
         match euca_audio::AudioEngine::new() {
             Ok(engine) => world.insert_resource(engine),
@@ -308,6 +312,8 @@ impl EditorApp {
 
             // Physics
             physics_step_system(world);
+            euca_physics::character_controller_system(world, dt);
+            euca_physics::vehicle_physics_system(world, dt);
 
             // Gameplay systems (order matters: damage → death → respawn → projectiles → triggers → AI → game state)
             euca_gameplay::apply_damage_system(world);
@@ -384,6 +390,7 @@ impl EditorApp {
             world.tick();
         }
         euca_scene::transform_propagation_system(world);
+        euca_scene::spatial_index_update_system(world);
 
         // Check if camera was set by agent (skip mouse orbit if so)
         let camera_overridden = world
@@ -415,6 +422,9 @@ impl EditorApp {
             cam.target = self.cam_target;
         }
         self.mouse_delta = [0.0, 0.0];
+
+        // LOD selection (before render so draw commands use the correct mesh)
+        lod_select_system(world);
 
         // Get surface texture
         let gpu = self.gpu.as_ref().unwrap();
