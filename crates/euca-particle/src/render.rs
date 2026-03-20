@@ -1,8 +1,8 @@
 //! GPU particle rendering module.
 //!
 //! Produces renderer-agnostic draw data from particle emitters. The renderer
-//! consumes [`ParticleRenderData`] batches (one per emitter) containing
-//! per-particle vertex data, blend mode, and optional texture handle.
+//! consumes [`ParticleRenderBatch`] batches (one per emitter) containing
+//! per-particle vertex data and blend mode.
 //!
 //! # Architecture
 //!
@@ -49,7 +49,7 @@ impl Default for ParticleBlendMode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParticleVertex {
     /// World-space center of the particle.
-    pub position: [f32; 3],
+    pub position: Vec3,
     /// Uniform scale (half-extent of the billboard quad).
     pub size: f32,
     /// RGBA color.
@@ -67,18 +67,15 @@ pub struct ParticleVertex {
 /// Follows the same pattern as `UiDrawCommand`: the simulation crate produces
 /// this struct; the render crate consumes it to issue GPU draw calls.
 #[derive(Clone, Debug)]
-pub struct ParticleRenderData {
+pub struct ParticleRenderBatch {
     /// Per-particle vertex data, sorted back-to-front for correct
     /// alpha-blending (the collector handles sorting).
     pub vertices: Vec<ParticleVertex>,
     /// How to composite these particles.
     pub blend_mode: ParticleBlendMode,
-    /// Opaque texture handle. `None` means use a default white texture
-    /// (color-only particles).
-    pub texture: Option<u32>,
 }
 
-impl ParticleRenderData {
+impl ParticleRenderBatch {
     /// Number of particles in this batch.
     pub fn particle_count(&self) -> usize {
         self.vertices.len()
@@ -101,8 +98,7 @@ impl ParticleRenderData {
         let mut indices = Vec::with_capacity(count * 6);
 
         for (i, pv) in self.vertices.iter().enumerate() {
-            let center = Vec3::new(pv.position[0], pv.position[1], pv.position[2]);
-            let quad = axes.quad_vertices(center, pv.size, pv.uv_min, pv.uv_max);
+            let quad = axes.quad_vertices(pv.position, pv.size, pv.uv_min, pv.uv_max);
             verts.extend_from_slice(&quad);
 
             let base = (i as u32) * 4;
@@ -243,13 +239,13 @@ fn atlas_uv_for_particle(
 
 /// Collect render data from all active particle emitters in the world.
 ///
-/// Each emitter produces one [`ParticleRenderData`] batch. Particles within
+/// Each emitter produces one [`ParticleRenderBatch`] batch. Particles within
 /// each batch are sorted back-to-front relative to `camera_pos` for correct
 /// transparency rendering.
 ///
 /// Billboard orientation is derived from `camera_pos` using a standard
 /// world-up vector of `(0, 1, 0)`.
-pub fn collect_particle_render_data(world: &World, camera_pos: Vec3) -> Vec<ParticleRenderData> {
+pub fn collect_particle_render_data(world: &World, camera_pos: Vec3) -> Vec<ParticleRenderBatch> {
     let mut batches = Vec::new();
 
     let query = Query::<&ParticleEmitter>::new(world);
@@ -274,7 +270,7 @@ pub fn collect_particle_render_data(world: &World, camera_pos: Vec3) -> Vec<Part
                 );
 
                 ParticleVertex {
-                    position: [p.position.x, p.position.y, p.position.z],
+                    position: p.position,
                     size: p.size,
                     color,
                     uv_min,
@@ -293,10 +289,9 @@ pub fn collect_particle_render_data(world: &World, camera_pos: Vec3) -> Vec<Part
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        batches.push(ParticleRenderData {
+        batches.push(ParticleRenderBatch {
             vertices,
             blend_mode: emitter.blend_mode,
-            texture: emitter.texture,
         });
     }
 
@@ -304,10 +299,10 @@ pub fn collect_particle_render_data(world: &World, camera_pos: Vec3) -> Vec<Part
 }
 
 /// Squared distance from a particle position to the camera.
-fn sq_dist(pos: [f32; 3], cam: Vec3) -> f32 {
-    let dx = pos[0] - cam.x;
-    let dy = pos[1] - cam.y;
-    let dz = pos[2] - cam.z;
+fn sq_dist(pos: Vec3, cam: Vec3) -> f32 {
+    let dx = pos.x - cam.x;
+    let dy = pos.y - cam.y;
+    let dz = pos.z - cam.z;
     dx * dx + dy * dy + dz * dz
 }
 
@@ -431,9 +426,9 @@ mod tests {
         assert_eq!(batch.vertices.len(), 3);
 
         // Back-to-front: farthest first (z=10), then z=5, then z=1.
-        assert!((batch.vertices[0].position[2] - 10.0).abs() < 1e-5);
-        assert!((batch.vertices[1].position[2] - 5.0).abs() < 1e-5);
-        assert!((batch.vertices[2].position[2] - 1.0).abs() < 1e-5);
+        assert!((batch.vertices[0].position.z - 10.0).abs() < 1e-5);
+        assert!((batch.vertices[1].position.z - 5.0).abs() < 1e-5);
+        assert!((batch.vertices[2].position.z - 1.0).abs() < 1e-5);
     }
 
     // ── Test 6: Blend mode propagation ──────────────────────────────────
@@ -445,7 +440,6 @@ mod tests {
         let p = make_particle(Vec3::ZERO, 1.0, 0.0, 1.0);
         let mut em = emitter_with_particles(vec![p]);
         em.blend_mode = ParticleBlendMode::Additive;
-        em.texture = Some(42);
 
         let entity = world.spawn(em);
         world.insert(entity, GlobalTransform::default());
@@ -453,7 +447,6 @@ mod tests {
         let batches = collect_particle_render_data(&world, Vec3::ZERO);
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].blend_mode, ParticleBlendMode::Additive);
-        assert_eq!(batches[0].texture, Some(42));
     }
 
     // ── Test 7: Empty emitters produce no batches ───────────────────────
@@ -473,17 +466,17 @@ mod tests {
 
     #[test]
     fn render_data_builds_correct_geometry_count() {
-        let data = ParticleRenderData {
+        let data = ParticleRenderBatch {
             vertices: vec![
                 ParticleVertex {
-                    position: [0.0, 0.0, 0.0],
+                    position: Vec3::ZERO,
                     size: 1.0,
                     color: [1.0; 4],
                     uv_min: [0.0, 0.0],
                     uv_max: [1.0, 1.0],
                 },
                 ParticleVertex {
-                    position: [1.0, 0.0, 0.0],
+                    position: Vec3::new(1.0, 0.0, 0.0),
                     size: 0.5,
                     color: [1.0; 4],
                     uv_min: [0.0, 0.0],
@@ -491,7 +484,6 @@ mod tests {
                 },
             ],
             blend_mode: ParticleBlendMode::Additive,
-            texture: None,
         };
 
         let axes = BillboardAxes {

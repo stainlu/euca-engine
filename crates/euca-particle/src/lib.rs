@@ -8,7 +8,7 @@
 //! - `particle_update_system`: advances particles (velocity, gravity, aging), removes dead ones
 //!
 //! # Rendering
-//! The `render` module produces renderer-agnostic [`render::ParticleRenderData`] batches
+//! The `render` module produces renderer-agnostic [`render::ParticleRenderBatch`] batches
 //! (one per emitter) that the renderer consumes — no GPU or render crate dependency.
 //! See [`render::collect_particle_render_data`].
 //!
