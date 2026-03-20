@@ -265,6 +265,9 @@ enum EntityCommands {
         /// Entity role: hero, minion, tower, structure
         #[arg(long)]
         role: Option<String>,
+        /// Spawn point for team (marks as respawn location)
+        #[arg(long)]
+        spawn_point: Option<u8>,
         /// Full JSON body (overrides other flags)
         #[arg(long)]
         json: Option<String>,
@@ -693,6 +696,9 @@ enum TemplateCommands {
         /// Entity role
         #[arg(long)]
         role: Option<String>,
+        /// Spawn point for team
+        #[arg(long)]
+        spawn_point: Option<u8>,
     },
     /// Spawn an entity from a template
     Spawn {
@@ -814,6 +820,7 @@ fn build_create_body(
     gold_bounty: Option<i32>,
     xp_bounty: Option<u32>,
     role: &Option<String>,
+    spawn_point: Option<u8>,
 ) -> Value {
     let mut body = serde_json::json!({});
     if let Some(m) = mesh {
@@ -891,6 +898,9 @@ fn build_create_body(
     }
     if let Some(r) = role {
         body["role"] = serde_json::json!(r);
+    }
+    if let Some(sp) = spawn_point {
+        body["spawn_point"] = serde_json::json!(sp);
     }
     body
 }
@@ -994,6 +1004,7 @@ fn main() {
                 gold_bounty,
                 xp_bounty,
                 role,
+                spawn_point,
                 json,
                 dry_run,
             } => {
@@ -1020,6 +1031,7 @@ fn main() {
                         gold_bounty,
                         xp_bounty,
                         &role,
+                        spawn_point,
                     )
                 };
                 if dry_run {
@@ -1255,6 +1267,7 @@ fn main() {
                 gold_bounty,
                 xp_bounty,
                 role,
+                spawn_point,
             } => {
                 let mut body = build_create_body(
                     &mesh,
@@ -1276,6 +1289,7 @@ fn main() {
                     gold_bounty,
                     xp_bounty,
                     &role,
+                    spawn_point,
                 );
                 body["name"] = serde_json::json!(name);
                 let resp = client
@@ -1619,7 +1633,7 @@ fn main() {
         } => {
             let body = build_create_body(
                 &None, &None, &position, &scale, &physics, &collider, None, None, false, None,
-                None, None, None, &None, &None, None, None, None, &None,
+                None, None, None, &None, &None, None, None, None, &None, None,
             );
             let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)

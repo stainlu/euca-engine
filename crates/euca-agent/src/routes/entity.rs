@@ -234,6 +234,9 @@ pub async fn spawn(
             };
             w.insert(entity, r);
         }
+        if let Some(sp_team) = req.spawn_point {
+            w.insert(entity, euca_gameplay::SpawnPoint { team: sp_team });
+        }
 
         SpawnResponse {
             entity_id: entity.index(),

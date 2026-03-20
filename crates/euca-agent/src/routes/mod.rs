@@ -354,6 +354,9 @@ pub struct SpawnRequest {
     /// Entity role: hero, minion, tower, structure
     #[serde(default)]
     pub role: Option<String>,
+    /// Spawn point for team (marks this entity as a respawn location)
+    #[serde(default)]
+    pub spawn_point: Option<u8>,
 }
 
 #[derive(Serialize)]

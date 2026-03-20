@@ -122,20 +122,18 @@ fn integrate_positions(world: &mut World, dt: f32) {
     use crate::raycast::{Ray, raycast_collider};
 
     // Collect movers: entity, old position, linear vel, angular vel, collider extent
+    // Collider is optional — entities without colliders still move, just skip CCD.
     let movers: Vec<(Entity, Vec3, Vec3, Vec3, f32)> = {
-        let query =
-            Query::<(Entity, &PhysicsBody, &Velocity, &LocalTransform, &Collider)>::new(world);
+        let query = Query::<(Entity, &PhysicsBody, &Velocity, &LocalTransform)>::new(world);
         query
             .iter()
-            .filter(|(_, body, _, _, _)| body.body_type != RigidBodyType::Static)
-            .map(|(e, _, vel, lt, col)| {
-                (
-                    e,
-                    lt.0.translation,
-                    vel.linear,
-                    vel.angular,
-                    shape_extent(&col.shape),
-                )
+            .filter(|(_, body, _, _)| body.body_type != RigidBodyType::Static)
+            .map(|(e, _, vel, lt)| {
+                let extent = world
+                    .get::<Collider>(e)
+                    .map(|c| shape_extent(&c.shape))
+                    .unwrap_or(0.0);
+                (e, lt.0.translation, vel.linear, vel.angular, extent)
             })
             .collect()
     };

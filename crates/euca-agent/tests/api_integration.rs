@@ -154,6 +154,7 @@ fn test_template_create_and_spawn() {
                 gold_bounty: None,
                 xp_bounty: None,
                 role: None,
+                spawn_point: None,
             },
         );
     });
