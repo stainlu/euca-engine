@@ -44,18 +44,24 @@ Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold 
 | System | Description |
 |--------|-------------|
 | **ECS** | Custom archetype storage, generational entities, parallel queries, change detection |
-| **Rendering** | Forward+ PBR, 3-cascade shadows, 4x MSAA, bloom, ACES tonemapping, sky dome |
-| **Physics** | AABB/sphere/capsule collision, raycasting, fixed-timestep, CCD |
+| **Rendering** | Forward+ PBR, 3-cascade shadows, MSAA/FXAA, bloom, SSAO, ACES tonemapping, LOD |
+| **Materials** | PBR textures (metallic/roughness/AO/emissive), alpha blend/cutout transparency |
+| **Physics** | AABB/sphere/capsule collision, collision layers/masks, mass, raycasting, CCD, scene queries |
 | **Combat** | AutoCombat (melee/stationary), targeting priority, projectiles |
 | **Economy** | Gold, XP, leveling (auto stat boost), bounties |
 | **Abilities** | Q/W/E/R slots, cooldowns, mana, effects (AoE damage, heal, speed boost) |
-| **AI** | Patrol, chase, flee + combat hybrid (fight when enemies appear, patrol when clear) |
+| **AI** | Behavior trees + blackboard, patrol/chase/flee, perception, combat hybrid |
 | **Rules** | Data-driven: "when death → score +1", "every 10s → spawn minions" |
-| **Audio** | Spatial audio via kira |
-| **Animation** | glTF skeletal animation |
-| **Particles** | CPU particle emitters |
-| **Navigation** | Grid navmesh, A* pathfinding, steering |
+| **Audio** | Spatial audio, bus mixing (SFX/Music/Voice), reverb zones, occlusion, priority |
+| **Animation** | Skeletal animation, blending, state machines, blend spaces, root motion, montages |
+| **Particles** | CPU particle emitters with gravity, color gradients |
+| **Terrain** | Heightmap, chunk-based LOD, 4-layer texture splatting, physics colliders, brush editing |
+| **Navigation** | Grid navmesh, A* pathfinding, steering behaviors |
 | **Networking** | UDP transport, interest culling, bandwidth budgeting |
+| **UI** | Runtime UI framework: anchored layout, flex, widgets, input routing, world-space UI |
+| **Scripting** | Embedded Lua (mlua), hot reload, sandboxing, ECS bridge, event handlers |
+| **Compute** | wgpu compute shaders, storage buffers, GPU frustum culling |
+| **Reflection** | Runtime field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` |
 | **Editor** | egui: hierarchy, inspector, play/pause, gizmos, undo/redo |
 | **Diagnostics** | `euca diagnose` health check, `euca events` real-time debugging |
 
@@ -75,6 +81,12 @@ AI Agents (Claude Code, scripts, RL agents)
 │  Abilities, Rules, Triggers, AI            │
 └────────────────────────────────────────────┘
     │
+┌─ Domain Systems ─────────────────────────┐
+│  Animation (euca-animation)              │
+│  AI (euca-ai)       Terrain (euca-terrain)│
+│  UI (euca-ui)       Script (euca-script) │
+└──────────────────────────────────────────┘
+    │
 ┌─ Engine Core ──────────────────────────────┐
 │  ECS (euca-ecs)     Render (euca-render)   │
 │  Scene (euca-scene) Physics (euca-physics) │
@@ -88,24 +100,29 @@ AI Agents (Claude Code, scripts, RL agents)
 └───────────────────────────────────────────┘
 ```
 
-## Crates (19)
+## Crates (24)
 
 | Crate | Purpose |
 |-------|---------|
 | `euca-ecs` | Archetype ECS: Entity, World, Query, Schedule, Events, change detection |
-| `euca-math` | Vec2/3/4, Quat, Mat4, Transform, AABB (zero external deps) |
-| `euca-reflect` | Runtime reflection via `#[derive(Reflect)]` |
+| `euca-math` | Vec2/3/4, Quat, Mat4, Transform, AABB — SIMD (SSE2/NEON) accelerated |
+| `euca-reflect` | Runtime reflection: field access, TypeRegistry, JSON serialization |
 | `euca-scene` | Transform hierarchy: LocalTransform, GlobalTransform, Parent/Children |
 | `euca-core` | App lifecycle, Plugin trait, Time resource |
-| `euca-render` | wgpu PBR: shadows, MSAA, bloom, tone mapping, instancing (16K) |
-| `euca-physics` | Collision (AABB/sphere/capsule), raycasting, fixed-timestep, CCD |
+| `euca-render` | wgpu PBR, shadows, MSAA/FXAA, SSAO, bloom, LOD, compute shaders, transparency |
+| `euca-physics` | Collision layers/masks, mass, raycasting, scene queries, CCD, joints |
 | `euca-gameplay` | Health, damage, teams, combat, economy, leveling, abilities, rules, AI |
-| `euca-audio` | Spatial audio (kira): AudioSource, AudioListener |
+| `euca-audio` | Spatial audio (kira): bus mixing, reverb zones, occlusion, priority |
 | `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload |
+| `euca-animation` | Animation blending, state machines, blend spaces, root motion, montages |
 | `euca-particle` | CPU particle emitters with gravity, color gradients |
+| `euca-terrain` | Heightmap terrain, chunk LOD, texture splatting, physics, brush editing |
 | `euca-nav` | Grid navmesh, A* pathfinding, steering behaviors |
 | `euca-input` | InputState, ActionMap, gamepad, input contexts |
 | `euca-net` | UDP transport, interest culling, bandwidth budgeting, tick rate |
+| `euca-ai` | Behavior trees, blackboard, decorators, composites, action/condition nodes |
+| `euca-ui` | Runtime UI: anchored layout, flex, widgets, input routing, world-space UI |
+| `euca-script` | Lua scripting (mlua): hot reload, sandboxing, ECS bridge, event handlers |
 | `euca-agent` | HTTP API (axum), 50+ endpoints, nit auth, HUD canvas |
 | `euca-editor` | egui editor: viewport, panels, gizmos, undo, scene save/load |
 | `euca-game` | Standalone game runner |
