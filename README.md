@@ -1,110 +1,113 @@
 # Euca Engine
 
-An ECS-first, agent-native game engine built in Rust.
+An ECS-first, agent-native game engine in Rust. AI agents build games via CLI commands.
 
-## Core Pillars
-
-1. **ECS Architecture** — Custom archetype-based Entity-Component-System, optimized for large-scale simulation
-2. **Agent-Native** — AI agents control the engine via the `euca` CLI, backed by HTTP REST on port 3917. Authentication via [nit](https://github.com/newtype-ai/nit) Ed25519 identity. See [SKILL.md](SKILL.md) for the full interface.
-3. **Rust** — Ownership for safety, proc macros for reflection, zero-cost abstractions
-
-## Quick Start
+## 30-Second Demo
 
 ```bash
-# Run the physics demo (PBR cubes falling under gravity)
-cargo run -p euca-render --example physics_demo
+git clone https://github.com/stainlu/euca-engine.git
+cd euca-engine
+cargo build -p euca-editor --example editor -p euca-cli
 
-# Run the editor
+# Terminal 1: start the editor
 cargo run -p euca-editor --example editor
 
-# Run the headless server (for AI agents)
-cargo run -p euca-agent --example headless_server
-
-# Use the CLI tool (while editor is running — server starts on port 3917)
-cargo run -p euca-cli -- status
-cargo run -p euca-cli -- observe
-cargo run -p euca-cli -- modify 1 --transform 3,2,0
-cargo run -p euca-cli -- screenshot
-cargo run -p euca-cli -- play
-
-# Load a glTF model
-cargo run -p euca-asset --example gltf_viewer -- path/to/model.glb
-
-# Run all tests
-cargo test --workspace
+# Terminal 2: run the MOBA demo
+./scripts/moba.sh
 ```
 
-## Crate Map
+Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold and XP accumulate. All built from CLI commands — no game code.
 
-| Crate | Purpose |
-|-------|---------|
-| `euca-ecs` | Custom archetype-based ECS (Entity, Component, World, Query, Schedule, Change Detection, Snapshots, par_for_each) |
-| `euca-math` | Custom SIMD-ready math — Vec2/3/4, Quat, Mat4, Transform, AABB (zero external deps) |
-| `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info |
-| `euca-scene` | Transform hierarchy (LocalTransform, GlobalTransform, Parent/Children BFS propagation) |
-| `euca-core` | App lifecycle, Plugin trait, Time resource, winit event loop |
-| `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures (albedo/UV/procedural), shadow mapping (2048px, PCF), procedural sky, GPU instancing (16K instances), HDR post-processing (bloom, ACES tone mapping, vignette) |
-| `euca-physics` | Custom AABB/sphere collision, raycasting, gravity (zero external deps) |
-| `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) |
-| `euca-input` | InputState, ActionMap, InputSnapshot (humans + AI agents) |
-| `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, state replication protocol |
-| `euca-agent` | HTTP API server + nit auth for AI agents (axum + tokio + ed25519-dalek) |
-| `euca-editor` | egui editor: 3D viewport, hierarchy panel, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load (JSON), entity creation (+Empty/Cube/Sphere), grid overlay, keyboard shortcuts (Delete/F/Ctrl+Z/Ctrl+Y) |
-| `euca-gameplay` | ECS-native game logic: Health, Damage, Teams, Triggers, Projectiles, AI, Rules, GameState, DataTables (39 tests) |
-| `euca-cli` | CLI for AI agents: entity, sim, camera, game, trigger, projectile, ai, rule, ui, screenshot, scene, auth |
+## What It Can Do
 
-## Agent Interface
-
-The engine runs as a simulation server. AI agents connect via HTTP or CLI:
-
-```bash
-# Start headless server
-cargo run -p euca-agent --example headless_server
-
-# From another terminal (or from Claude Code / any AI agent):
-curl -X POST http://localhost:8080/observe    # Get world state
-curl -X POST http://localhost:8080/step -d '{"ticks": 10}'  # Advance simulation
-curl -X POST http://localhost:8080/spawn -d '{"position": [0,5,0]}'  # Create entity
-curl http://localhost:8080/schema              # List components & actions
-```
+| System | Description |
+|--------|-------------|
+| **ECS** | Custom archetype storage, generational entities, parallel queries, change detection |
+| **Rendering** | Forward+ PBR, 3-cascade shadows, 4x MSAA, bloom, ACES tonemapping, sky dome |
+| **Physics** | AABB/sphere/capsule collision, raycasting, fixed-timestep, CCD |
+| **Combat** | AutoCombat (melee/stationary), targeting priority, projectiles |
+| **Economy** | Gold, XP, leveling (auto stat boost), bounties |
+| **Abilities** | Q/W/E/R slots, cooldowns, mana, effects (AoE damage, heal, speed boost) |
+| **AI** | Patrol, chase, flee + combat hybrid (fight when enemies appear, patrol when clear) |
+| **Rules** | Data-driven: "when death → score +1", "every 10s → spawn minions" |
+| **Audio** | Spatial audio via kira |
+| **Animation** | glTF skeletal animation |
+| **Particles** | CPU particle emitters |
+| **Navigation** | Grid navmesh, A* pathfinding, steering |
+| **Networking** | UDP transport, interest culling, bandwidth budgeting |
+| **Editor** | egui: hierarchy, inspector, play/pause, gizmos, undo/redo |
+| **Diagnostics** | `euca diagnose` health check, `euca events` real-time debugging |
 
 ## Architecture
 
 ```
-External AI Agents (Claude Code, RL agents, etc.)
-        | CLI / HTTP / WebSocket
-        v
-+-- Agent Interface (euca-agent) ------+
-|  observe / act / step / save / reset |
-+--------------------------------------+
-        |
-+-- Engine Core ----+
-| ECS Runtime       |  Render (wgpu)    Physics (custom)
-| World > Archetype |  PBR + Forward+   AABB + Sphere
-| Query + Schedule  |  Material + Light  Gravity + Raycast
-+-------------------+
-        |
-+-- Editor (egui) --+
-| Hierarchy panel    |
-| Inspector panel    |
-| Play/Pause/Step    |
-+--------------------+
+AI Agents (Claude Code, scripts, RL agents)
+    │ CLI (euca) / HTTP REST (port 3917)
+    ▼
+┌─ Agent Layer (euca-agent) ─────────────────┐
+│  50+ endpoints: spawn, observe, combat,    │
+│  rules, economy, abilities, diagnose       │
+└────────────────────────────────────────────┘
+    │
+┌─ Gameplay (euca-gameplay) ─────────────────┐
+│  Health, Teams, Combat, Economy, Leveling,  │
+│  Abilities, Rules, Triggers, AI            │
+└────────────────────────────────────────────┘
+    │
+┌─ Engine Core ──────────────────────────────┐
+│  ECS (euca-ecs)     Render (euca-render)   │
+│  Scene (euca-scene) Physics (euca-physics) │
+│  Audio (euca-audio) Particles (euca-particle)
+│  Nav (euca-nav)     Asset (euca-asset)     │
+└────────────────────────────────────────────┘
+    │
+┌─ Editor (euca-editor) ────────────────────┐
+│  3D viewport, hierarchy, inspector,       │
+│  play/pause, gizmos, undo/redo            │
+└───────────────────────────────────────────┘
 ```
 
-## Published Crates
+## Crates (19)
 
-The following crates are available on [crates.io](https://crates.io):
+| Crate | Purpose |
+|-------|---------|
+| `euca-ecs` | Archetype ECS: Entity, World, Query, Schedule, Events, change detection |
+| `euca-math` | Vec2/3/4, Quat, Mat4, Transform, AABB (zero external deps) |
+| `euca-reflect` | Runtime reflection via `#[derive(Reflect)]` |
+| `euca-scene` | Transform hierarchy: LocalTransform, GlobalTransform, Parent/Children |
+| `euca-core` | App lifecycle, Plugin trait, Time resource |
+| `euca-render` | wgpu PBR: shadows, MSAA, bloom, tone mapping, instancing (16K) |
+| `euca-physics` | Collision (AABB/sphere/capsule), raycasting, fixed-timestep, CCD |
+| `euca-gameplay` | Health, damage, teams, combat, economy, leveling, abilities, rules, AI |
+| `euca-audio` | Spatial audio (kira): AudioSource, AudioListener |
+| `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload |
+| `euca-particle` | CPU particle emitters with gravity, color gradients |
+| `euca-nav` | Grid navmesh, A* pathfinding, steering behaviors |
+| `euca-input` | InputState, ActionMap, gamepad, input contexts |
+| `euca-net` | UDP transport, interest culling, bandwidth budgeting, tick rate |
+| `euca-agent` | HTTP API (axum), 50+ endpoints, nit auth, HUD canvas |
+| `euca-editor` | egui editor: viewport, panels, gizmos, undo, scene save/load |
+| `euca-game` | Standalone game runner |
+| `euca-cli` | CLI tool: 20+ command groups |
 
-| Crate | Description |
-|-------|-------------|
-| [`euca-math`](https://crates.io/crates/euca-math) | SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) |
-| [`euca-ecs`](https://crates.io/crates/euca-ecs) | Archetype-based ECS with Query, Schedule, Change Detection, Snapshots |
+## CLI Reference
+
+See [SKILL.md](SKILL.md) for the complete CLI reference.
 
 ```bash
-cargo add euca-math
-cargo add euca-ecs
+euca status                    # Engine info
+euca entity create --mesh cube --position 0,2,0 --health 100 --team 1 --combat
+euca sim play                  # Start simulation
+euca diagnose                  # Check for broken entities
+euca screenshot                # Capture viewport
 ```
+
+## Requirements
+
+- Rust 1.89+ (Edition 2024)
+- macOS or Linux (wgpu for rendering)
+- `libasound2-dev` on Linux (for audio)
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT
