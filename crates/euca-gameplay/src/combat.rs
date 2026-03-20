@@ -403,75 +403,306 @@ mod tests {
     use super::*;
     use crate::health::Health;
     use euca_math::Transform;
+    use euca_physics::Velocity;
+
+    // ── Helpers ──
+
+    fn setup_world() -> World {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+        world
+    }
+
+    fn spawn_fighter(
+        world: &mut World,
+        pos: Vec3,
+        team: u8,
+        role: EntityRole,
+    ) -> Entity {
+        let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
+        world.insert(e, Health::new(500.0));
+        world.insert(e, Team(team));
+        world.insert(e, role);
+        world.insert(e, AutoCombat::new());
+        world.insert(e, Velocity::default());
+        e
+    }
+
+    // ── Projectile tests ──
 
     #[test]
     fn projectile_moves_forward() {
-        let mut world = World::new();
-        world.insert_resource(Events::default());
-
+        let mut world = setup_world();
         let owner = world.spawn(Health::new(100.0));
-
         let proj = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         world.insert(
             proj,
             Projectile::new(Vec3::new(1.0, 0.0, 0.0), 10.0, 25.0, 5.0, owner),
         );
-
         projectile_system(&mut world, 1.0);
-
         let pos = world.get::<LocalTransform>(proj).unwrap().0.translation;
         assert!((pos.x - 10.0).abs() < 0.01);
     }
 
     #[test]
     fn projectile_despawns_on_lifetime() {
-        let mut world = World::new();
-        world.insert_resource(Events::default());
-
+        let mut world = setup_world();
         let owner = world.spawn(Health::new(100.0));
-
         let proj = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         world.insert(
             proj,
             Projectile::new(Vec3::new(1.0, 0.0, 0.0), 10.0, 25.0, 0.5, owner),
         );
-
-        projectile_system(&mut world, 1.0); // elapsed > lifetime
-
+        projectile_system(&mut world, 1.0);
         assert!(!world.is_alive(proj));
     }
 
     #[test]
     fn projectile_damages_on_hit() {
-        let mut world = World::new();
-        world.insert_resource(Events::default());
-
+        let mut world = setup_world();
         let owner = world.spawn(Health::new(100.0));
         world.insert(
             owner,
             LocalTransform(Transform::from_translation(Vec3::new(-5.0, 0.0, 0.0))),
         );
-
         let target = world.spawn(Health::new(100.0));
         world.insert(
             target,
             LocalTransform(Transform::from_translation(Vec3::new(0.3, 0.0, 0.0))),
         );
-
         let proj = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
         world.insert(
             proj,
             Projectile::new(Vec3::new(1.0, 0.0, 0.0), 10.0, 50.0, 5.0, owner),
         );
-
-        // Move projectile close to target
         projectile_system(&mut world, 0.01);
-
-        // Check DamageEvent was emitted
         let events = world.resource::<Events>().unwrap();
         let damage_events: Vec<_> = events.read::<DamageEvent>().collect();
         assert_eq!(damage_events.len(), 1);
         assert_eq!(damage_events[0].target.index(), target.index());
         assert_eq!(damage_events[0].amount, 50.0);
+    }
+
+    // ── Targeting priority tests ──
+
+    #[test]
+    fn hero_targets_hero_over_minion() {
+        let mut world = setup_world();
+        // Team 1 hero at origin
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        // Team 2 minion nearby
+        let _minion = spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Minion);
+        // Team 2 hero slightly further
+        let enemy_hero =
+            spawn_fighter(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        auto_combat_system(&mut world, 0.016);
+
+        let target = world.get::<CurrentTarget>(hero).expect("should have target");
+        assert_eq!(
+            target.0.index(),
+            enemy_hero.index(),
+            "Hero should target enemy hero over minion"
+        );
+    }
+
+    #[test]
+    fn minion_targets_minion_over_hero() {
+        let mut world = setup_world();
+        // Team 1 minion at origin
+        let minion = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Minion);
+        // Team 2 hero nearby
+        let _enemy_hero =
+            spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
+        // Team 2 minion slightly further
+        let enemy_minion =
+            spawn_fighter(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Minion);
+
+        auto_combat_system(&mut world, 0.016);
+
+        let target = world.get::<CurrentTarget>(minion).expect("should have target");
+        assert_eq!(
+            target.0.index(),
+            enemy_minion.index(),
+            "Minion should target enemy minion over hero"
+        );
+    }
+
+    #[test]
+    fn tower_targets_minion_over_hero() {
+        let mut world = setup_world();
+        let tower_pos = Vec3::new(0.0, 0.0, 0.0);
+        let tower = world.spawn(LocalTransform(Transform::from_translation(tower_pos)));
+        world.insert(tower, Health::new(800.0));
+        world.insert(tower, Team(1));
+        world.insert(tower, EntityRole::Tower);
+        world.insert(tower, AutoCombat::stationary(40.0, 5.0, 1.5));
+        world.insert(tower, Velocity::default());
+
+        let _enemy_hero =
+            spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
+        let enemy_minion =
+            spawn_fighter(&mut world, Vec3::new(4.0, 0.0, 0.0), 2, EntityRole::Minion);
+
+        auto_combat_system(&mut world, 0.016);
+
+        let target = world.get::<CurrentTarget>(tower).expect("tower should have target");
+        assert_eq!(
+            target.0.index(),
+            enemy_minion.index(),
+            "Tower should target minion over hero"
+        );
+    }
+
+    // ── CurrentTarget persistence tests ──
+
+    #[test]
+    fn current_target_persists_across_ticks() {
+        let mut world = setup_world();
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        let enemy = spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        // Tick 1: acquire target
+        auto_combat_system(&mut world, 0.016);
+        let target1 = world.get::<CurrentTarget>(hero).unwrap().0.index();
+
+        // Tick 2: target should persist (enemy still alive and in range)
+        auto_combat_system(&mut world, 0.016);
+        let target2 = world.get::<CurrentTarget>(hero).unwrap().0.index();
+
+        assert_eq!(target1, target2, "Target should persist across ticks");
+        assert_eq!(target1, enemy.index());
+    }
+
+    #[test]
+    fn current_target_cleared_on_death() {
+        let mut world = setup_world();
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        let enemy = spawn_fighter(&mut world, Vec3::new(1.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        // Acquire target
+        auto_combat_system(&mut world, 0.016);
+        assert!(world.get::<CurrentTarget>(hero).is_some());
+
+        // Kill enemy
+        world.get_mut::<Health>(enemy).unwrap().current = 0.0;
+
+        // Target should be cleared
+        auto_combat_system(&mut world, 0.016);
+        assert!(
+            world.get::<CurrentTarget>(hero).is_none(),
+            "Target should be cleared when enemy dies"
+        );
+    }
+
+    #[test]
+    fn current_target_cleared_when_out_of_range() {
+        let mut world = setup_world();
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        let enemy = spawn_fighter(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        // Acquire target (within default detect_range=20)
+        auto_combat_system(&mut world, 0.016);
+        assert!(world.get::<CurrentTarget>(hero).is_some());
+
+        // Move enemy far away (beyond detect_range)
+        world.get_mut::<LocalTransform>(enemy).unwrap().0.translation =
+            Vec3::new(100.0, 0.0, 0.0);
+
+        // Target should be cleared
+        auto_combat_system(&mut world, 0.016);
+        assert!(
+            world.get::<CurrentTarget>(hero).is_none(),
+            "Target should be cleared when enemy leaves detect range"
+        );
+    }
+
+    // ── MarchDirection tests ──
+
+    #[test]
+    fn march_direction_when_no_target() {
+        let mut world = setup_world();
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        world.insert(hero, MarchDirection(Vec3::new(1.0, 0.0, 0.0)));
+        // No enemies — should march
+
+        auto_combat_system(&mut world, 0.016);
+
+        let vel = world.get::<Velocity>(hero).unwrap();
+        assert!(
+            vel.linear.x > 0.0,
+            "Should march in +X direction when no target"
+        );
+    }
+
+    #[test]
+    fn no_march_when_fighting() {
+        let mut world = setup_world();
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        world.insert(hero, MarchDirection(Vec3::new(1.0, 0.0, 0.0)));
+        // Enemy in attack range
+        let _enemy = spawn_fighter(&mut world, Vec3::new(1.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        auto_combat_system(&mut world, 0.016);
+
+        let vel = world.get::<Velocity>(hero).unwrap();
+        assert!(
+            vel.linear.x.abs() < 0.01,
+            "Should stop marching when fighting"
+        );
+    }
+
+    #[test]
+    fn no_march_direction_means_stop() {
+        let mut world = setup_world();
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        // No MarchDirection, no enemies
+
+        auto_combat_system(&mut world, 0.016);
+
+        let vel = world.get::<Velocity>(hero).unwrap();
+        assert!(
+            vel.linear.x.abs() < 0.01 && vel.linear.z.abs() < 0.01,
+            "Should stop when no target and no march direction"
+        );
+    }
+
+    // ── Priority function tests ──
+
+    #[test]
+    fn hero_priority_order() {
+        assert_eq!(EntityRole::Hero.target_priority_for(&EntityRole::Hero), 0);
+        assert_eq!(EntityRole::Minion.target_priority_for(&EntityRole::Hero), 1);
+        assert_eq!(EntityRole::Tower.target_priority_for(&EntityRole::Hero), 2);
+        assert_eq!(
+            EntityRole::Structure.target_priority_for(&EntityRole::Hero),
+            3
+        );
+    }
+
+    #[test]
+    fn minion_priority_order() {
+        assert_eq!(
+            EntityRole::Minion.target_priority_for(&EntityRole::Minion),
+            0
+        );
+        assert_eq!(EntityRole::Hero.target_priority_for(&EntityRole::Minion), 1);
+        assert_eq!(
+            EntityRole::Tower.target_priority_for(&EntityRole::Minion),
+            2
+        );
+        assert_eq!(
+            EntityRole::Structure.target_priority_for(&EntityRole::Minion),
+            3
+        );
+    }
+
+    #[test]
+    fn tower_priority_order() {
+        assert_eq!(
+            EntityRole::Minion.target_priority_for(&EntityRole::Tower),
+            0
+        );
+        assert_eq!(EntityRole::Hero.target_priority_for(&EntityRole::Tower), 1);
     }
 }
