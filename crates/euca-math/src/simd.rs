@@ -357,5 +357,4 @@ mod arch {
     }
 }
 
-#[allow(non_camel_case_types)]
 pub use arch::f32x4;

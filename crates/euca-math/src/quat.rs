@@ -1,4 +1,4 @@
-use crate::{cfg_scalar, cfg_simd, Vec3};
+use crate::{Vec3, cfg_scalar, cfg_simd};
 use serde::{Deserialize, Serialize};
 use std::ops::Mul;
 
