@@ -18,6 +18,7 @@ members = [
     "crates/euca-gameplay",
     "crates/euca-audio",
     "crates/euca-particle",
+    "crates/euca-animation",
     "crates/euca-nav",
     "tools/euca-cli",
 ]
