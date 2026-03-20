@@ -258,9 +258,16 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
                         source: Some(entity),
                     });
                     cooldown_resets.push(entity);
+                    // Attack lunge: brief burst toward target for visual feedback
+                    let dir = (_target_pos - pos).normalize();
+                    velocity_updates.push((
+                        entity,
+                        Vec3::new(dir.x * combat.speed * 2.0, 0.0, dir.z * combat.speed * 2.0),
+                    ));
+                } else {
+                    // Waiting for cooldown — hold position
+                    velocity_updates.push((entity, Vec3::ZERO));
                 }
-                // Stop moving when in range
-                velocity_updates.push((entity, Vec3::ZERO));
             } else if combat.attack_style == AttackStyle::Stationary {
                 // Stationary: enemy in detect range but not attack range — do nothing
                 velocity_updates.push((entity, Vec3::ZERO));
