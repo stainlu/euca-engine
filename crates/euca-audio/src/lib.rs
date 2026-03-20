@@ -61,7 +61,12 @@ pub enum AudioBus {
 
 impl AudioBus {
     /// All bus variants in declaration order (excluding Master).
-    const SUB_BUSES: [AudioBus; 4] = [AudioBus::Music, AudioBus::Sfx, AudioBus::Voice, AudioBus::Ui];
+    const SUB_BUSES: [AudioBus; 4] = [
+        AudioBus::Music,
+        AudioBus::Sfx,
+        AudioBus::Voice,
+        AudioBus::Ui,
+    ];
 }
 
 /// Per-bus volume levels (world resource).
@@ -215,10 +220,7 @@ impl AudioEngine {
 
     /// Return a handle to the pool for potential reuse.
     pub fn return_to_pool(&mut self, clip: AudioClipHandle, handle: StaticSoundHandle) {
-        self.handle_pool
-            .entry(clip.0)
-            .or_default()
-            .push(handle);
+        self.handle_pool.entry(clip.0).or_default().push(handle);
     }
 }
 
@@ -388,16 +390,10 @@ impl ReverbZone {
 ///
 /// This decouples audio from physics — any occlusion strategy (raycasts,
 /// portal-based, baked) can drive the flag.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AudioOcclusion {
     /// Whether the path from this source to the listener is currently blocked.
     pub occluded: bool,
-}
-
-impl Default for AudioOcclusion {
-    fn default() -> Self {
-        Self { occluded: false }
-    }
 }
 
 // ── Internal helpers ──
@@ -465,7 +461,10 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
         let ui = bus_settings.volume(AudioBus::Ui);
 
         if let Some(engine) = world.resource_mut::<AudioEngine>() {
-            engine.manager.main_track().set_volume(master, Tween::default());
+            engine
+                .manager
+                .main_track()
+                .set_volume(master, Tween::default());
             let bus_vols = [
                 (AudioBus::Music, music),
                 (AudioBus::Sfx, sfx),
@@ -540,10 +539,7 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
             .enumerate()
             .filter(|(_, s)| s.has_handle && s.playing)
             .map(|(i, s)| {
-                let dist = s
-                    .pos
-                    .map(|p| (p - listener_pos).length())
-                    .unwrap_or(0.0);
+                let dist = s.pos.map(|p| (p - listener_pos).length()).unwrap_or(0.0);
                 (i, s.priority, dist)
             })
             .collect();
@@ -586,10 +582,10 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
                 handle.map(|h| (clip, h))
             });
             // Return handle to pool (separate borrow scope).
-            if let Some((clip, handle)) = taken {
-                if let Some(engine) = world.resource_mut::<AudioEngine>() {
-                    engine.return_to_pool(clip, handle);
-                }
+            if let Some((clip, handle)) = taken
+                && let Some(engine) = world.resource_mut::<AudioEngine>()
+            {
+                engine.return_to_pool(clip, handle);
             }
             continue;
         }
@@ -639,11 +635,7 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
             };
 
             // Occlusion: binary attenuate if the AudioOcclusion component says occluded.
-            let occlusion = if s.occluded {
-                occlusion_factor
-            } else {
-                1.0
-            };
+            let occlusion = if s.occluded { occlusion_factor } else { 1.0 };
 
             // Bus volume is already applied at the kira track level via sync_bus_volumes.
             let final_volume = s.volume * attenuation * occlusion * fade_factor;
@@ -662,10 +654,10 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
         query
             .iter()
             .filter_map(|(e, src)| {
-                if let Some(ref h) = src.handle {
-                    if h.state() == PlaybackState::Stopped {
-                        return Some((e, src.clip));
-                    }
+                if let Some(ref h) = src.handle
+                    && h.state() == PlaybackState::Stopped
+                {
+                    return Some((e, src.clip));
                 }
                 None
             })
@@ -678,10 +670,10 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
             src.fade_elapsed = 0.0;
             handle
         });
-        if let Some(handle) = taken {
-            if let Some(engine) = world.resource_mut::<AudioEngine>() {
-                engine.return_to_pool(clip, handle);
-            }
+        if let Some(handle) = taken
+            && let Some(engine) = world.resource_mut::<AudioEngine>()
+        {
+            engine.return_to_pool(clip, handle);
         }
     }
 }
@@ -850,7 +842,7 @@ mod tests {
     fn reverb_params_two_zones_blended() {
         // Two zones centered at different positions, listener at origin.
         let zones = vec![
-            (Vec3::ZERO, 10.0, 0.4, 0.8, 0.1),         // weight = 1.0 (dist=0)
+            (Vec3::ZERO, 10.0, 0.4, 0.8, 0.1), // weight = 1.0 (dist=0)
             (Vec3::new(5.0, 0.0, 0.0), 10.0, 0.8, 0.6, 0.5), // weight = 0.5 (dist=5)
         ];
         let (mix, feedback, damping) = compute_reverb_params(&zones, Vec3::ZERO);
