@@ -11,3 +11,8 @@ categories = ["game-development", "mathematics"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+euca-reflect = { path = "../euca-reflect", optional = true }
+
+[features]
+default = []
+reflect = ["dep:euca-reflect"]
