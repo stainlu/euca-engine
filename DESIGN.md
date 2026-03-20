@@ -58,26 +58,33 @@ External AI Agents (Claude Code, OpenClaw, etc.)
 | `euca-gameplay` | ECS-native game logic library: Health, Damage, Teams, Triggers, Projectiles, AI, Rules, GameState, DataTables | Done | 39 |
 | `euca-game` | Arena game: health, projectiles, shooting, elimination | Done | 4 |
 | `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) | Done | 0 |
+| `euca-animation` | Animation blending, state machines, blend spaces, root motion, montages, events | Done | 50 |
+| `euca-ai` | Behavior trees, blackboard, decorators, composites, action/condition nodes | Done | 23 |
+| `euca-ui` | Runtime UI: anchored layout, flex, widgets, input routing, world-space UI | Done | 15+ |
+| `euca-terrain` | Heightmap terrain, chunk LOD, texture splatting, physics colliders, brush editing | Done | 30 |
+| `euca-script` | Lua scripting (mlua): hot reload, sandboxing, ECS bridge, event handlers | Done | 10+ |
 
 ## Dependency DAG
 
 ```
 euca-reflect-derive (proc-macro, no deps)
        │
-euca-reflect (re-exports derive)
+euca-reflect (re-exports derive, TypeRegistry, JSON serialization)
        │
-euca-math (serde — zero external math deps)
+euca-math (serde, SIMD SSE2/NEON — zero external math deps)
        │
 euca-ecs (euca-reflect, euca-math, serde)
        │
        ├── euca-scene (euca-ecs, euca-math)
-       │
        ├── euca-core (euca-ecs, euca-math, winit)
-       │
-       ├── euca-render (euca-ecs, euca-math, euca-scene, wgpu, winit)
-       │
+       ├── euca-render (euca-ecs, euca-math, euca-scene, wgpu — SSAO, LOD, compute, materials)
+       ├── euca-physics (euca-ecs, euca-math — collision layers, mass, scene queries)
+       ├── euca-animation (euca-ecs, euca-math, euca-scene — blending, state machines)
+       ├── euca-ai (euca-ecs, euca-math — behavior trees, blackboard)
+       ├── euca-terrain (euca-ecs, euca-math, euca-physics — heightmap, LOD, splatting)
+       ├── euca-ui (euca-ecs, euca-math, euca-scene, euca-input — layout, widgets)
+       ├── euca-script (euca-ecs, euca-math, mlua — Lua scripting, hot reload)
        ├── euca-agent (euca-ecs, euca-scene, tokio, axum, serde)
-       │
        └── euca-editor (euca-ecs, euca-render, euca-scene, euca-agent, egui)
 ```
 
