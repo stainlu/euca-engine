@@ -441,7 +441,7 @@ pub fn dispatch_frustum_culling(
         .pipeline("frustum_cull")
         .expect("frustum_cull pipeline not set up");
 
-    let workgroup_count = (entity_count + 63) / 64;
+    let workgroup_count = entity_count.div_ceil(64);
     dispatch_compute(encoder, pipeline, &[bind_group], [workgroup_count, 1, 1]);
 }
 
@@ -507,11 +507,11 @@ mod tests {
     #[test]
     fn workgroup_count_rounding() {
         // Verify the ceil(entity_count / 64) formula.
-        assert_eq!((0 + 63) / 64, 0);
-        assert_eq!((1 + 63) / 64, 1);
-        assert_eq!((64 + 63) / 64, 1);
-        assert_eq!((65 + 63) / 64, 2);
-        assert_eq!((128 + 63) / 64, 2);
-        assert_eq!((129 + 63) / 64, 3);
+        assert_eq!(0_u32.div_ceil(64), 0);
+        assert_eq!(1_u32.div_ceil(64), 1);
+        assert_eq!(64_u32.div_ceil(64), 1);
+        assert_eq!(65_u32.div_ceil(64), 2);
+        assert_eq!(128_u32.div_ceil(64), 2);
+        assert_eq!(129_u32.div_ceil(64), 3);
     }
 }
