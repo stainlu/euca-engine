@@ -1,0 +1,15 @@
+[package]
+name = "euca-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Behavior trees and blackboard for NPC AI — tick-driven, ECS-native"
+keywords = ["ai", "behavior-tree", "blackboard", "gamedev", "npc"]
+categories = ["game-development"]
+
+[dependencies]
+euca-ecs = { version = "0.1", path = "../euca-ecs" }
+euca-math = { version = "0.1", path = "../euca-math" }
+log = "0.4"
