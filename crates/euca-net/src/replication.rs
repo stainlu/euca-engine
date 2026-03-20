@@ -745,10 +745,16 @@ mod tests {
     use euca_ecs::World;
 
     #[derive(Clone, Debug, Default, PartialEq)]
-    struct Position { x: f32, y: f32, z: f32 }
+    struct Position {
+        x: f32,
+        y: f32,
+        z: f32,
+    }
 
     impl ReplicatedComponent for Position {
-        fn type_name(&self) -> &'static str { "Position" }
+        fn type_name(&self) -> &'static str {
+            "Position"
+        }
         fn net_serialize(&self) -> Vec<u8> {
             let mut b = Vec::with_capacity(12);
             b.extend_from_slice(&self.x.to_le_bytes());
@@ -757,7 +763,9 @@ mod tests {
             b
         }
         fn net_deserialize(&mut self, d: &[u8]) -> bool {
-            if d.len() < 12 { return false; }
+            if d.len() < 12 {
+                return false;
+            }
             self.x = f32::from_le_bytes([d[0], d[1], d[2], d[3]]);
             self.y = f32::from_le_bytes([d[4], d[5], d[6], d[7]]);
             self.z = f32::from_le_bytes([d[8], d[9], d[10], d[11]]);
@@ -766,10 +774,15 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Default, PartialEq)]
-    struct Health { current: f32, max: f32 }
+    struct Health {
+        current: f32,
+        max: f32,
+    }
 
     impl ReplicatedComponent for Health {
-        fn type_name(&self) -> &'static str { "Health" }
+        fn type_name(&self) -> &'static str {
+            "Health"
+        }
         fn net_serialize(&self) -> Vec<u8> {
             let mut b = Vec::with_capacity(8);
             b.extend_from_slice(&self.current.to_le_bytes());
@@ -777,7 +790,9 @@ mod tests {
             b
         }
         fn net_deserialize(&mut self, d: &[u8]) -> bool {
-            if d.len() < 8 { return false; }
+            if d.len() < 8 {
+                return false;
+            }
             self.current = f32::from_le_bytes([d[0], d[1], d[2], d[3]]);
             self.max = f32::from_le_bytes([d[4], d[5], d[6], d[7]]);
             true
@@ -786,7 +801,11 @@ mod tests {
 
     #[test]
     fn replicated_component_serialize_roundtrip() {
-        let pos = Position { x: 1.5, y: -3.0, z: 42.0 };
+        let pos = Position {
+            x: 1.5,
+            y: -3.0,
+            z: 42.0,
+        };
         let bytes = pos.net_serialize();
         assert_eq!(bytes.len(), 12);
         let mut decoded = Position::default();
@@ -821,16 +840,28 @@ mod tests {
     #[test]
     fn rpc_events_carry_entity() {
         let entity = Entity::from_raw(42, 1);
-        let rpc = ServerRpc { name: "cast".to_string(), entity, payload: vec![1, 2] };
+        let rpc = ServerRpc {
+            name: "cast".to_string(),
+            entity,
+            payload: vec![1, 2],
+        };
         assert_eq!(rpc.entity, entity);
-        let crpc = ClientRpc { name: "fx".to_string(), entity, payload: vec![3] };
+        let crpc = ClientRpc {
+            name: "fx".to_string(),
+            entity,
+            payload: vec![3],
+        };
         assert_eq!(crpc.entity, entity);
     }
 
     #[test]
     fn rpc_serialize_roundtrip() {
         let entity = Entity::from_raw(7, 0);
-        let rpc = ServerRpc { name: "use_item".to_string(), entity, payload: vec![1, 2, 3] };
+        let rpc = ServerRpc {
+            name: "use_item".to_string(),
+            entity,
+            payload: vec![1, 2, 3],
+        };
         let bytes = bincode::serialize(&rpc).unwrap();
         let decoded: ServerRpc = bincode::deserialize(&bytes).unwrap();
         assert_eq!(decoded.name, "use_item");
@@ -841,7 +872,10 @@ mod tests {
     fn pending_replication_drain() {
         let entity = Entity::from_raw(1, 0);
         let mut pending = PendingReplication::new();
-        pending.updates.push(ReplicationUpdate { entity, fields: vec![("Pos".into(), vec![0; 12])] });
+        pending.updates.push(ReplicationUpdate {
+            entity,
+            fields: vec![("Pos".into(), vec![0; 12])],
+        });
         let drained = pending.drain();
         assert_eq!(drained.len(), 1);
         assert!(pending.updates.is_empty());
@@ -854,16 +888,40 @@ mod tests {
         registry.register::<Position>("Position");
         world.insert_resource(registry);
         world.insert_resource(PendingReplication::new());
-        let entity = world.spawn(Position { x: 1.0, y: 2.0, z: 3.0 });
+        let entity = world.spawn(Position {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        });
         world.insert(entity, Replicated);
         world.insert(entity, ReplicationState::new());
         replication_collect_system(&mut world);
-        assert_eq!(world.resource::<PendingReplication>().unwrap().updates.len(), 1);
+        assert_eq!(
+            world
+                .resource::<PendingReplication>()
+                .unwrap()
+                .updates
+                .len(),
+            1
+        );
         replication_collect_system(&mut world);
-        assert!(world.resource::<PendingReplication>().unwrap().updates.is_empty());
+        assert!(
+            world
+                .resource::<PendingReplication>()
+                .unwrap()
+                .updates
+                .is_empty()
+        );
         world.get_mut::<Position>(entity).unwrap().x = 99.0;
         replication_collect_system(&mut world);
-        assert_eq!(world.resource::<PendingReplication>().unwrap().updates.len(), 1);
+        assert_eq!(
+            world
+                .resource::<PendingReplication>()
+                .unwrap()
+                .updates
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -874,18 +932,50 @@ mod tests {
         registry.register::<Health>("Health");
         world.insert_resource(registry);
         world.insert_resource(PendingReplication::new());
-        let e1 = world.spawn(Position { x: 1.0, y: 0.0, z: 0.0 });
+        let e1 = world.spawn(Position {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        });
         world.insert(e1, Replicated);
         world.insert(e1, ReplicationState::new());
-        let e2 = world.spawn(Position { x: 2.0, y: 0.0, z: 0.0 });
+        let e2 = world.spawn(Position {
+            x: 2.0,
+            y: 0.0,
+            z: 0.0,
+        });
         world.insert(e2, Replicated);
-        world.insert(e2, Health { current: 100.0, max: 100.0 });
+        world.insert(
+            e2,
+            Health {
+                current: 100.0,
+                max: 100.0,
+            },
+        );
         world.insert(e2, ReplicationState::new());
         replication_collect_system(&mut world);
         let pending = world.resource::<PendingReplication>().unwrap();
         assert_eq!(pending.updates.len(), 2);
-        assert_eq!(pending.updates.iter().find(|u| u.entity == e1).unwrap().fields.len(), 1);
-        assert_eq!(pending.updates.iter().find(|u| u.entity == e2).unwrap().fields.len(), 2);
+        assert_eq!(
+            pending
+                .updates
+                .iter()
+                .find(|u| u.entity == e1)
+                .unwrap()
+                .fields
+                .len(),
+            1
+        );
+        assert_eq!(
+            pending
+                .updates
+                .iter()
+                .find(|u| u.entity == e2)
+                .unwrap()
+                .fields
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -903,10 +993,24 @@ mod tests {
         let mut manager = ReplicationManager::new();
         let entity = Entity::from_raw(1, 0);
         manager.add_client(1);
-        manager.send_rpc(1, ClientRpc { name: "effect".into(), entity, payload: vec![5] });
+        manager.send_rpc(
+            1,
+            ClientRpc {
+                name: "effect".into(),
+                entity,
+                payload: vec![5],
+            },
+        );
         assert_eq!(manager.drain_outgoing_rpcs(1).len(), 1);
         assert!(manager.drain_outgoing_rpcs(1).is_empty());
-        manager.receive_rpc(1, ServerRpc { name: "use_item".into(), entity, payload: vec![42] });
+        manager.receive_rpc(
+            1,
+            ServerRpc {
+                name: "use_item".into(),
+                entity,
+                payload: vec![42],
+            },
+        );
         let incoming = manager.drain_incoming_rpcs();
         assert_eq!(incoming.len(), 1);
         assert_eq!(incoming[0].1.name, "use_item");
@@ -918,8 +1022,18 @@ mod tests {
         registry.register::<Position>("Position");
         registry.register::<Health>("Health");
         let mut world = World::new();
-        let entity = world.spawn(Position { x: 1.0, y: 2.0, z: 3.0 });
-        world.insert(entity, Health { current: 50.0, max: 100.0 });
+        let entity = world.spawn(Position {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        });
+        world.insert(
+            entity,
+            Health {
+                current: 50.0,
+                max: 100.0,
+            },
+        );
         let all = registry.serialize_all(&world, entity);
         assert_eq!(all.len(), 2);
     }
