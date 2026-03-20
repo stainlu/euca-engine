@@ -1,3 +1,4 @@
+use crate::{cfg_scalar, cfg_simd};
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
@@ -26,6 +27,46 @@ pub struct Vec4 {
     pub y: f32,
     pub z: f32,
     pub w: f32,
+}
+
+// ── SIMD load/store helpers ─────────────────────────────────────────────────
+//
+// Vec3 and Vec4 are `#[repr(C, align(16))]`, so they can be loaded directly
+// into a 128-bit SIMD register. We load Vec3 with w=0.0 to avoid polluting
+// the dot product.
+
+cfg_simd! {
+    use crate::simd::f32x4;
+}
+
+cfg_simd! {
+    impl Vec3 {
+        /// Load into a SIMD register with w=0.
+        #[inline(always)]
+        fn load(self) -> f32x4 {
+            f32x4::new(self.x, self.y, self.z, 0.0)
+        }
+
+        /// Store the xyz lanes of a SIMD register back into a Vec3.
+        #[inline(always)]
+        fn from_simd(v: f32x4) -> Self {
+            Self { x: v.x(), y: v.y(), z: v.z() }
+        }
+    }
+
+    impl Vec4 {
+        /// Load into a SIMD register.
+        #[inline(always)]
+        pub(crate) fn load(self) -> f32x4 {
+            f32x4::new(self.x, self.y, self.z, self.w)
+        }
+
+        /// Store all four lanes of a SIMD register back into a Vec4.
+        #[inline(always)]
+        pub(crate) fn from_simd(v: f32x4) -> Self {
+            Self { x: v.x(), y: v.y(), z: v.z(), w: v.w() }
+        }
+    }
 }
 
 // ── Vec2 ──
@@ -159,22 +200,6 @@ impl Vec3 {
         Self { x, y, z }
     }
 
-    /// Returns the dot product of two vectors.
-    #[inline(always)]
-    pub fn dot(self, rhs: Self) -> f32 {
-        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
-    }
-
-    /// Returns the cross product of two vectors.
-    #[inline(always)]
-    pub fn cross(self, rhs: Self) -> Self {
-        Self {
-            x: self.y * rhs.z - self.z * rhs.y,
-            y: self.z * rhs.x - self.x * rhs.z,
-            z: self.x * rhs.y - self.y * rhs.x,
-        }
-    }
-
     /// Returns the Euclidean length of the vector.
     #[inline(always)]
     pub fn length(self) -> f32 {
@@ -187,17 +212,6 @@ impl Vec3 {
         self.dot(self)
     }
 
-    /// Returns a unit-length vector in the same direction.
-    #[inline(always)]
-    pub fn normalize(self) -> Self {
-        let inv = 1.0 / self.length();
-        Self {
-            x: self.x * inv,
-            y: self.y * inv,
-            z: self.z * inv,
-        }
-    }
-
     /// Returns the Euclidean distance between two points.
     #[inline(always)]
     pub fn distance(self, rhs: Self) -> f32 {
@@ -208,26 +222,6 @@ impl Vec3 {
     #[inline(always)]
     pub fn lerp(self, rhs: Self, t: f32) -> Self {
         self + (rhs - self) * t
-    }
-
-    /// Returns the component-wise minimum of two vectors.
-    #[inline(always)]
-    pub fn min(self, rhs: Self) -> Self {
-        Self {
-            x: self.x.min(rhs.x),
-            y: self.y.min(rhs.y),
-            z: self.z.min(rhs.z),
-        }
-    }
-
-    /// Returns the component-wise maximum of two vectors.
-    #[inline(always)]
-    pub fn max(self, rhs: Self) -> Self {
-        Self {
-            x: self.x.max(rhs.x),
-            y: self.y.max(rhs.y),
-            z: self.z.max(rhs.z),
-        }
     }
 
     /// Find the parameter t on a line (line_origin + line_dir * t) at the point
@@ -253,64 +247,158 @@ impl Vec3 {
     }
 }
 
-impl Add for Vec3 {
-    type Output = Self;
-    #[inline(always)]
-    fn add(self, rhs: Self) -> Self {
-        Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-            z: self.z + rhs.z,
+// ── Vec3: SIMD-accelerated methods ──────────────────────────────────────────
+
+cfg_simd! {
+    impl Vec3 {
+        /// Returns the dot product of two vectors.
+        #[inline(always)]
+        pub fn dot(self, rhs: Self) -> f32 {
+            self.load().mul(rhs.load()).horizontal_sum()
         }
+
+        /// Returns the cross product of two vectors.
+        #[inline(always)]
+        pub fn cross(self, rhs: Self) -> Self {
+            // cross(a, b) = (a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x)
+            let a_yzx = f32x4::new(self.y, self.z, self.x, 0.0);
+            let b_zxy = f32x4::new(rhs.z, rhs.x, rhs.y, 0.0);
+            let a_zxy = f32x4::new(self.z, self.x, self.y, 0.0);
+            let b_yzx = f32x4::new(rhs.y, rhs.z, rhs.x, 0.0);
+            Self::from_simd(a_yzx.mul(b_zxy).sub(a_zxy.mul(b_yzx)))
+        }
+
+        /// Returns a unit-length vector in the same direction.
+        #[inline(always)]
+        pub fn normalize(self) -> Self {
+            let v = self.load();
+            let inv_len = f32x4::splat(1.0 / v.mul(v).horizontal_sum().sqrt());
+            Self::from_simd(v.mul(inv_len))
+        }
+
+        /// Returns the component-wise minimum of two vectors.
+        #[inline(always)]
+        pub fn min(self, rhs: Self) -> Self {
+            Self::from_simd(self.load().min(rhs.load()))
+        }
+
+        /// Returns the component-wise maximum of two vectors.
+        #[inline(always)]
+        pub fn max(self, rhs: Self) -> Self {
+            Self::from_simd(self.load().max(rhs.load()))
+        }
+    }
+
+    impl Add for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn add(self, rhs: Self) -> Self { Self::from_simd(self.load().add(rhs.load())) }
+    }
+
+    impl Sub for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn sub(self, rhs: Self) -> Self { Self::from_simd(self.load().sub(rhs.load())) }
+    }
+
+    impl Mul<f32> for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn mul(self, rhs: f32) -> Self { Self::from_simd(self.load().mul(f32x4::splat(rhs))) }
+    }
+
+    impl Div<f32> for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn div(self, rhs: f32) -> Self {
+            Self::from_simd(self.load().mul(f32x4::splat(1.0 / rhs)))
+        }
+    }
+
+    impl Neg for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn neg(self) -> Self { Self::from_simd(self.load().neg()) }
     }
 }
 
-impl Sub for Vec3 {
-    type Output = Self;
-    #[inline(always)]
-    fn sub(self, rhs: Self) -> Self {
-        Self {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-            z: self.z - rhs.z,
+// ── Vec3: scalar fallback methods ───────────────────────────────────────────
+
+cfg_scalar! {
+    impl Vec3 {
+        /// Returns the dot product of two vectors.
+        #[inline(always)]
+        pub fn dot(self, rhs: Self) -> f32 {
+            self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
+        }
+
+        /// Returns the cross product of two vectors.
+        #[inline(always)]
+        pub fn cross(self, rhs: Self) -> Self {
+            Self {
+                x: self.y * rhs.z - self.z * rhs.y,
+                y: self.z * rhs.x - self.x * rhs.z,
+                z: self.x * rhs.y - self.y * rhs.x,
+            }
+        }
+
+        /// Returns a unit-length vector in the same direction.
+        #[inline(always)]
+        pub fn normalize(self) -> Self {
+            let inv = 1.0 / self.length();
+            Self { x: self.x * inv, y: self.y * inv, z: self.z * inv }
+        }
+
+        /// Returns the component-wise minimum of two vectors.
+        #[inline(always)]
+        pub fn min(self, rhs: Self) -> Self {
+            Self { x: self.x.min(rhs.x), y: self.y.min(rhs.y), z: self.z.min(rhs.z) }
+        }
+
+        /// Returns the component-wise maximum of two vectors.
+        #[inline(always)]
+        pub fn max(self, rhs: Self) -> Self {
+            Self { x: self.x.max(rhs.x), y: self.y.max(rhs.y), z: self.z.max(rhs.z) }
         }
     }
-}
 
-impl Mul<f32> for Vec3 {
-    type Output = Self;
-    #[inline(always)]
-    fn mul(self, rhs: f32) -> Self {
-        Self {
-            x: self.x * rhs,
-            y: self.y * rhs,
-            z: self.z * rhs,
+    impl Add for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn add(self, rhs: Self) -> Self {
+            Self { x: self.x + rhs.x, y: self.y + rhs.y, z: self.z + rhs.z }
         }
     }
-}
 
-impl Div<f32> for Vec3 {
-    type Output = Self;
-    #[inline(always)]
-    fn div(self, rhs: f32) -> Self {
-        let inv = 1.0 / rhs;
-        Self {
-            x: self.x * inv,
-            y: self.y * inv,
-            z: self.z * inv,
+    impl Sub for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn sub(self, rhs: Self) -> Self {
+            Self { x: self.x - rhs.x, y: self.y - rhs.y, z: self.z - rhs.z }
         }
     }
-}
 
-impl Neg for Vec3 {
-    type Output = Self;
-    #[inline(always)]
-    fn neg(self) -> Self {
-        Self {
-            x: -self.x,
-            y: -self.y,
-            z: -self.z,
+    impl Mul<f32> for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn mul(self, rhs: f32) -> Self {
+            Self { x: self.x * rhs, y: self.y * rhs, z: self.z * rhs }
         }
+    }
+
+    impl Div<f32> for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn div(self, rhs: f32) -> Self {
+            let inv = 1.0 / rhs;
+            Self { x: self.x * inv, y: self.y * inv, z: self.z * inv }
+        }
+    }
+
+    impl Neg for Vec3 {
+        type Output = Self;
+        #[inline(always)]
+        fn neg(self) -> Self { Self { x: -self.x, y: -self.y, z: -self.z } }
     }
 }
 
@@ -338,80 +426,103 @@ impl Vec4 {
         Self { x, y, z, w }
     }
 
-    /// Returns the dot product of two vectors.
-    #[inline(always)]
-    pub fn dot(self, rhs: Self) -> f32 {
-        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z + self.w * rhs.w
-    }
-
     /// Returns the Euclidean length of the vector.
     #[inline(always)]
     pub fn length(self) -> f32 {
         self.dot(self).sqrt()
     }
+}
 
-    /// Returns a unit-length vector in the same direction.
-    #[inline(always)]
-    pub fn normalize(self) -> Self {
-        let inv = 1.0 / self.length();
-        Self {
-            x: self.x * inv,
-            y: self.y * inv,
-            z: self.z * inv,
-            w: self.w * inv,
+// ── Vec4: SIMD-accelerated methods ──────────────────────────────────────────
+
+cfg_simd! {
+    impl Vec4 {
+        /// Returns the dot product of two vectors.
+        #[inline(always)]
+        pub fn dot(self, rhs: Self) -> f32 {
+            self.load().mul(rhs.load()).horizontal_sum()
         }
+
+        /// Returns a unit-length vector in the same direction.
+        #[inline(always)]
+        pub fn normalize(self) -> Self {
+            let v = self.load();
+            let inv_len = f32x4::splat(1.0 / v.mul(v).horizontal_sum().sqrt());
+            Self::from_simd(v.mul(inv_len))
+        }
+    }
+
+    impl Add for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn add(self, rhs: Self) -> Self { Self::from_simd(self.load().add(rhs.load())) }
+    }
+
+    impl Sub for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn sub(self, rhs: Self) -> Self { Self::from_simd(self.load().sub(rhs.load())) }
+    }
+
+    impl Mul<f32> for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn mul(self, rhs: f32) -> Self { Self::from_simd(self.load().mul(f32x4::splat(rhs))) }
+    }
+
+    impl Neg for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn neg(self) -> Self { Self::from_simd(self.load().neg()) }
     }
 }
 
-impl Add for Vec4 {
-    type Output = Self;
-    #[inline(always)]
-    fn add(self, rhs: Self) -> Self {
-        Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-            z: self.z + rhs.z,
-            w: self.w + rhs.w,
+// ── Vec4: scalar fallback methods ───────────────────────────────────────────
+
+cfg_scalar! {
+    impl Vec4 {
+        /// Returns the dot product of two vectors.
+        #[inline(always)]
+        pub fn dot(self, rhs: Self) -> f32 {
+            self.x * rhs.x + self.y * rhs.y + self.z * rhs.z + self.w * rhs.w
+        }
+
+        /// Returns a unit-length vector in the same direction.
+        #[inline(always)]
+        pub fn normalize(self) -> Self {
+            let inv = 1.0 / self.length();
+            Self { x: self.x * inv, y: self.y * inv, z: self.z * inv, w: self.w * inv }
         }
     }
-}
 
-impl Sub for Vec4 {
-    type Output = Self;
-    #[inline(always)]
-    fn sub(self, rhs: Self) -> Self {
-        Self {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-            z: self.z - rhs.z,
-            w: self.w - rhs.w,
+    impl Add for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn add(self, rhs: Self) -> Self {
+            Self { x: self.x + rhs.x, y: self.y + rhs.y, z: self.z + rhs.z, w: self.w + rhs.w }
         }
     }
-}
 
-impl Mul<f32> for Vec4 {
-    type Output = Self;
-    #[inline(always)]
-    fn mul(self, rhs: f32) -> Self {
-        Self {
-            x: self.x * rhs,
-            y: self.y * rhs,
-            z: self.z * rhs,
-            w: self.w * rhs,
+    impl Sub for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn sub(self, rhs: Self) -> Self {
+            Self { x: self.x - rhs.x, y: self.y - rhs.y, z: self.z - rhs.z, w: self.w - rhs.w }
         }
     }
-}
 
-impl Neg for Vec4 {
-    type Output = Self;
-    #[inline(always)]
-    fn neg(self) -> Self {
-        Self {
-            x: -self.x,
-            y: -self.y,
-            z: -self.z,
-            w: -self.w,
+    impl Mul<f32> for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn mul(self, rhs: f32) -> Self {
+            Self { x: self.x * rhs, y: self.y * rhs, z: self.z * rhs, w: self.w * rhs }
         }
+    }
+
+    impl Neg for Vec4 {
+        type Output = Self;
+        #[inline(always)]
+        fn neg(self) -> Self { Self { x: -self.x, y: -self.y, z: -self.z, w: -self.w } }
     }
 }
 
@@ -476,7 +587,6 @@ mod tests {
 
     #[test]
     fn closest_line_param_perpendicular() {
-        // Line along X at y=1, ray along Y at x=2
         let t = Vec3::closest_line_param(
             Vec3::new(0.0, 1.0, 0.0),
             Vec3::X,
@@ -488,8 +598,55 @@ mod tests {
 
     #[test]
     fn closest_line_param_parallel() {
-        // Parallel lines should return 0.0
         let t = Vec3::closest_line_param(Vec3::ZERO, Vec3::X, Vec3::new(0.0, 1.0, 0.0), Vec3::X);
         assert_eq!(t, 0.0);
+    }
+
+    #[test]
+    fn vec4_normalize() {
+        let v = Vec4::new(1.0, 2.0, 3.0, 4.0);
+        let n = v.normalize();
+        assert!((n.length() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vec4_add_sub() {
+        let a = Vec4::new(1.0, 2.0, 3.0, 4.0);
+        let b = Vec4::new(5.0, 6.0, 7.0, 8.0);
+        assert_eq!(a + b, Vec4::new(6.0, 8.0, 10.0, 12.0));
+        assert_eq!(b - a, Vec4::new(4.0, 4.0, 4.0, 4.0));
+    }
+
+    #[test]
+    fn vec4_mul_neg() {
+        let a = Vec4::new(1.0, 2.0, 3.0, 4.0);
+        assert_eq!(a * 2.0, Vec4::new(2.0, 4.0, 6.0, 8.0));
+        assert_eq!(-a, Vec4::new(-1.0, -2.0, -3.0, -4.0));
+    }
+
+    #[test]
+    fn vec3_min_max() {
+        let a = Vec3::new(1.0, 5.0, 3.0);
+        let b = Vec3::new(4.0, 2.0, 6.0);
+        assert_eq!(a.min(b), Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(a.max(b), Vec3::new(4.0, 5.0, 6.0));
+    }
+
+    #[test]
+    fn vec3_cross_identity() {
+        assert_eq!(Vec3::X.cross(Vec3::Y), Vec3::Z);
+        assert_eq!(Vec3::Y.cross(Vec3::Z), Vec3::X);
+        assert_eq!(Vec3::Z.cross(Vec3::X), Vec3::Y);
+    }
+
+    #[test]
+    fn vec3_cross_anticommutative() {
+        let a = Vec3::new(1.0, 2.0, 3.0);
+        let b = Vec3::new(4.0, 5.0, 6.0);
+        let ab = a.cross(b);
+        let ba = b.cross(a);
+        assert!((ab.x + ba.x).abs() < 1e-6);
+        assert!((ab.y + ba.y).abs() < 1e-6);
+        assert!((ab.z + ba.z).abs() < 1e-6);
     }
 }
