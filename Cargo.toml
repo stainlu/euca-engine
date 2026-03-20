@@ -19,6 +19,7 @@ members = [
     "crates/euca-audio",
     "crates/euca-particle",
     "crates/euca-nav",
+    "crates/euca-script",
     "tools/euca-cli",
 ]
 
