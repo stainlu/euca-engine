@@ -212,6 +212,10 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
 
     for &(entity, pos, team, dead) in &fighters {
         if dead {
+            // Stop dead entities from drifting
+            if let Some(v) = world.get_mut::<Velocity>(entity) {
+                v.linear = Vec3::ZERO;
+            }
             continue;
         }
 
