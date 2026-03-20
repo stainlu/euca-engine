@@ -1,5 +1,6 @@
 mod camera;
 pub mod compute;
+pub mod decal;
 pub mod deferred;
 mod gpu;
 mod hardware;
@@ -19,6 +20,10 @@ pub use camera::{Camera, Frustum};
 pub use compute::{
     ComputeManager, ComputePipeline, ComputePipelineDesc, CullParams, GpuAabb, GpuBuffer,
     GpuFrustumPlanes,
+};
+pub use decal::{
+    Decal, DecalBlendMode, DecalDrawCommand, DecalProjection, DecalRenderer,
+    collect_decal_draw_commands,
 };
 pub use deferred::{GBuffer, GBufferFormats, RenderPath};
 pub use gpu::GpuContext;
