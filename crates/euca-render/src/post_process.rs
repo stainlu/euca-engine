@@ -292,8 +292,13 @@ impl PostProcessStack {
             &ssao_uniform_buffer,
         );
 
-        let ssao_blur_bind_group =
-            create_tex_sampler_bind_group(device, &ssao_blur_bgl, &ssao_view, &linear_sampler, "SSAO Blur BG");
+        let ssao_blur_bind_group = create_tex_sampler_bind_group(
+            device,
+            &ssao_blur_bgl,
+            &ssao_view,
+            &linear_sampler,
+            "SSAO Blur BG",
+        );
 
         let ssao_composite_bind_group = create_ssao_composite_bind_group(
             device,
@@ -399,8 +404,13 @@ impl PostProcessStack {
             &self.linear_sampler,
             &self.ssao_uniform_buffer,
         );
-        self.ssao_blur_bind_group =
-            create_tex_sampler_bind_group(device, &self.ssao_blur_bgl, &ssao_view, &self.linear_sampler, "SSAO Blur BG");
+        self.ssao_blur_bind_group = create_tex_sampler_bind_group(
+            device,
+            &self.ssao_blur_bgl,
+            &ssao_view,
+            &self.linear_sampler,
+            "SSAO Blur BG",
+        );
         self.ssao_composite_bind_group = create_ssao_composite_bind_group(
             device,
             &self.ssao_composite_bgl,
@@ -474,32 +484,96 @@ impl PostProcessStack {
         // At this point, ping contains the HDR scene (MSAA resolved).
         if settings.ssao_enabled {
             // SSAO: generate -> blur -> composite into HDR
-            run_fullscreen_pass(encoder, &self.ssao_pipeline, &self.ssao_bind_group, &self.ssao_view, "SSAO Generate");
-            run_fullscreen_pass(encoder, &self.ssao_blur_pipeline, &self.ssao_blur_bind_group, &self.ssao_blur_view, "SSAO Blur");
-            run_fullscreen_pass(encoder, &self.ssao_composite_pipeline, &self.ssao_composite_bind_group, &self.pong_view, "SSAO Composite");
+            run_fullscreen_pass(
+                encoder,
+                &self.ssao_pipeline,
+                &self.ssao_bind_group,
+                &self.ssao_view,
+                "SSAO Generate",
+            );
+            run_fullscreen_pass(
+                encoder,
+                &self.ssao_blur_pipeline,
+                &self.ssao_blur_bind_group,
+                &self.ssao_blur_view,
+                "SSAO Blur",
+            );
+            run_fullscreen_pass(
+                encoder,
+                &self.ssao_composite_pipeline,
+                &self.ssao_composite_bind_group,
+                &self.pong_view,
+                "SSAO Composite",
+            );
 
             // pong now has HDR+AO. Create a temporary bind group reading from pong.
             let main_from_pong = create_tex_sampler_uniform_bind_group(
-                device, &self.main_bgl, &self.pong_view, &self.linear_sampler, &self.uniform_buffer, "PP Main (pong)",
+                device,
+                &self.main_bgl,
+                &self.pong_view,
+                &self.linear_sampler,
+                &self.uniform_buffer,
+                "PP Main (pong)",
             );
 
             if settings.fxaa_enabled {
                 // Main: pong(HDR+AO) -> ping(LDR), then FXAA: ping(LDR) -> output
-                run_fullscreen_pass(encoder, &self.main_pipeline, &main_from_pong, &self.ping_view, "PP Main (SSAO+FXAA)");
-                let fxaa_from_ping = create_tex_sampler_uniform_bind_group(
-                    device, &self.fxaa_bgl, &self.ping_view, &self.linear_sampler, &self.uniform_buffer, "FXAA (ping)",
+                run_fullscreen_pass(
+                    encoder,
+                    &self.main_pipeline,
+                    &main_from_pong,
+                    &self.ping_view,
+                    "PP Main (SSAO+FXAA)",
                 );
-                run_fullscreen_pass(encoder, &self.fxaa_pipeline, &fxaa_from_ping, output_view, "FXAA");
+                let fxaa_from_ping = create_tex_sampler_uniform_bind_group(
+                    device,
+                    &self.fxaa_bgl,
+                    &self.ping_view,
+                    &self.linear_sampler,
+                    &self.uniform_buffer,
+                    "FXAA (ping)",
+                );
+                run_fullscreen_pass(
+                    encoder,
+                    &self.fxaa_pipeline,
+                    &fxaa_from_ping,
+                    output_view,
+                    "FXAA",
+                );
             } else {
-                run_fullscreen_pass(encoder, &self.main_pipeline, &main_from_pong, output_view, "PP Main (SSAO)");
+                run_fullscreen_pass(
+                    encoder,
+                    &self.main_pipeline,
+                    &main_from_pong,
+                    output_view,
+                    "PP Main (SSAO)",
+                );
             }
         } else if settings.fxaa_enabled {
             // No SSAO. Main: ping(HDR) -> pong(LDR), FXAA: pong(LDR) -> output
-            run_fullscreen_pass(encoder, &self.main_pipeline, &self.main_bind_group, &self.pong_view, "PP Main (FXAA)");
-            run_fullscreen_pass(encoder, &self.fxaa_pipeline, &self.fxaa_bind_group, output_view, "FXAA");
+            run_fullscreen_pass(
+                encoder,
+                &self.main_pipeline,
+                &self.main_bind_group,
+                &self.pong_view,
+                "PP Main (FXAA)",
+            );
+            run_fullscreen_pass(
+                encoder,
+                &self.fxaa_pipeline,
+                &self.fxaa_bind_group,
+                output_view,
+                "FXAA",
+            );
         } else {
             // Simplest path: ping(HDR) -> output(LDR)
-            run_fullscreen_pass(encoder, &self.main_pipeline, &self.main_bind_group, output_view, "PP Main");
+            run_fullscreen_pass(
+                encoder,
+                &self.main_pipeline,
+                &self.main_bind_group,
+                output_view,
+                "PP Main",
+            );
         }
     }
 
@@ -531,10 +605,22 @@ fn create_ssao_bind_group(
         label: Some("SSAO BG"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(depth_view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(noise_view) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
-            wgpu::BindGroupEntry { binding: 3, resource: uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(depth_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(noise_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: uniform_buffer.as_entire_binding(),
+            },
         ],
     })
 }
@@ -551,10 +637,22 @@ fn create_ssao_composite_bind_group(
         label: Some("SSAO Composite BG"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(hdr_view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(ao_view) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
-            wgpu::BindGroupEntry { binding: 3, resource: uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(hdr_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(ao_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: uniform_buffer.as_entire_binding(),
+            },
         ],
     })
 }
@@ -570,8 +668,14 @@ fn create_tex_sampler_bind_group(
         label: Some(label),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(texture_view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
         ],
     })
 }
@@ -588,9 +692,18 @@ fn create_tex_sampler_uniform_bind_group(
         label: Some(label),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(texture_view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
-            wgpu::BindGroupEntry { binding: 2, resource: uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: uniform_buffer.as_entire_binding(),
+            },
         ],
     })
 }
@@ -628,40 +741,87 @@ fn run_fullscreen_pass(
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const R8_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-fn create_hdr_target(device: &wgpu::Device, width: u32, height: u32, label: &str) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_hdr_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    label: &str,
+) -> (wgpu::Texture, wgpu::TextureView) {
     create_texture_target(device, width, height, label, HDR_FORMAT)
 }
 
-fn create_r8_target(device: &wgpu::Device, width: u32, height: u32, label: &str) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_r8_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    label: &str,
+) -> (wgpu::Texture, wgpu::TextureView) {
     create_texture_target(device, width, height, label, R8_FORMAT)
 }
 
-fn create_texture_target(device: &wgpu::Device, width: u32, height: u32, label: &str, format: wgpu::TextureFormat) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_texture_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    label: &str,
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
 
-fn create_depth_resolve_target(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
-    create_texture_target(device, width, height, "Depth Resolve", wgpu::TextureFormat::R32Float)
+fn create_depth_resolve_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    create_texture_target(
+        device,
+        width,
+        height,
+        "Depth Resolve",
+        wgpu::TextureFormat::R32Float,
+    )
 }
 
-fn create_ssao_noise_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_ssao_noise_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::TextureView) {
     // 4x4 tile of random unit vectors for per-pixel rotation in SSAO kernel.
     let noise_data: [[f32; 2]; 16] = [
-        [0.536, 0.844], [-0.731, 0.682], [0.954, -0.300], [-0.281, -0.960],
-        [0.141, 0.990], [-0.989, 0.146], [0.625, -0.781], [-0.437, 0.899],
-        [0.831, 0.556], [-0.556, -0.831], [0.300, -0.954], [-0.899, 0.437],
-        [0.682, 0.731], [-0.844, -0.536], [0.990, 0.141], [-0.146, -0.989],
+        [0.536, 0.844],
+        [-0.731, 0.682],
+        [0.954, -0.300],
+        [-0.281, -0.960],
+        [0.141, 0.990],
+        [-0.989, 0.146],
+        [0.625, -0.781],
+        [-0.437, 0.899],
+        [0.831, 0.556],
+        [-0.556, -0.831],
+        [0.300, -0.954],
+        [-0.899, 0.437],
+        [0.682, 0.731],
+        [-0.844, -0.536],
+        [0.990, 0.141],
+        [-0.146, -0.989],
     ];
 
     let mut rgba = [0u8; 16 * 4];
@@ -674,7 +834,11 @@ fn create_ssao_noise_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wgp
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("SSAO Noise 4x4"),
-        size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -684,21 +848,41 @@ fn create_ssao_noise_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> (wgp
     });
 
     queue.write_texture(
-        wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
         &rgba,
-        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * 4), rows_per_image: Some(4) },
-        wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * 4),
+            rows_per_image: Some(4),
+        },
+        wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
     );
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
 
-fn bgl_texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::BindGroupLayoutEntry {
+fn bgl_texture_entry(
+    binding: u32,
+    sample_type: wgpu::TextureSampleType,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture { sample_type, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
         count: None,
     }
 }
@@ -725,20 +909,45 @@ fn bgl_uniform_entry(binding: u32, min_size: u64) -> wgpu::BindGroupLayoutEntry 
     }
 }
 
-fn create_fullscreen_pipeline(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, shader_source: &str, label: &str, target_format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(shader_source.into()) });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(label), bind_group_layouts: &[bgl], push_constant_ranges: &[] });
+fn create_fullscreen_pipeline(
+    device: &wgpu::Device,
+    bgl: &wgpu::BindGroupLayout,
+    shader_source: &str,
+    label: &str,
+    target_format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(label),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: &[bgl],
+        push_constant_ranges: &[],
+    });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
-        vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), buffers: &[], compilation_options: Default::default() },
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState { format: target_format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL })],
+            targets: &[Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
             compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
         depth_stencil: None,
         multisample: Default::default(),
         multiview: None,
@@ -846,7 +1055,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
 }
 
 fn ssao_blur_shader() -> String {
-    format!("{FULLSCREEN_VS_WGSL}
+    format!(
+        "{FULLSCREEN_VS_WGSL}
 @group(0) @binding(0) var ao_tex: texture_2d<f32>;
 @group(0) @binding(1) var tex_sampler: sampler;
 @fragment
@@ -869,11 +1079,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
     }}
     let result = total_ao / max(total_weight, 0.001);
     return vec4<f32>(result, 0.0, 0.0, 1.0);
-}}")
+}}"
+    )
 }
 
 fn ssao_composite_shader() -> String {
-    format!("{FULLSCREEN_VS_WGSL}{PP_UNIFORMS_WGSL}
+    format!(
+        "{FULLSCREEN_VS_WGSL}{PP_UNIFORMS_WGSL}
 @group(0) @binding(0) var hdr_tex: texture_2d<f32>;
 @group(0) @binding(1) var ao_tex: texture_2d<f32>;
 @group(0) @binding(2) var tex_sampler: sampler;
@@ -885,7 +1097,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
     let intensity = uniforms.flags.w;
     let ao_factor = mix(1.0, ao, intensity);
     return vec4<f32>(hdr.rgb * ao_factor, hdr.a);
-}}")
+}}"
+    )
 }
 
 fn main_postprocess_shader() -> String {
