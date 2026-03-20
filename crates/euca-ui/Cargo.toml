@@ -1,0 +1,16 @@
+[package]
+name = "euca-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Runtime UI framework for in-game HUD, menus, and overlays — renderer-agnostic"
+keywords = ["ui", "gamedev", "hud", "menu"]
+categories = ["game-development"]
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-scene = { path = "../euca-scene" }
+euca-input = { path = "../euca-input" }

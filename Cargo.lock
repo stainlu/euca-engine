@@ -1237,10 +1237,15 @@ dependencies = [
  "egui-winit",
  "env_logger",
  "euca-agent",
+ "euca-asset",
+ "euca-audio",
  "euca-core",
  "euca-ecs",
  "euca-gameplay",
+ "euca-input",
  "euca-math",
+ "euca-nav",
+ "euca-particle",
  "euca-physics",
  "euca-reflect",
  "euca-render",
@@ -1291,6 +1296,7 @@ name = "euca-input"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1388,6 +1394,16 @@ dependencies = [
  "euca-math",
  "euca-reflect",
  "serde",
+]
+
+[[package]]
+name = "euca-ui"
+version = "0.1.0"
+dependencies = [
+ "euca-ecs",
+ "euca-input",
+ "euca-math",
+ "euca-scene",
 ]
 
 [[package]]
