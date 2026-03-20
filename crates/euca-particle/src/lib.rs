@@ -7,6 +7,11 @@
 //! - `emit_particles_system`: spawns new particles based on emission rate
 //! - `particle_update_system`: advances particles (velocity, gravity, aging), removes dead ones
 //!
+//! # Rendering
+//! The `render` module produces renderer-agnostic [`render::ParticleRenderData`] batches
+//! (one per emitter) that the renderer consumes — no GPU or render crate dependency.
+//! See [`render::collect_particle_render_data`].
+//!
 //! # Usage
 //! ```ignore
 //! let e = world.spawn(ParticleEmitter::new(EmitterConfig {
@@ -17,6 +22,8 @@
 //! }));
 //! world.insert(e, LocalTransform(Transform::from_translation(pos)));
 //! ```
+
+pub mod render;
 
 use euca_ecs::{Entity, Query, World};
 use euca_math::Vec3;
@@ -117,6 +124,20 @@ pub struct ParticleEmitter {
     pub particles: Vec<Particle>,
     /// Internal: fractional particles not yet emitted.
     accumulator: f32,
+
+    // ── Rendering fields ──
+    /// Opaque texture handle for the renderer (e.g. sprite sheet).
+    /// `None` means use a default white texture (color-only particles).
+    pub texture: Option<u32>,
+    /// Number of columns in the texture atlas grid (1 = no atlas).
+    pub atlas_cols: u32,
+    /// Number of rows in the texture atlas grid (1 = no atlas).
+    pub atlas_rows: u32,
+    /// How particle quads are composited into the framebuffer.
+    pub blend_mode: render::ParticleBlendMode,
+    /// If `true` and the atlas has multiple frames, particles cycle through
+    /// frames based on their age fraction.
+    pub animate_atlas: bool,
 }
 
 impl ParticleEmitter {
@@ -126,6 +147,11 @@ impl ParticleEmitter {
             active: true,
             particles: Vec::new(),
             accumulator: 0.0,
+            texture: None,
+            atlas_cols: 1,
+            atlas_rows: 1,
+            blend_mode: render::ParticleBlendMode::AlphaBlend,
+            animate_atlas: false,
         }
     }
 
