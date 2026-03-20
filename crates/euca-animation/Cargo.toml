@@ -1,0 +1,9 @@
+[package]
+name = "euca-animation"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-asset = { path = "../euca-asset" }

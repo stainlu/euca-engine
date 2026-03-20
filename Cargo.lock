@@ -1168,12 +1168,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "euca-ai"
+name = "euca-animation"
 version = "0.1.0"
 dependencies = [
+ "euca-asset",
  "euca-ecs",
  "euca-math",
- "log",
 ]
 
 [[package]]
