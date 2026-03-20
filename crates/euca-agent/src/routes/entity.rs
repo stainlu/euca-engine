@@ -209,6 +209,17 @@ pub async fn spawn(
             let speed = req.combat_speed.unwrap_or(3.0);
             w.insert(entity, euca_gameplay::AiGoal::patrol(wps, speed));
         }
+        // Auto-set MarchDirection for combat entities based on team
+        if req.combat.unwrap_or(false)
+            && let Some(team_id) = req.team
+        {
+            let dir = if team_id == 1 {
+                euca_math::Vec3::new(1.0, 0.0, 0.0)
+            } else {
+                euca_math::Vec3::new(-1.0, 0.0, 0.0)
+            };
+            w.insert(entity, euca_gameplay::MarchDirection(dir));
+        }
 
         // Economy + leveling + role
         if let Some(g) = req.gold {

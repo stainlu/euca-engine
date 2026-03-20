@@ -427,8 +427,22 @@ pub fn execute_action(
                     },
                 );
             }
-            if let Some(wps) = waypoints {
-                let wp_vecs: Vec<Vec3> = wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
+            // Set march direction based on team (toward enemy base).
+            // Team 1 marches +X, Team 2 marches -X.
+            if combat == &Some(true) {
+                let dir = if *team == Some(1) {
+                    Vec3::new(1.0, 0.0, 0.0)
+                } else {
+                    Vec3::new(-1.0, 0.0, 0.0)
+                };
+                world.insert(entity, crate::combat::MarchDirection(dir));
+            }
+            // Legacy: still support patrol waypoints for non-combat entities
+            if let Some(wps) = waypoints
+                && combat != &Some(true)
+            {
+                let wp_vecs: Vec<Vec3> =
+                    wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
                 let patrol_speed = speed.unwrap_or(3.0);
                 world.insert(entity, crate::ai::AiGoal::patrol(wp_vecs, patrol_speed));
             }

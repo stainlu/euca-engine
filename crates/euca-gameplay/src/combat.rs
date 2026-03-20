@@ -119,16 +119,44 @@ pub enum EntityRole {
 }
 
 impl EntityRole {
-    /// Lower = higher targeting priority (towers prefer minions).
-    pub fn target_priority(&self) -> u8 {
-        match self {
-            Self::Minion => 0, // attacked first
-            Self::Hero => 1,   // attacked second
-            Self::Tower => 2,
-            Self::Structure => 3, // attacked last
+    /// Target priority depends on who is attacking.
+    /// Lower = higher priority (attacked first).
+    pub fn target_priority_for(&self, attacker: &EntityRole) -> u8 {
+        match attacker {
+            // Heroes: Hero > Minion > Tower > Structure
+            EntityRole::Hero => match self {
+                EntityRole::Hero => 0,
+                EntityRole::Minion => 1,
+                EntityRole::Tower => 2,
+                EntityRole::Structure => 3,
+            },
+            // Minions: Minion > Hero > Tower > Structure
+            EntityRole::Minion => match self {
+                EntityRole::Minion => 0,
+                EntityRole::Hero => 1,
+                EntityRole::Tower => 2,
+                EntityRole::Structure => 3,
+            },
+            // Towers: Minion > Hero > Structure
+            EntityRole::Tower => match self {
+                EntityRole::Minion => 0,
+                EntityRole::Hero => 1,
+                EntityRole::Structure => 2,
+                EntityRole::Tower => 3,
+            },
+            // Structures don't attack
+            EntityRole::Structure => 3,
         }
     }
 }
+
+/// Tracks the current combat target. Persists across ticks until invalidated.
+#[derive(Clone, Debug)]
+pub struct CurrentTarget(pub Entity);
+
+/// Default movement direction when not in combat (march toward enemy base).
+#[derive(Clone, Debug)]
+pub struct MarchDirection(pub Vec3);
 
 // ── Auto-PvP Combat ──
 
@@ -194,25 +222,38 @@ impl Default for AutoCombat {
 }
 
 /// Auto-PvP: entities with AutoCombat + Health + Team detect enemies, chase, and attack.
+///
+/// Behavior per entity each tick:
+/// 1. Dead → zero velocity, skip.
+/// 2. Validate CurrentTarget (alive? in detect_range?). Remove if invalid.
+/// 3. If no CurrentTarget → scan for best enemy using role-aware priority.
+/// 4. If CurrentTarget exists → chase or attack.
+/// 5. If no target at all → march in MarchDirection (or stop).
 pub fn auto_combat_system(world: &mut World, dt: f32) {
-    // Collect all combat entities: position, team, alive
-    let fighters: Vec<(Entity, Vec3, u8, bool)> = {
+    // Collect all combat entities: position, team, alive, role
+    let fighters: Vec<(Entity, Vec3, u8, bool, EntityRole)> = {
         let query = Query::<(Entity, &LocalTransform, &Team, &Health)>::new(world);
         query
             .iter()
             .filter(|(e, _, _, _)| world.get::<AutoCombat>(*e).is_some())
-            .map(|(e, lt, team, health)| (e, lt.0.translation, team.0, health.is_dead()))
+            .map(|(e, lt, team, health)| {
+                let role = world
+                    .get::<EntityRole>(e)
+                    .copied()
+                    .unwrap_or(EntityRole::Hero);
+                (e, lt.0.translation, team.0, health.is_dead(), role)
+            })
             .collect()
     };
 
-    // For each alive fighter, find nearest enemy and decide: chase or attack
     let mut velocity_updates: Vec<(Entity, Vec3)> = Vec::new();
     let mut damage_events: Vec<DamageEvent> = Vec::new();
     let mut cooldown_resets: Vec<Entity> = Vec::new();
+    let mut target_inserts: Vec<(Entity, Entity)> = Vec::new();
+    let mut target_removes: Vec<Entity> = Vec::new();
 
-    for &(entity, pos, team, dead) in &fighters {
+    for &(entity, pos, team, dead, my_role) in &fighters {
         if dead {
-            // Stop dead entities from drifting
             if let Some(v) = world.get_mut::<Velocity>(entity) {
                 v.linear = Vec3::ZERO;
             }
@@ -224,35 +265,63 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             None => continue,
         };
 
-        // Find best target: sort by (role_priority, distance)
-        let mut nearest: Option<(Entity, Vec3, f32)> = None;
-        let mut nearest_priority: u8 = u8::MAX;
-        for &(other, other_pos, other_team, other_dead) in &fighters {
-            if other == entity || other_team == team || other_dead {
-                continue;
-            }
-            let dist = (other_pos - pos).length();
-            if dist >= combat.detect_range {
-                continue;
-            }
-            let priority = world
-                .get::<EntityRole>(other)
-                .map(|r| r.target_priority())
-                .unwrap_or(1); // default: hero-level priority
-            let better = match nearest {
-                None => true,
-                Some((_, _, best_dist)) => {
-                    priority < nearest_priority
-                        || (priority == nearest_priority && dist < best_dist)
-                }
-            };
-            if better {
-                nearest = Some((other, other_pos, dist));
-                nearest_priority = priority;
+        // --- Step 2: Validate CurrentTarget ---
+        let mut current_target: Option<(Entity, Vec3, f32)> = None;
+        if let Some(ct) = world.get::<CurrentTarget>(entity) {
+            let target_entity = ct.0;
+            // Check: alive, in detect_range, still an enemy
+            let valid = fighters
+                .iter()
+                .find(|(e, _, _, _, _)| *e == target_entity)
+                .and_then(|&(_, tpos, tteam, tdead, _)| {
+                    if tdead || tteam == team {
+                        return None;
+                    }
+                    let dist = (tpos - pos).length();
+                    if dist >= combat.detect_range {
+                        return None;
+                    }
+                    Some((target_entity, tpos, dist))
+                });
+            match valid {
+                Some(v) => current_target = Some(v),
+                None => target_removes.push(entity),
             }
         }
 
-        if let Some((target, _target_pos, dist)) = nearest {
+        // --- Step 3: Acquire new target if none ---
+        if current_target.is_none() {
+            let mut best: Option<(Entity, Vec3, f32)> = None;
+            let mut best_priority: u8 = u8::MAX;
+            for &(other, other_pos, other_team, other_dead, other_role) in &fighters {
+                if other == entity || other_team == team || other_dead {
+                    continue;
+                }
+                let dist = (other_pos - pos).length();
+                if dist >= combat.detect_range {
+                    continue;
+                }
+                let priority = other_role.target_priority_for(&my_role);
+                let better = match best {
+                    None => true,
+                    Some((_, _, best_dist)) => {
+                        priority < best_priority
+                            || (priority == best_priority && dist < best_dist)
+                    }
+                };
+                if better {
+                    best = Some((other, other_pos, dist));
+                    best_priority = priority;
+                }
+            }
+            if let Some((target_entity, _, _)) = best {
+                target_inserts.push((entity, target_entity));
+                current_target = best;
+            }
+        }
+
+        // --- Step 4: Act on target ---
+        if let Some((target, target_pos, dist)) = current_target {
             if dist <= combat.range {
                 // In attack range — deal damage if cooldown ready
                 if combat.elapsed >= combat.cooldown {
@@ -263,52 +332,37 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
                     });
                     cooldown_resets.push(entity);
                 }
-                // Stop moving when in range
                 velocity_updates.push((entity, Vec3::ZERO));
             } else if combat.attack_style == AttackStyle::Stationary {
-                // Stationary: enemy in detect range but not attack range — do nothing
                 velocity_updates.push((entity, Vec3::ZERO));
             } else {
-                // Chase: move toward target
-                let dir = (_target_pos - pos).normalize();
+                // Chase target
+                let dir = (target_pos - pos).normalize();
                 velocity_updates.push((
                     entity,
                     Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed),
                 ));
             }
         } else {
-            // No enemy found — check if entity has patrol waypoints to follow
-            let patrol_vel = world.get::<crate::ai::AiGoal>(entity).and_then(|goal| {
-                if matches!(goal.behavior, crate::ai::AiBehavior::Patrol)
-                    && !goal.waypoints.is_empty()
-                {
-                    let wp = goal.waypoints[goal.waypoint_index % goal.waypoints.len()];
-                    let to_wp = wp - pos;
-                    let dist = Vec3::new(to_wp.x, 0.0, to_wp.z).length();
-                    if dist > 0.5 {
-                        let dir = Vec3::new(to_wp.x, 0.0, to_wp.z).normalize();
-                        Some(Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed))
-                    } else {
-                        None // at waypoint, advance index below
-                    }
-                } else {
-                    None
-                }
-            });
-
-            if let Some(vel) = patrol_vel {
-                velocity_updates.push((entity, vel));
+            // --- Step 5: No target — march toward enemy base ---
+            if let Some(march) = world.get::<MarchDirection>(entity) {
+                let dir = march.0;
+                velocity_updates.push((
+                    entity,
+                    Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed),
+                ));
             } else {
-                // Advance patrol waypoint if close enough
-                if let Some(goal) = world.get_mut::<crate::ai::AiGoal>(entity)
-                    && matches!(goal.behavior, crate::ai::AiBehavior::Patrol)
-                    && !goal.waypoints.is_empty()
-                {
-                    goal.waypoint_index = (goal.waypoint_index + 1) % goal.waypoints.len();
-                }
                 velocity_updates.push((entity, Vec3::ZERO));
             }
         }
+    }
+
+    // Apply target changes
+    for entity in target_removes {
+        world.remove::<CurrentTarget>(entity);
+    }
+    for (entity, target) in target_inserts {
+        world.insert(entity, CurrentTarget(target));
     }
 
     // Apply velocity updates
@@ -334,7 +388,7 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
     }
 
     // Tick cooldowns for all fighters
-    for &(entity, _, _, dead) in &fighters {
+    for &(entity, _, _, dead, _) in &fighters {
         if dead {
             continue;
         }
