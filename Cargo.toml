@@ -11,6 +11,7 @@ members = [
     "crates/euca-agent",
     "crates/euca-physics",
     "crates/euca-asset",
+    "crates/euca-animation",
     "crates/euca-editor",
     "crates/euca-input",
     "crates/euca-net",
