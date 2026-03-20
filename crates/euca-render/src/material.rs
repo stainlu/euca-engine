@@ -12,13 +12,28 @@ pub enum AlphaMode {
 }
 
 impl Default for AlphaMode {
-    fn default() -> Self { Self::Opaque }
+    fn default() -> Self {
+        Self::Opaque
+    }
 }
 
 impl AlphaMode {
-    pub fn is_transparent(&self) -> bool { matches!(self, AlphaMode::Blend) }
-    pub fn as_f32(&self) -> f32 { match self { AlphaMode::Opaque => 0.0, AlphaMode::Mask { .. } => 1.0, AlphaMode::Blend => 2.0 } }
-    pub fn cutoff(&self) -> f32 { match self { AlphaMode::Mask { cutoff } => *cutoff, _ => 0.5 } }
+    pub fn is_transparent(&self) -> bool {
+        matches!(self, AlphaMode::Blend)
+    }
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            AlphaMode::Opaque => 0.0,
+            AlphaMode::Mask { .. } => 1.0,
+            AlphaMode::Blend => 2.0,
+        }
+    }
+    pub fn cutoff(&self) -> f32 {
+        match self {
+            AlphaMode::Mask { cutoff } => *cutoff,
+            _ => 0.5,
+        }
+    }
 }
 
 /// PBR material properties.
@@ -38,30 +53,87 @@ pub struct Material {
 
 impl Material {
     pub fn new(albedo: [f32; 4], metallic: f32, roughness: f32) -> Self {
-        Self { albedo, metallic, roughness, albedo_texture: None, normal_texture: None, emissive: [0.0; 3], emissive_texture: None, metallic_roughness_texture: None, ao_texture: None, alpha_mode: AlphaMode::Opaque }
+        Self {
+            albedo,
+            metallic,
+            roughness,
+            albedo_texture: None,
+            normal_texture: None,
+            emissive: [0.0; 3],
+            emissive_texture: None,
+            metallic_roughness_texture: None,
+            ao_texture: None,
+            alpha_mode: AlphaMode::Opaque,
+        }
     }
-    pub fn with_normal_map(mut self, texture: TextureHandle) -> Self { self.normal_texture = Some(texture); self }
-    pub fn with_texture(mut self, texture: TextureHandle) -> Self { self.albedo_texture = Some(texture); self }
-    pub fn with_emissive(mut self, emissive: [f32; 3]) -> Self { self.emissive = emissive; self }
-    pub fn with_emissive_texture(mut self, texture: TextureHandle) -> Self { self.emissive_texture = Some(texture); self }
-    pub fn with_metallic_roughness_texture(mut self, texture: TextureHandle) -> Self { self.metallic_roughness_texture = Some(texture); self }
-    pub fn with_ao_texture(mut self, texture: TextureHandle) -> Self { self.ao_texture = Some(texture); self }
-    pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Self { self.alpha_mode = mode; self }
-    pub fn red_plastic() -> Self { Self::new([0.9, 0.1, 0.1, 1.0], 0.0, 0.7) }
-    pub fn blue_plastic() -> Self { Self::new([0.1, 0.2, 0.9, 1.0], 0.0, 0.3) }
-    pub fn gold() -> Self { Self::new([1.0, 0.84, 0.0, 1.0], 1.0, 0.2) }
-    pub fn silver() -> Self { Self::new([0.95, 0.95, 0.95, 1.0], 1.0, 0.4) }
-    pub fn gray() -> Self { Self::new([0.5, 0.5, 0.5, 1.0], 0.0, 0.9) }
-    pub fn green() -> Self { Self::new([0.2, 0.8, 0.2, 1.0], 0.0, 0.6) }
+    pub fn with_normal_map(mut self, texture: TextureHandle) -> Self {
+        self.normal_texture = Some(texture);
+        self
+    }
+    pub fn with_texture(mut self, texture: TextureHandle) -> Self {
+        self.albedo_texture = Some(texture);
+        self
+    }
+    pub fn with_emissive(mut self, emissive: [f32; 3]) -> Self {
+        self.emissive = emissive;
+        self
+    }
+    pub fn with_emissive_texture(mut self, texture: TextureHandle) -> Self {
+        self.emissive_texture = Some(texture);
+        self
+    }
+    pub fn with_metallic_roughness_texture(mut self, texture: TextureHandle) -> Self {
+        self.metallic_roughness_texture = Some(texture);
+        self
+    }
+    pub fn with_ao_texture(mut self, texture: TextureHandle) -> Self {
+        self.ao_texture = Some(texture);
+        self
+    }
+    pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Self {
+        self.alpha_mode = mode;
+        self
+    }
+    pub fn red_plastic() -> Self {
+        Self::new([0.9, 0.1, 0.1, 1.0], 0.0, 0.7)
+    }
+    pub fn blue_plastic() -> Self {
+        Self::new([0.1, 0.2, 0.9, 1.0], 0.0, 0.3)
+    }
+    pub fn gold() -> Self {
+        Self::new([1.0, 0.84, 0.0, 1.0], 1.0, 0.2)
+    }
+    pub fn silver() -> Self {
+        Self::new([0.95, 0.95, 0.95, 1.0], 1.0, 0.4)
+    }
+    pub fn gray() -> Self {
+        Self::new([0.5, 0.5, 0.5, 1.0], 0.0, 0.9)
+    }
+    pub fn green() -> Self {
+        Self::new([0.2, 0.8, 0.2, 1.0], 0.0, 0.6)
+    }
 }
 
 impl Default for Material {
-    fn default() -> Self { Self::new([0.8, 0.8, 0.8, 1.0], 0.0, 0.5) }
+    fn default() -> Self {
+        Self::new([0.8, 0.8, 0.8, 1.0], 0.0, 0.5)
+    }
 }
 
 impl Material {
     pub fn textured(texture: TextureHandle) -> Self {
-        Self { albedo: [1.0, 1.0, 1.0, 1.0], metallic: 0.0, roughness: 0.5, albedo_texture: Some(texture), normal_texture: None, emissive: [0.0; 3], emissive_texture: None, metallic_roughness_texture: None, ao_texture: None, alpha_mode: AlphaMode::Opaque }
+        Self {
+            albedo: [1.0, 1.0, 1.0, 1.0],
+            metallic: 0.0,
+            roughness: 0.5,
+            albedo_texture: Some(texture),
+            normal_texture: None,
+            emissive: [0.0; 3],
+            emissive_texture: None,
+            metallic_roughness_texture: None,
+            ao_texture: None,
+            alpha_mode: AlphaMode::Opaque,
+        }
     }
 }
 

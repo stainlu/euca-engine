@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::camera::Camera;
 use crate::mesh::MeshHandle;
 use euca_ecs::{Query, World};
@@ -72,11 +73,7 @@ impl Default for LodSettings {
 ///   where `visible_height_at_distance = 2 * distance * tan(fov_y / 2)`
 ///
 /// For orthographic cameras, the formula is `diameter / (2 * ortho_size)`.
-fn screen_space_size(
-    camera: &Camera,
-    object_position: Vec3,
-    radius: f32,
-) -> f32 {
+fn screen_space_size(camera: &Camera, object_position: Vec3, radius: f32) -> f32 {
     if radius <= 0.0 {
         return 1.0; // Treat zero-radius as always full-detail
     }
@@ -135,8 +132,7 @@ pub fn lod_select_system(world: &mut World) {
             .iter()
             .map(|(entity, lod_group, global_transform)| {
                 let position = global_transform.0.translation;
-                let screen_size =
-                    screen_space_size(&camera, position, lod_group.radius) * bias;
+                let screen_size = screen_space_size(&camera, position, lod_group.radius) * bias;
                 let selected = select_level(&lod_group.levels, screen_size);
                 (entity, CurrentLod { mesh: selected })
             })
@@ -364,7 +360,9 @@ mod tests {
 
         lod_select_system(&mut world);
 
-        let current = world.get::<CurrentLod>(entity).expect("CurrentLod should exist");
+        let current = world
+            .get::<CurrentLod>(entity)
+            .expect("CurrentLod should exist");
         // At distance 10, screen_size ≈ 0.24 -> between 0.05 and 0.3 -> LOD 1
         assert_eq!(
             current.mesh,
@@ -507,8 +505,11 @@ mod tests {
         let first = world.get::<CurrentLod>(entity).unwrap().mesh;
 
         // Move entity far away
-        world.get_mut::<GlobalTransform>(entity).unwrap().0.translation =
-            Vec3::new(0.0, 0.0, 500.0);
+        world
+            .get_mut::<GlobalTransform>(entity)
+            .unwrap()
+            .0
+            .translation = Vec3::new(0.0, 0.0, 500.0);
 
         // Second run should update the existing CurrentLod
         lod_select_system(&mut world);

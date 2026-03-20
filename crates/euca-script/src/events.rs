@@ -116,9 +116,7 @@ mod tests {
         let lua = Lua::new();
         let mut bus = ScriptEventBus::new();
 
-        let func = lua
-            .create_function(|_, ()| Ok(()))
-            .unwrap();
+        let func = lua.create_function(|_, ()| Ok(())).unwrap();
         bus.register(&lua, "test", func).unwrap();
         bus.clear(&lua);
 

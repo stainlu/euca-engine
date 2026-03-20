@@ -64,10 +64,7 @@ impl ScriptEngine {
     /// Load a script from a string. The `name` is used to identify the script
     /// (e.g. `"player.lua"`). Replaces any previously loaded script with the same name.
     pub fn load_string(&mut self, name: &str, source: &str) -> LuaResult<()> {
-        self.lua
-            .load(source)
-            .set_name(name)
-            .exec()?;
+        self.lua.load(source).set_name(name).exec()?;
         self.loaded_scripts.insert(name.to_owned());
         log::info!("Loaded script: {name}");
         Ok(())
@@ -330,8 +327,7 @@ mod tests {
         let mut world = World::new();
         let entity = world.spawn_empty();
 
-        let result =
-            engine.call_entity_update(&mut world, entity, "nope.lua", "on_update", 0.016);
+        let result = engine.call_entity_update(&mut world, entity, "nope.lua", "on_update", 0.016);
         assert!(result.is_err());
     }
 

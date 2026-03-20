@@ -44,11 +44,7 @@ pub(crate) fn lua_id_to_entity(id: u64) -> Entity {
 
 /// Set the world pointer and delta time for the duration of a Lua call.
 /// Returns a guard that clears the pointer on drop.
-pub(crate) fn with_world_context<R>(
-    world: &mut World,
-    dt: f32,
-    f: impl FnOnce() -> R,
-) -> R {
+pub(crate) fn with_world_context<R>(world: &mut World, dt: f32, f: impl FnOnce() -> R) -> R {
     WORLD_PTR.set(world as *mut World);
     DELTA_TIME.set(dt);
     let result = f();

@@ -366,7 +366,7 @@ pub fn setup_frustum_culling(
     manager.add_buffer("cull_aabbs", aabb_buf);
 
     // Visibility bitset: one bit per entity, packed into u32 words.
-    let vis_words = (max_entities + 31) / 32;
+    let vis_words = max_entities.div_ceil(32);
     let vis_size = (vis_words as u64) * 4;
     let vis_buf = GpuBuffer::new_storage(device, vis_size, "cull_visibility");
     manager.add_buffer("cull_visibility", vis_buf);

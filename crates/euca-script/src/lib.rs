@@ -53,8 +53,7 @@ pub const DEFAULT_INSTRUCTION_LIMIT: u32 = 100_000;
 pub fn script_tick_system(world: &mut euca_ecs::World, dt: f32) {
     // Collect entities + their script info to avoid borrow conflicts.
     let scripts: Vec<(euca_ecs::Entity, String, String)> = {
-        let query =
-            euca_ecs::Query::<(euca_ecs::Entity, &ScriptComponent)>::new(world);
+        let query = euca_ecs::Query::<(euca_ecs::Entity, &ScriptComponent)>::new(world);
         query
             .iter()
             .filter(|(_, sc)| sc.enabled)
@@ -82,12 +81,8 @@ pub fn script_tick_system(world: &mut euca_ecs::World, dt: f32) {
     engine.dispatch_ecs_events(world);
 
     for (entity, script_name, update_fn) in &scripts {
-        if let Err(err) =
-            engine.call_entity_update(world, *entity, script_name, update_fn, dt)
-        {
-            log::error!(
-                "Lua error in {script_name}:{update_fn} for entity {entity}: {err}"
-            );
+        if let Err(err) = engine.call_entity_update(world, *entity, script_name, update_fn, dt) {
+            log::error!("Lua error in {script_name}:{update_fn} for entity {entity}: {err}");
         }
     }
 
