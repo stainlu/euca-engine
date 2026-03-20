@@ -1,7 +1,13 @@
 mod hierarchy;
+mod prefab;
+mod spatial;
 mod transform;
 
 pub use hierarchy::{Children, Parent};
+pub use prefab::{
+    ComponentData, Damage, Health, Name, Prefab, PrefabRegistry, Speed, Team, WorldPrefabExt,
+};
+pub use spatial::{spatial_index_update_system, SpatialIndex};
 pub use transform::{GlobalTransform, LocalTransform};
 
 use std::collections::VecDeque;
