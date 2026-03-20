@@ -188,9 +188,10 @@ fn integrate_positions(world: &mut World, dt: f32) {
                 let safe_t = (closest_t - 0.01).max(0.0);
                 new_pos = old_pos + displacement * safe_t;
 
-                // Kill velocity along the movement direction on impact
+                // Only dampen vertical velocity on ground contact.
+                // Preserves horizontal movement so entities can walk on surfaces.
                 if let Some(vel) = world.get_mut::<Velocity>(entity) {
-                    vel.linear = vel.linear * 0.1; // dampen heavily on CCD contact
+                    vel.linear.y *= 0.1;
                 }
             }
         }
