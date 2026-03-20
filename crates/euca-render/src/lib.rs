@@ -7,7 +7,6 @@ mod lod;
 mod material;
 mod mesh;
 mod plugin;
-pub mod post_process;
 mod renderer;
 mod texture;
 mod vertex;
