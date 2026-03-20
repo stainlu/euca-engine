@@ -1,3 +1,4 @@
+mod buffer;
 mod camera;
 pub mod compute;
 pub mod decal;
@@ -16,6 +17,7 @@ mod vertex;
 
 pub use wgpu;
 
+pub use buffer::{BufferKind, SmartBuffer};
 pub use camera::{Camera, Frustum};
 pub use compute::{
     ComputeManager, ComputePipeline, ComputePipelineDesc, CullParams, GpuAabb, GpuBuffer,

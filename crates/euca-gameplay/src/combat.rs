@@ -305,8 +305,7 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
                 let better = match best {
                     None => true,
                     Some((_, _, best_dist)) => {
-                        priority < best_priority
-                            || (priority == best_priority && dist < best_dist)
+                        priority < best_priority || (priority == best_priority && dist < best_dist)
                     }
                 };
                 if better {
@@ -413,12 +412,7 @@ mod tests {
         world
     }
 
-    fn spawn_fighter(
-        world: &mut World,
-        pos: Vec3,
-        team: u8,
-        role: EntityRole,
-    ) -> Entity {
+    fn spawn_fighter(world: &mut World, pos: Vec3, team: u8, role: EntityRole) -> Entity {
         let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
         world.insert(e, Health::new(500.0));
         world.insert(e, Team(team));
@@ -493,12 +487,13 @@ mod tests {
         // Team 2 minion nearby
         let _minion = spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Minion);
         // Team 2 hero slightly further
-        let enemy_hero =
-            spawn_fighter(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Hero);
+        let enemy_hero = spawn_fighter(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Hero);
 
         auto_combat_system(&mut world, 0.016);
 
-        let target = world.get::<CurrentTarget>(hero).expect("should have target");
+        let target = world
+            .get::<CurrentTarget>(hero)
+            .expect("should have target");
         assert_eq!(
             target.0.index(),
             enemy_hero.index(),
@@ -512,15 +507,16 @@ mod tests {
         // Team 1 minion at origin
         let minion = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Minion);
         // Team 2 hero nearby
-        let _enemy_hero =
-            spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
+        let _enemy_hero = spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
         // Team 2 minion slightly further
         let enemy_minion =
             spawn_fighter(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Minion);
 
         auto_combat_system(&mut world, 0.016);
 
-        let target = world.get::<CurrentTarget>(minion).expect("should have target");
+        let target = world
+            .get::<CurrentTarget>(minion)
+            .expect("should have target");
         assert_eq!(
             target.0.index(),
             enemy_minion.index(),
@@ -539,14 +535,15 @@ mod tests {
         world.insert(tower, AutoCombat::stationary(40.0, 5.0, 1.5));
         world.insert(tower, Velocity::default());
 
-        let _enemy_hero =
-            spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
+        let _enemy_hero = spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
         let enemy_minion =
             spawn_fighter(&mut world, Vec3::new(4.0, 0.0, 0.0), 2, EntityRole::Minion);
 
         auto_combat_system(&mut world, 0.016);
 
-        let target = world.get::<CurrentTarget>(tower).expect("tower should have target");
+        let target = world
+            .get::<CurrentTarget>(tower)
+            .expect("tower should have target");
         assert_eq!(
             target.0.index(),
             enemy_minion.index(),
@@ -606,8 +603,11 @@ mod tests {
         assert!(world.get::<CurrentTarget>(hero).is_some());
 
         // Move enemy far away (beyond detect_range)
-        world.get_mut::<LocalTransform>(enemy).unwrap().0.translation =
-            Vec3::new(100.0, 0.0, 0.0);
+        world
+            .get_mut::<LocalTransform>(enemy)
+            .unwrap()
+            .0
+            .translation = Vec3::new(100.0, 0.0, 0.0);
 
         // Target should be cleared
         auto_combat_system(&mut world, 0.016);
