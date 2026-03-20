@@ -9,5 +9,9 @@ description = "SIMD-ready game math: Vec2/3/4, Quat, Mat4, Transform, AABB — z
 keywords = ["math", "gamedev", "linear-algebra", "vector", "quaternion"]
 categories = ["game-development", "mathematics"]
 
+[features]
+default = ["simd"]
+simd = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -1,4 +1,4 @@
-use crate::{Quat, Vec3, Vec4};
+use crate::{cfg_scalar, cfg_simd, Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use std::ops::Mul;
 
@@ -14,6 +14,41 @@ impl Default for Mat4 {
     #[inline(always)]
     fn default() -> Self {
         Self::IDENTITY
+    }
+}
+
+// ── SIMD helpers ────────────────────────────────────────────────────────────
+
+cfg_simd! {
+    use crate::simd::f32x4;
+
+    impl Mat4 {
+        /// Load column `i` as a SIMD register.
+        #[inline(always)]
+        fn load_col(&self, i: usize) -> f32x4 {
+            let c = &self.cols[i];
+            f32x4::new(c[0], c[1], c[2], c[3])
+        }
+
+        /// Store a SIMD register into column array.
+        #[inline(always)]
+        fn store_col(v: f32x4) -> [f32; 4] {
+            [v.x(), v.y(), v.z(), v.w()]
+        }
+
+        /// Multiply a column vector by this matrix using SIMD: result = M * v.
+        /// Computes: col0 * v.x + col1 * v.y + col2 * v.z + col3 * v.w
+        #[inline(always)]
+        fn mul_col(&self, v: f32x4) -> f32x4 {
+            let c0 = self.load_col(0);
+            let c1 = self.load_col(1);
+            let c2 = self.load_col(2);
+            let c3 = self.load_col(3);
+            c0.mul(v.splat_x())
+                .add(c1.mul(v.splat_y()))
+                .add(c2.mul(v.splat_z()))
+                .add(c3.mul(v.splat_w()))
+        }
     }
 }
 
@@ -177,7 +212,6 @@ impl Mat4 {
 
     /// Computes the matrix inverse via cofactor expansion.
     pub fn inverse(self) -> Self {
-        // Cofactor expansion for 4x4 inverse
         let m = &self.cols;
         let a2323 = m[2][2] * m[3][3] - m[3][2] * m[2][3];
         let a1323 = m[1][2] * m[3][3] - m[3][2] * m[1][3];
@@ -259,46 +293,84 @@ impl Mat4 {
     pub fn from_cols_array_2d(cols: &[[f32; 4]; 4]) -> Self {
         Self { cols: *cols }
     }
-
-    /// Transform a point (w=1, applies translation).
-    pub fn transform_point3(&self, p: Vec3) -> Vec3 {
-        let m = &self.cols;
-        Vec3::new(
-            m[0][0] * p.x + m[1][0] * p.y + m[2][0] * p.z + m[3][0],
-            m[0][1] * p.x + m[1][1] * p.y + m[2][1] * p.z + m[3][1],
-            m[0][2] * p.x + m[1][2] * p.y + m[2][2] * p.z + m[3][2],
-        )
-    }
 }
 
-impl Mul for Mat4 {
-    type Output = Self;
-    fn mul(self, rhs: Self) -> Self {
-        let a = &self.cols;
-        let b = &rhs.cols;
-        let mut out = [[0.0f32; 4]; 4];
+// ── SIMD: transform_point3, Mat4*Mat4, Mat4*Vec4 ────────────────────────────
 
-        for c in 0..4 {
-            for r in 0..4 {
-                out[c][r] =
-                    a[0][r] * b[c][0] + a[1][r] * b[c][1] + a[2][r] * b[c][2] + a[3][r] * b[c][3];
+cfg_simd! {
+    impl Mat4 {
+        /// Transform a point (w=1, applies translation).
+        pub fn transform_point3(&self, p: Vec3) -> Vec3 {
+            let v = f32x4::new(p.x, p.y, p.z, 1.0);
+            let result = self.mul_col(v);
+            Vec3::new(result.x(), result.y(), result.z())
+        }
+    }
+
+    impl Mul for Mat4 {
+        type Output = Self;
+        fn mul(self, rhs: Self) -> Self {
+            Self {
+                cols: [
+                    Self::store_col(self.mul_col(rhs.load_col(0))),
+                    Self::store_col(self.mul_col(rhs.load_col(1))),
+                    Self::store_col(self.mul_col(rhs.load_col(2))),
+                    Self::store_col(self.mul_col(rhs.load_col(3))),
+                ],
             }
         }
+    }
 
-        Self { cols: out }
+    impl Mul<Vec4> for Mat4 {
+        type Output = Vec4;
+        fn mul(self, v: Vec4) -> Vec4 {
+            Vec4::from_simd(self.mul_col(v.load()))
+        }
     }
 }
 
-impl Mul<Vec4> for Mat4 {
-    type Output = Vec4;
-    fn mul(self, v: Vec4) -> Vec4 {
-        let m = &self.cols;
-        Vec4::new(
-            m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
-            m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
-            m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
-            m[0][3] * v.x + m[1][3] * v.y + m[2][3] * v.z + m[3][3] * v.w,
-        )
+// ── Scalar fallback: transform_point3, Mat4*Mat4, Mat4*Vec4 ─────────────────
+
+cfg_scalar! {
+    impl Mat4 {
+        /// Transform a point (w=1, applies translation).
+        pub fn transform_point3(&self, p: Vec3) -> Vec3 {
+            let m = &self.cols;
+            Vec3::new(
+                m[0][0] * p.x + m[1][0] * p.y + m[2][0] * p.z + m[3][0],
+                m[0][1] * p.x + m[1][1] * p.y + m[2][1] * p.z + m[3][1],
+                m[0][2] * p.x + m[1][2] * p.y + m[2][2] * p.z + m[3][2],
+            )
+        }
+    }
+
+    impl Mul for Mat4 {
+        type Output = Self;
+        fn mul(self, rhs: Self) -> Self {
+            let a = &self.cols;
+            let b = &rhs.cols;
+            let mut out = [[0.0f32; 4]; 4];
+            for c in 0..4 {
+                for r in 0..4 {
+                    out[c][r] = a[0][r] * b[c][0] + a[1][r] * b[c][1]
+                        + a[2][r] * b[c][2] + a[3][r] * b[c][3];
+                }
+            }
+            Self { cols: out }
+        }
+    }
+
+    impl Mul<Vec4> for Mat4 {
+        type Output = Vec4;
+        fn mul(self, v: Vec4) -> Vec4 {
+            let m = &self.cols;
+            Vec4::new(
+                m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
+                m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
+                m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
+                m[0][3] * v.x + m[1][3] * v.y + m[2][3] * v.z + m[3][3] * v.w,
+            )
+        }
     }
 }
 
@@ -340,5 +412,35 @@ mod tests {
         let p = Vec3::new(1.0, 2.0, 3.0);
         let result = m.transform_point3(p);
         assert_eq!(result, Vec3::new(11.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn mat4_mul_vec4() {
+        let m = Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        let v = Vec4::new(1.0, 2.0, 3.0, 1.0);
+        let result = m * v;
+        assert!((result.x - 11.0).abs() < 1e-6);
+        assert!((result.y - 22.0).abs() < 1e-6);
+        assert!((result.z - 33.0).abs() < 1e-6);
+        assert!((result.w - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mat4_mul_associative() {
+        let a = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        let b = Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0));
+        let c = Mat4::from_rotation(Quat::from_axis_angle(Vec3::Y, 0.5));
+
+        let ab_c = (a * b) * c;
+        let a_bc = a * (b * c);
+
+        for col in 0..4 {
+            for row in 0..4 {
+                assert!(
+                    (ab_c.cols[col][row] - a_bc.cols[col][row]).abs() < 1e-4,
+                    "Associativity failed at [{col}][{row}]"
+                );
+            }
+        }
     }
 }
