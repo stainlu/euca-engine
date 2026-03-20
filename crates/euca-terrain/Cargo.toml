@@ -1,0 +1,12 @@
+[package]
+name = "euca-terrain"
+version.workspace = true
+edition.workspace = true
+description = "Terrain and heightmap system with chunk LOD, texture splatting, and physics heightfield"
+keywords = ["terrain", "heightmap", "gamedev", "lod", "splatting"]
+categories = ["game-development"]
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-physics = { path = "../euca-physics" }
