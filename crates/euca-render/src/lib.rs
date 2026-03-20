@@ -2,6 +2,7 @@ mod camera;
 pub mod compute;
 pub mod decal;
 pub mod deferred;
+pub mod foliage;
 mod gpu;
 mod hardware;
 mod light;
@@ -26,6 +27,9 @@ pub use decal::{
     collect_decal_draw_commands,
 };
 pub use deferred::{GBuffer, GBufferFormats, RenderPath};
+pub use foliage::{
+    FoliageDrawData, FoliageInstance, FoliageLayer, FoliageRenderer, scatter_foliage,
+};
 pub use gpu::GpuContext;
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
