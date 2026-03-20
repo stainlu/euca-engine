@@ -1,5 +1,10 @@
 # Euca Engine
 
+[![CI](https://github.com/stainlu/euca-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/stainlu/euca-engine/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/stainlu/euca-engine)](https://github.com/stainlu/euca-engine/releases)
+[![Rust](https://img.shields.io/badge/Rust-1.89+-orange.svg)](https://www.rust-lang.org)
+
 An ECS-first, agent-native game engine in Rust. AI agents build games via CLI commands.
 
 ## 30-Second Demo
