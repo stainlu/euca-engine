@@ -85,7 +85,7 @@ impl Material {
 }
 
 /// Handle referencing a GPU-uploaded material.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, euca_reflect::Reflect)]
 pub struct MaterialHandle(pub u32);
 
 /// ECS component: which material to use for rendering.
