@@ -8,6 +8,7 @@ mod light;
 mod lod;
 mod material;
 mod mesh;
+pub mod occlusion;
 mod plugin;
 pub mod post_process;
 mod renderer;
@@ -31,6 +32,7 @@ pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, System
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
 pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
 pub use mesh::{Mesh, MeshHandle, MeshRenderer};
+pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::PostProcessSettings;
 pub use renderer::{DrawCommand, Renderer};
