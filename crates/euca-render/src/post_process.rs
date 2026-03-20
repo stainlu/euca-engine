@@ -960,31 +960,10 @@ fn create_fullscreen_pipeline(
 // ════════════════════════════════════════════════════════════════════════
 
 /// Shared fullscreen triangle vertex shader + VertexOutput struct.
-const FULLSCREEN_VS_WGSL: &str = "
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-@vertex
-fn vs_main(@builtin(vertex_index) id: u32) -> VertexOutput {
-    let x = f32(i32(id) / 2) * 4.0 - 1.0;
-    let y = f32(i32(id) % 2) * 4.0 - 1.0;
-    var out: VertexOutput;
-    out.position = vec4<f32>(x, y, 0.0, 1.0);
-    out.uv = vec2<f32>(x * 0.5 + 0.5, -y * 0.5 + 0.5);
-    return out;
-}
-";
+const FULLSCREEN_VS_WGSL: &str = include_str!("../shaders/fullscreen_vs.wgsl");
 
 /// Shared PostProcessUniforms struct declaration (WGSL).
-const PP_UNIFORMS_WGSL: &str = "
-struct PostProcessUniforms {
-    color_grade: vec4<f32>,
-    flags: vec4<f32>,
-    flags2: vec4<f32>,
-    screen_size: vec4<f32>,
-};
-";
+const PP_UNIFORMS_WGSL: &str = include_str!("../shaders/pp_uniforms.wgsl");
 
 // ── Shader constructors (concatenate shared fragments + pass-specific code) ──
 
