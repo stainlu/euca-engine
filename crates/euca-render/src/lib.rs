@@ -1,4 +1,5 @@
 mod camera;
+pub mod compute;
 pub mod deferred;
 mod gpu;
 mod hardware;
@@ -15,6 +16,10 @@ mod vertex;
 pub use wgpu;
 
 pub use camera::{Camera, Frustum};
+pub use compute::{
+    ComputeManager, ComputePipeline, ComputePipelineDesc, CullParams, GpuAabb, GpuBuffer,
+    GpuFrustumPlanes,
+};
 pub use deferred::{GBuffer, GBufferFormats, RenderPath};
 pub use gpu::GpuContext;
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
