@@ -120,6 +120,12 @@ enum Commands {
         command: AuthCommands,
     },
 
+    /// Diagnose engine health — find broken entities
+    Diagnose,
+
+    /// Show pending events (damage, death, spawn)
+    Events,
+
     /// Engine status
     Status,
 
@@ -1599,6 +1605,14 @@ fn main() {
         },
 
         // ── Standalone ──
+        Commands::Diagnose => {
+            let resp = client.get(format!("{server}/diagnose")).send();
+            handle_response(resp)
+        }
+        Commands::Events => {
+            let resp = client.get(format!("{server}/events")).send();
+            handle_response(resp)
+        }
         Commands::Status => {
             let resp = client.get(format!("{server}/")).send();
             handle_response(resp)

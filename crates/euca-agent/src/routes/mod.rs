@@ -1,6 +1,7 @@
 mod animation;
 mod audio;
 mod camera;
+mod debug;
 mod entity;
 mod gameplay;
 mod input;
@@ -14,6 +15,7 @@ mod ui;
 pub use animation::*;
 pub use audio::*;
 pub use camera::*;
+pub use debug::*;
 pub use entity::*;
 pub use gameplay::*;
 pub use input::*;
