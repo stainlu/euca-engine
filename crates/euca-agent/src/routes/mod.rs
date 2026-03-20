@@ -342,6 +342,18 @@ pub struct SpawnRequest {
     /// AI patrol waypoints as colon-separated "x,y,z:x,y,z"
     #[serde(default)]
     pub ai_patrol: Option<Vec<[f32; 3]>>,
+    /// Starting gold
+    #[serde(default)]
+    pub gold: Option<i32>,
+    /// Gold bounty awarded to killer
+    #[serde(default)]
+    pub gold_bounty: Option<i32>,
+    /// XP bounty awarded to killer
+    #[serde(default)]
+    pub xp_bounty: Option<u32>,
+    /// Entity role: hero, minion, tower, structure
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 #[derive(Serialize)]

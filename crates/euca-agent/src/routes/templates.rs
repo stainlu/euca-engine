@@ -160,6 +160,29 @@ pub async fn template_spawn(
             w.insert(entity, euca_gameplay::AiGoal::patrol(wps, speed));
         }
 
+        if let Some(g) = spawn_req.gold {
+            w.insert(entity, euca_gameplay::Gold(g));
+            if w.get::<euca_gameplay::Level>(entity).is_none() {
+                w.insert(entity, euca_gameplay::Level::new(1));
+            }
+        }
+        if let Some(b) = spawn_req.gold_bounty {
+            w.insert(entity, euca_gameplay::GoldBounty(b));
+        }
+        if let Some(xp) = spawn_req.xp_bounty {
+            w.insert(entity, euca_gameplay::XpBounty(xp));
+        }
+        if let Some(ref role) = spawn_req.role {
+            let r = match role.as_str() {
+                "hero" => euca_gameplay::EntityRole::Hero,
+                "minion" => euca_gameplay::EntityRole::Minion,
+                "tower" => euca_gameplay::EntityRole::Tower,
+                "structure" => euca_gameplay::EntityRole::Structure,
+                _ => euca_gameplay::EntityRole::Minion,
+            };
+            w.insert(entity, r);
+        }
+
         entity.index()
     });
 

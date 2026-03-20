@@ -78,6 +78,12 @@ enum Commands {
         command: TemplateCommands,
     },
 
+    /// Abilities: use and list hero abilities
+    Ability {
+        #[command(subcommand)]
+        command: AbilityCommands,
+    },
+
     /// Audio: play, stop, list sounds
     Audio {
         #[command(subcommand)]
@@ -247,6 +253,18 @@ enum EntityCommands {
         /// AI patrol waypoints as "x,y,z:x,y,z:x,y,z"
         #[arg(long)]
         ai_patrol: Option<String>,
+        /// Starting gold
+        #[arg(long)]
+        gold: Option<i32>,
+        /// Gold bounty on death
+        #[arg(long)]
+        gold_bounty: Option<i32>,
+        /// XP bounty on death
+        #[arg(long)]
+        xp_bounty: Option<u32>,
+        /// Entity role: hero, minion, tower, structure
+        #[arg(long)]
+        role: Option<String>,
         /// Full JSON body (overrides other flags)
         #[arg(long)]
         json: Option<String>,
@@ -364,6 +382,23 @@ enum CameraCommands {
     Focus {
         /// Entity ID to focus on
         id: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum AbilityCommands {
+    /// Use an ability (Q/W/E/R)
+    Use {
+        /// Entity ID
+        entity_id: u32,
+        /// Ability slot: Q, W, E, or R
+        #[arg(long, default_value = "Q")]
+        slot: String,
+    },
+    /// List an entity's abilities, mana, gold, level
+    List {
+        /// Entity ID
+        entity_id: u32,
     },
 }
 
@@ -601,6 +636,7 @@ enum RuleCommands {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum TemplateCommands {
     /// Define a named entity template
     Create {
@@ -645,6 +681,18 @@ enum TemplateCommands {
         /// AI patrol waypoints
         #[arg(long)]
         ai_patrol: Option<String>,
+        /// Starting gold
+        #[arg(long)]
+        gold: Option<i32>,
+        /// Gold bounty
+        #[arg(long)]
+        gold_bounty: Option<i32>,
+        /// XP bounty
+        #[arg(long)]
+        xp_bounty: Option<u32>,
+        /// Entity role
+        #[arg(long)]
+        role: Option<String>,
     },
     /// Spawn an entity from a template
     Spawn {
@@ -746,7 +794,6 @@ fn parse_collider(s: &str) -> Option<Value> {
 
 /// Build a spawn/create JSON body from friendly flags.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn build_create_body(
     mesh: &Option<String>,
     color: &Option<String>,
@@ -763,6 +810,10 @@ fn build_create_body(
     combat_cooldown: Option<f32>,
     combat_style: &Option<String>,
     ai_patrol: &Option<String>,
+    gold: Option<i32>,
+    gold_bounty: Option<i32>,
+    xp_bounty: Option<u32>,
+    role: &Option<String>,
 ) -> Value {
     let mut body = serde_json::json!({});
     if let Some(m) = mesh {
@@ -828,6 +879,18 @@ fn build_create_body(
         if !waypoints.is_empty() {
             body["ai_patrol"] = serde_json::json!(waypoints);
         }
+    }
+    if let Some(g) = gold {
+        body["gold"] = serde_json::json!(g);
+    }
+    if let Some(b) = gold_bounty {
+        body["gold_bounty"] = serde_json::json!(b);
+    }
+    if let Some(xp) = xp_bounty {
+        body["xp_bounty"] = serde_json::json!(xp);
+    }
+    if let Some(r) = role {
+        body["role"] = serde_json::json!(r);
     }
     body
 }
@@ -927,6 +990,10 @@ fn main() {
                 combat_cooldown,
                 combat_style,
                 ai_patrol,
+                gold,
+                gold_bounty,
+                xp_bounty,
+                role,
                 json,
                 dry_run,
             } => {
@@ -949,6 +1016,10 @@ fn main() {
                         combat_cooldown,
                         &combat_style,
                         &ai_patrol,
+                        gold,
+                        gold_bounty,
+                        xp_bounty,
+                        &role,
                     )
                 };
                 if dry_run {
@@ -1180,6 +1251,10 @@ fn main() {
                 combat_cooldown,
                 combat_style,
                 ai_patrol,
+                gold,
+                gold_bounty,
+                xp_bounty,
+                role,
             } => {
                 let mut body = build_create_body(
                     &mesh,
@@ -1197,6 +1272,10 @@ fn main() {
                     combat_cooldown,
                     &combat_style,
                     &ai_patrol,
+                    gold,
+                    gold_bounty,
+                    xp_bounty,
+                    &role,
                 );
                 body["name"] = serde_json::json!(name);
                 let resp = client
@@ -1243,6 +1322,23 @@ fn main() {
             }
             RuleCommands::List => {
                 let resp = client.get(format!("{server}/rule/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Abilities ──
+        Commands::Ability { command } => match command {
+            AbilityCommands::Use { entity_id, slot } => {
+                let resp = client
+                    .post(format!("{server}/ability/use"))
+                    .json(&serde_json::json!({"entity_id": entity_id, "slot": slot}))
+                    .send();
+                handle_response(resp)
+            }
+            AbilityCommands::List { entity_id } => {
+                let resp = client
+                    .get(format!("{server}/ability/list/{entity_id}"))
+                    .send();
                 handle_response(resp)
             }
         },
@@ -1523,7 +1619,7 @@ fn main() {
         } => {
             let body = build_create_body(
                 &None, &None, &position, &scale, &physics, &collider, None, None, false, None,
-                None, None, None, &None, &None,
+                None, None, None, &None, &None, None, None, None, &None,
             );
             let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)

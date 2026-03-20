@@ -150,6 +150,10 @@ fn test_template_create_and_spawn() {
                 combat_cooldown: None,
                 combat_style: None,
                 ai_patrol: None,
+                gold: None,
+                gold_bounty: None,
+                xp_bounty: None,
+                role: None,
             },
         );
     });

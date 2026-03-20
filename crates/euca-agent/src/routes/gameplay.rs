@@ -381,3 +381,81 @@ pub async fn rule_list(State(world): State<SharedWorld>) -> Json<serde_json::Val
 
     Json(serde_json::json!({"rules": rules, "count": rules.len()}))
 }
+
+/// POST /ability/use — activate an ability on an entity
+pub async fn ability_use(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<super::MessageResponse> {
+    let entity_id = req.get("entity_id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let slot_str = req.get("slot").and_then(|v| v.as_str()).unwrap_or("Q");
+
+    let slot = match slot_str {
+        "W" | "w" => euca_gameplay::AbilitySlot::W,
+        "E" | "e" => euca_gameplay::AbilitySlot::E,
+        "R" | "r" => euca_gameplay::AbilitySlot::R,
+        _ => euca_gameplay::AbilitySlot::Q,
+    };
+
+    let ok = world.with(|w, _| {
+        let entity = match find_entity(w, entity_id) {
+            Some(e) => e,
+            None => return false,
+        };
+        if let Some(events) = w.resource_mut::<euca_ecs::Events>() {
+            events.send(euca_gameplay::UseAbilityEvent { entity, slot });
+        }
+        true
+    });
+
+    Json(super::MessageResponse {
+        ok,
+        message: Some(if ok {
+            format!("Used ability {slot_str} on entity {entity_id}")
+        } else {
+            format!("Entity {entity_id} not found")
+        }),
+    })
+}
+
+/// GET /ability/list/:id — list entity's abilities, cooldowns, mana
+pub async fn ability_list(
+    State(world): State<SharedWorld>,
+    axum::extract::Path(id): axum::extract::Path<u32>,
+) -> Json<serde_json::Value> {
+    let data = world.with_world(|w| {
+        let entity = find_entity(w, id)?;
+        let abilities = w.get::<euca_gameplay::AbilitySet>(entity).map(|set| {
+            set.abilities
+                .iter()
+                .map(|(slot, ability)| {
+                    serde_json::json!({
+                        "slot": format!("{:?}", slot),
+                        "name": ability.name,
+                        "cooldown": ability.cooldown,
+                        "cooldown_remaining": ability.cooldown_remaining,
+                        "mana_cost": ability.mana_cost,
+                        "ready": ability.is_ready(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+        let mana = w
+            .get::<euca_gameplay::Mana>(entity)
+            .map(|m| serde_json::json!({"current": m.current, "max": m.max, "regen": m.regen}));
+        let gold = w.get::<euca_gameplay::Gold>(entity).map(|g| g.0);
+        let level = w
+            .get::<euca_gameplay::Level>(entity)
+            .map(|l| serde_json::json!({"level": l.level, "xp": l.xp, "xp_to_next": l.xp_to_next}));
+
+        Some(serde_json::json!({
+            "entity_id": id,
+            "abilities": abilities.unwrap_or_default(),
+            "mana": mana,
+            "gold": gold,
+            "level": level,
+        }))
+    });
+
+    Json(data.unwrap_or(serde_json::json!({"error": "Entity not found"})))
+}
