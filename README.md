@@ -4,8 +4,24 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/stainlu/euca-engine)](https://github.com/stainlu/euca-engine/releases)
 [![Rust](https://img.shields.io/badge/Rust-1.89+-orange.svg)](https://www.rust-lang.org)
+[![Website](https://img.shields.io/badge/Website-eucaengine.com-green)](https://eucaengine.com)
 
 An ECS-first, agent-native game engine in Rust. AI agents build games via CLI commands.
+
+## Design Goals
+
+* **ECS-First** — Everything is entities, components, and systems. No inheritance, no god objects.
+* **Agent-Native** — AI agents control the engine via CLI/HTTP. The engine is the runtime, agents are the developers.
+* **Composable** — Pick the systems you need. Health + Team + AutoCombat = a fighter. Add Gold + XpBounty = an RPG enemy. No framework lock-in.
+* **Data-Driven** — Game logic via rules ("when death → score +1"), not code. Agents compose behavior, never write Rust.
+* **Fast** — Custom ECS with archetype storage, parallel queries, 60+ FPS with 50+ entities.
+
+## Links
+
+* **[Website](https://eucaengine.com)** — Landing page
+* **[CLI Reference (SKILL.md)](SKILL.md)** — Complete command reference for agents
+* **[MOBA Demo](scripts/moba.sh)** — Full working game built entirely from CLI commands
+* **[Examples](examples/)** — Editor, headless server, agent client
 
 ## 30-Second Demo
 
@@ -113,6 +129,15 @@ euca screenshot                # Capture viewport
 - macOS or Linux (wgpu for rendering)
 - `libasound2-dev` on Linux (for audio)
 
+## Contributing
+
+Contributions welcome. The engine is early-stage — there's plenty to do:
+
+1. Fork and create a branch
+2. `cargo test --workspace` must pass
+3. `cargo clippy --workspace -- -D warnings` must be clean
+4. Open a PR with a clear description
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
