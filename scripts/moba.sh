@@ -31,13 +31,14 @@ $E entity create --mesh sphere --position=7,1,0 --scale 1.2,1.2,1.2 --color oran
 # These are invisible entities with SpawnPoint component — not yet via CLI
 # Heroes will respawn at their initial positions via the respawn system
 
-# === MINION WAVE RULES (every 15s, with gold/xp bounty) ===
-# Blue minions: patrol toward red base
-$E rule create --when timer:15 --do-action "spawn cube -7,1,0 blue 80 1 true -7,0,0:0,0,0:7,0,0 3"
-$E rule create --when timer:15 --do-action "spawn cube -7,1,1 blue 80 1 true -7,0,1:0,0,1:7,0,1 3"
-# Red minions: patrol toward blue base
-$E rule create --when timer:15 --do-action "spawn cube 7,1,0 red 80 2 true 7,0,0:0,0,0:-7,0,0 3"
-$E rule create --when timer:15 --do-action "spawn cube 7,1,1 red 80 2 true 7,0,1:0,0,1:-7,0,1 3"
+# === MINION WAVE RULES (every 15s, with gold/xp bounty + role) ===
+# Format: spawn mesh pos color health team combat waypoints speed scale gold_bounty xp_bounty role
+# Blue minions (team 1): patrol toward red base
+$E rule create --when timer:15 --do-action "spawn cube -7,1,0 blue 80 1 true -7,0,0:0,0,0:7,0,0 3 0.5,0.5,0.5 20 30 minion"
+$E rule create --when timer:15 --do-action "spawn cube -7,1,1 blue 80 1 true -7,0,1:0,0,1:7,0,1 3 0.5,0.5,0.5 20 30 minion"
+# Red minions (team 2): patrol toward blue base
+$E rule create --when timer:15 --do-action "spawn cube 7,1,0 red 80 2 true 7,0,0:0,0,0:-7,0,0 3 0.5,0.5,0.5 20 30 minion"
+$E rule create --when timer:15 --do-action "spawn cube 7,1,1 red 80 2 true 7,0,1:0,0,1:-7,0,1 3 0.5,0.5,0.5 20 30 minion"
 
 # === SCORING ===
 $E rule create --when death --filter team:2 --do-action "score source +1"

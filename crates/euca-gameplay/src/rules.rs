@@ -49,6 +49,13 @@ pub enum GameAction {
         waypoints: Option<Vec<[f32; 3]>>,
         #[serde(default)]
         scale: Option<[f32; 3]>,
+        #[serde(default)]
+        gold_bounty: Option<i32>,
+        #[serde(default)]
+        xp_bounty: Option<u32>,
+        /// "hero", "minion", "tower", "structure"
+        #[serde(default)]
+        role: Option<String>,
     },
     #[serde(rename = "damage")]
     Damage { target: ActionTarget, amount: f32 },
@@ -384,6 +391,9 @@ pub fn execute_action(
             speed,
             waypoints,
             scale,
+            gold_bounty,
+            xp_bounty,
+            role,
         } => {
             let mut transform = euca_math::Transform::from_translation(Vec3::new(
                 position[0],
@@ -417,6 +427,23 @@ pub fn execute_action(
                 let patrol_speed = speed.unwrap_or(3.0);
                 world.insert(entity, crate::ai::AiGoal::patrol(wp_vecs, patrol_speed));
             }
+            // Economy + role
+            if let Some(b) = gold_bounty {
+                world.insert(entity, crate::economy::GoldBounty(*b));
+            }
+            if let Some(xp) = xp_bounty {
+                world.insert(entity, crate::leveling::XpBounty(*xp));
+            }
+            if let Some(r) = role {
+                let entity_role = match r.as_str() {
+                    "hero" => crate::combat::EntityRole::Hero,
+                    "tower" => crate::combat::EntityRole::Tower,
+                    "structure" => crate::combat::EntityRole::Structure,
+                    _ => crate::combat::EntityRole::Minion,
+                };
+                world.insert(entity, entity_role);
+            }
+
             // Emit event so the rendering layer can attach MeshRenderer + MaterialRef
             if let Some(events) = world.resource_mut::<Events>() {
                 events.send(RuleSpawnEvent {
@@ -526,6 +553,9 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
                 .map(|s| s.split(':').filter_map(parse_vec3).collect::<Vec<_>>());
             let speed = args.get(7).and_then(|s| s.parse::<f32>().ok());
             let scale = args.get(8).and_then(|s| parse_vec3(s));
+            let gold_bounty = args.get(9).and_then(|s| s.parse::<i32>().ok());
+            let xp_bounty = args.get(10).and_then(|s| s.parse::<u32>().ok());
+            let role = args.get(11).map(|s| s.to_string());
             Some(GameAction::Spawn {
                 mesh,
                 position: pos,
@@ -536,6 +566,9 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
                 speed,
                 waypoints,
                 scale,
+                gold_bounty,
+                xp_bounty,
+                role,
             })
         }
         "damage" => {
@@ -757,6 +790,9 @@ mod tests {
                 speed: None,
                 waypoints: None,
                 scale: None,
+                gold_bounty: None,
+                xp_bounty: None,
+                role: None,
             }],
         });
         let _ = rule;
@@ -788,6 +824,9 @@ mod tests {
                 speed: None,
                 waypoints: None,
                 scale: None,
+                gold_bounty: None,
+                xp_bounty: None,
+                role: None,
             }],
         });
 
