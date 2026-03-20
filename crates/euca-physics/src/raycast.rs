@@ -1,4 +1,9 @@
+use euca_ecs::{Entity, Query, World};
 use euca_math::Vec3;
+use euca_scene::LocalTransform;
+
+use crate::collision::intersect_shapes;
+use crate::components::{Collider, ColliderShape};
 
 /// A ray defined by origin and direction.
 #[derive(Clone, Copy, Debug)]
@@ -159,26 +164,177 @@ pub fn raycast_capsule(ray: &Ray, center: Vec3, radius: f32, half_height: f32) -
 }
 
 /// Raycast against a collider at a given position. Dispatches by shape.
-pub fn raycast_collider(
-    ray: &Ray,
-    pos: euca_math::Vec3,
-    collider: &crate::components::Collider,
-) -> Option<RayHit> {
+pub fn raycast_collider(ray: &Ray, pos: euca_math::Vec3, collider: &Collider) -> Option<RayHit> {
     match &collider.shape {
-        crate::components::ColliderShape::Aabb { hx, hy, hz } => {
-            raycast_aabb(ray, pos, *hx, *hy, *hz)
-        }
-        crate::components::ColliderShape::Sphere { radius } => raycast_sphere(ray, pos, *radius),
-        crate::components::ColliderShape::Capsule {
+        ColliderShape::Aabb { hx, hy, hz } => raycast_aabb(ray, pos, *hx, *hy, *hz),
+        ColliderShape::Sphere { radius } => raycast_sphere(ray, pos, *radius),
+        ColliderShape::Capsule {
             radius,
             half_height,
         } => raycast_capsule(ray, pos, *radius, *half_height),
     }
 }
 
+// ── Scene query types ──
+
+/// A world-space raycast hit that includes the entity.
+#[derive(Clone, Copy, Debug)]
+pub struct WorldRayHit {
+    pub entity: Entity,
+    /// Distance along the ray.
+    pub t: f32,
+    /// Hit point in world space.
+    pub point: Vec3,
+    /// Surface normal at the hit point.
+    pub normal: Vec3,
+}
+
+/// An entity found by an overlap query.
+#[derive(Clone, Copy, Debug)]
+pub struct OverlapHit {
+    pub entity: Entity,
+}
+
+/// A hit from a sweep (shape-cast) query.
+#[derive(Clone, Copy, Debug)]
+pub struct SweepHit {
+    pub entity: Entity,
+    /// Parameter along the sweep direction (0.0 = start, 1.0 = end of sweep distance).
+    pub t: f32,
+    /// Point of first contact in world space.
+    pub point: Vec3,
+    /// Contact normal.
+    pub normal: Vec3,
+}
+
+// ── Scene query functions ──
+
+/// Cast a ray against all colliders in the world and return all hits, sorted
+/// by distance. Optionally filter by a layer mask (only colliders whose
+/// `layer & query_mask != 0` are tested). Pass `u32::MAX` for no filtering.
+///
+/// `max_distance`: maximum ray distance to consider. Pass `f32::INFINITY` for unlimited.
+pub fn raycast_world(
+    world: &World,
+    ray: &Ray,
+    max_distance: f32,
+    query_mask: u32,
+) -> Vec<WorldRayHit> {
+    let mut hits = Vec::new();
+
+    let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
+    for (entity, lt, collider) in query.iter() {
+        // Layer filter: the query acts as if it has layer=query_mask, mask=query_mask
+        if (collider.layer & query_mask) == 0 {
+            continue;
+        }
+
+        let pos = lt.0.translation;
+        if let Some(hit) = raycast_collider(ray, pos, collider)
+            && hit.t >= 0.0
+            && hit.t <= max_distance
+        {
+            hits.push(WorldRayHit {
+                entity,
+                t: hit.t,
+                point: hit.point,
+                normal: hit.normal,
+            });
+        }
+    }
+
+    hits.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    hits
+}
+
+/// Find all entities whose colliders overlap a sphere at `center` with `radius`.
+/// Filter by `query_mask` (only colliders with `layer & query_mask != 0` are tested).
+pub fn overlap_sphere(
+    world: &World,
+    center: Vec3,
+    radius: f32,
+    query_mask: u32,
+) -> Vec<OverlapHit> {
+    let probe = ColliderShape::Sphere { radius };
+    let mut results = Vec::new();
+
+    let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
+    for (entity, lt, collider) in query.iter() {
+        if (collider.layer & query_mask) == 0 {
+            continue;
+        }
+
+        let pos = lt.0.translation;
+        if intersect_shapes(center, &probe, pos, &collider.shape).is_some() {
+            results.push(OverlapHit { entity });
+        }
+    }
+
+    results
+}
+
+/// Sweep (shape-cast) a sphere from `origin` along `direction` for `max_distance`.
+/// Returns all entities hit, sorted by distance.
+///
+/// Implemented by inflating each collider by the sweep radius, then raycasting
+/// against the inflated shape. This is exact for sphere-vs-sphere, and a
+/// conservative approximation for sphere-vs-AABB and sphere-vs-capsule.
+pub fn sweep_sphere(
+    world: &World,
+    origin: Vec3,
+    direction: Vec3,
+    radius: f32,
+    max_distance: f32,
+    query_mask: u32,
+) -> Vec<SweepHit> {
+    let ray = Ray::new(origin, direction);
+    let mut hits = Vec::new();
+
+    let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
+    for (entity, lt, collider) in query.iter() {
+        if (collider.layer & query_mask) == 0 {
+            continue;
+        }
+
+        let pos = lt.0.translation;
+
+        // Inflate the target shape by the sweep radius (Minkowski sum approximation)
+        let hit = match &collider.shape {
+            ColliderShape::Sphere {
+                radius: target_radius,
+            } => raycast_sphere(&ray, pos, target_radius + radius),
+            ColliderShape::Aabb { hx, hy, hz } => {
+                raycast_aabb(&ray, pos, hx + radius, hy + radius, hz + radius)
+            }
+            ColliderShape::Capsule {
+                radius: cap_radius,
+                half_height,
+            } => raycast_capsule(&ray, pos, cap_radius + radius, *half_height),
+        };
+
+        if let Some(h) = hit
+            && h.t >= 0.0
+            && h.t <= max_distance
+        {
+            hits.push(SweepHit {
+                entity,
+                t: h.t,
+                point: h.point,
+                normal: h.normal,
+            });
+        }
+    }
+
+    hits.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::PhysicsBody;
+    use euca_math::Transform;
+    use euca_scene::GlobalTransform;
 
     #[test]
     fn ray_hits_aabb() {
@@ -236,5 +392,120 @@ mod tests {
         let ray = Ray::new(Vec3::new(-5.0, 5.0, 0.0), Vec3::X);
         let hit = raycast_capsule(&ray, Vec3::ZERO, 0.5, 1.0);
         assert!(hit.is_none());
+    }
+
+    // ── Scene query tests ──
+
+    fn setup_scene_world() -> (World, Entity, Entity, Entity) {
+        let mut world = World::new();
+
+        // Sphere at origin, layer 1
+        let a = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(a, GlobalTransform::default());
+        world.insert(a, PhysicsBody::dynamic());
+        world.insert(a, Collider::sphere(1.0).with_layer(1));
+
+        // Sphere at (5,0,0), layer 2
+        let b = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            5.0, 0.0, 0.0,
+        ))));
+        world.insert(b, GlobalTransform::default());
+        world.insert(b, PhysicsBody::dynamic());
+        world.insert(b, Collider::sphere(1.0).with_layer(2));
+
+        // AABB at (10,0,0), layer 1
+        let c = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            10.0, 0.0, 0.0,
+        ))));
+        world.insert(c, GlobalTransform::default());
+        world.insert(c, PhysicsBody::fixed());
+        world.insert(c, Collider::aabb(1.0, 1.0, 1.0).with_layer(1));
+
+        (world, a, b, c)
+    }
+
+    #[test]
+    fn raycast_world_multi_hit() {
+        let (world, _a, _b, _c) = setup_scene_world();
+        let ray = Ray::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::X);
+
+        // Query all layers
+        let hits = raycast_world(&world, &ray, f32::INFINITY, u32::MAX);
+        assert_eq!(hits.len(), 3, "Should hit all 3 colliders");
+        // Should be sorted by distance
+        assert!(hits[0].t <= hits[1].t);
+        assert!(hits[1].t <= hits[2].t);
+    }
+
+    #[test]
+    fn raycast_world_layer_filter() {
+        let (world, _a, _b, _c) = setup_scene_world();
+        let ray = Ray::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::X);
+
+        // Query only layer 1
+        let hits = raycast_world(&world, &ray, f32::INFINITY, 1);
+        assert_eq!(hits.len(), 2, "Should hit only layer-1 colliders");
+    }
+
+    #[test]
+    fn raycast_world_max_distance() {
+        let (world, _a, _b, _c) = setup_scene_world();
+        let ray = Ray::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::X);
+
+        // Only close hits
+        let hits = raycast_world(&world, &ray, 6.0, u32::MAX);
+        assert_eq!(hits.len(), 1, "Should hit only the first sphere");
+    }
+
+    #[test]
+    fn overlap_sphere_finds_nearby() {
+        let (world, a, _b, _c) = setup_scene_world();
+
+        // Overlap at origin with radius 2 should hit entity A (sphere at origin, r=1)
+        let hits = overlap_sphere(&world, Vec3::ZERO, 2.0, u32::MAX);
+        assert!(!hits.is_empty());
+        assert!(hits.iter().any(|h| h.entity == a));
+    }
+
+    #[test]
+    fn overlap_sphere_layer_filter() {
+        let (world, _a, _b, _c) = setup_scene_world();
+
+        // Overlap at origin with a large radius but only layer 2
+        let hits = overlap_sphere(&world, Vec3::ZERO, 100.0, 2);
+        // Should only find entity B (layer 2)
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn sweep_sphere_hits() {
+        let (world, _a, _b, _c) = setup_scene_world();
+
+        // Sweep a small sphere from far left toward +X
+        let hits = sweep_sphere(
+            &world,
+            Vec3::new(-10.0, 0.0, 0.0),
+            Vec3::X,
+            0.5,
+            100.0,
+            u32::MAX,
+        );
+        assert!(hits.len() >= 2, "Should hit multiple colliders");
+        assert!(hits[0].t <= hits[1].t, "Should be sorted by distance");
+    }
+
+    #[test]
+    fn sweep_sphere_layer_filter() {
+        let (world, _a, _b, _c) = setup_scene_world();
+
+        let hits = sweep_sphere(
+            &world,
+            Vec3::new(-10.0, 0.0, 0.0),
+            Vec3::X,
+            0.5,
+            100.0,
+            2, // only layer 2
+        );
+        assert_eq!(hits.len(), 1, "Should only hit layer-2 entity");
     }
 }
