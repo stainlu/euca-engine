@@ -55,6 +55,9 @@ pub fn toolbar_panel(
 
             if ui.button("⏹ Stop").clicked() {
                 state.playing = false;
+            }
+
+            if !state.playing && ui.button("🔄 Reset").clicked() {
                 state.reset_requested = true;
             }
 
