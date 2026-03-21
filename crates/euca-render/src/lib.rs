@@ -29,7 +29,9 @@ pub use decal::{
     Decal, DecalBlendMode, DecalDrawCommand, DecalProjection, DecalRenderer,
     collect_decal_draw_commands,
 };
-pub use deferred::{GBuffer, GBufferFormats, RenderPath};
+pub use deferred::{
+    DeferredLightingUniforms, DeferredPipeline, GBuffer, GBufferFormats, RenderPath,
+};
 pub use foliage::{
     FoliageDrawData, FoliageInstance, FoliageLayer, FoliageRenderer, scatter_foliage,
 };
