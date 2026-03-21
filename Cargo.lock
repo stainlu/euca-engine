@@ -1320,9 +1320,12 @@ dependencies = [
 name = "euca-gameplay"
 version = "0.1.0"
 dependencies = [
+ "euca-core",
  "euca-ecs",
+ "euca-input",
  "euca-math",
  "euca-physics",
+ "euca-render",
  "euca-scene",
  "log",
  "serde",

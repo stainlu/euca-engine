@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+euca-core = { path = "../euca-core" }
 euca-ecs = { path = "../euca-ecs" }
 euca-input = { path = "../euca-input" }
 euca-math = { path = "../euca-math" }
