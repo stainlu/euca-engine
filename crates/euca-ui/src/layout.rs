@@ -257,10 +257,7 @@ fn project_to_screen(
 ///
 /// Call this each frame before collecting draw data or running input routing.
 pub fn ui_layout_system(world: &mut World) {
-    let viewport = world
-        .resource::<UiViewport>()
-        .cloned()
-        .unwrap_or_default();
+    let viewport = world.resource::<UiViewport>().cloned().unwrap_or_default();
 
     let scale_x = viewport.scale_x();
     let scale_y = viewport.scale_y();
@@ -355,10 +352,8 @@ pub fn ui_layout_system(world: &mut World) {
 
         // Apply flex layout if there are children with UiNode.
         if !child_entries.is_empty() {
-            let mut flex_rects: Vec<(Entity, ReferenceRect)> = child_entries
-                .iter()
-                .map(|(e, _, r)| (*e, *r))
-                .collect();
+            let mut flex_rects: Vec<(Entity, ReferenceRect)> =
+                child_entries.iter().map(|(e, _, r)| (*e, *r)).collect();
 
             apply_flex_layout(&entry.node, &ref_rect, &mut flex_rects);
 
@@ -905,7 +900,9 @@ mod tests {
         });
         world.insert(
             e,
-            GlobalTransform(euca_math::Transform::from_translation(euca_math::Vec3::ZERO)),
+            GlobalTransform(euca_math::Transform::from_translation(
+                euca_math::Vec3::ZERO,
+            )),
         );
 
         ui_layout_system(&mut world);
