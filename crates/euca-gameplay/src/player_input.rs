@@ -9,6 +9,7 @@
 //! Types: [`PlayerCommand`], [`ViewportSize`].
 //! System: [`player_input_system`].
 
+use crate::player::PlayerHero;
 use euca_ecs::{Entity, Query, World};
 use euca_input::InputState;
 use euca_math::Vec3;
@@ -20,13 +21,6 @@ use crate::health::Health;
 use crate::teams::Team;
 
 // ── Components & types ─────────────────────────────────────────────────────
-
-/// Marker: this entity is the locally-controlled player hero.
-///
-/// Exactly one entity in the world should have this component. Systems like
-/// [`player_input_system`] use it to route input to the correct entity.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PlayerHero;
 
 /// A single command issued by the player.
 #[derive(Clone, Debug, PartialEq)]

@@ -19,6 +19,7 @@ pub mod economy;
 pub mod game_state;
 pub mod health;
 pub mod leveling;
+pub mod player;
 pub mod player_input;
 pub mod rules;
 pub mod teams;
@@ -27,7 +28,7 @@ pub mod triggers;
 // Re-export key types at crate root for convenience
 pub use ai::{AiBehavior, AiGoal, ai_system};
 pub use combat::{
-    AttackStyle, AutoCombat, CurrentTarget, EntityRole, MarchDirection, PlayerHero, Projectile,
+    AttackStyle, AutoCombat, CurrentTarget, EntityRole, MarchDirection, Projectile,
     auto_combat_system, projectile_system,
 };
 pub use data_table::DataTable;
@@ -52,6 +53,6 @@ pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use economy::{Gold, GoldBounty, gold_on_kill_system};
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
 pub use player_input::{
-    PlayerCommand, PlayerCommandQueue, PlayerHero, ViewportSize, player_input_system,
+    PlayerCommand, PlayerCommandQueue, ViewportSize, player_input_system,
     ray_ground_intersection,
 };
