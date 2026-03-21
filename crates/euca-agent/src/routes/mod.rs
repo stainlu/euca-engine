@@ -4,6 +4,7 @@ mod camera;
 mod debug;
 mod entity;
 mod fog;
+pub mod level;
 mod foliage;
 mod gameplay;
 mod input;

@@ -9,4 +9,5 @@ mod state;
 pub use bridge::AgentBridge;
 pub use control::{CameraOverride, EngineControl, ScreenshotChannel};
 pub use server::AgentServer;
+pub use routes::level::load_level_into_world;
 pub use state::{AgentId, Owner, Persistent, SharedWorld};
