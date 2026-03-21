@@ -34,24 +34,18 @@ impl Anchor {
             Anchor::Stretch => (0.0, 0.0),
         }
     }
-
 }
 
 /// A dimensional value for UI sizing.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum Val {
     /// Absolute pixels (at reference resolution).
     Px(f32),
     /// Percentage of parent dimension.
     Percent(f32),
     /// Auto-size (determined by content or flex layout).
+    #[default]
     Auto,
-}
-
-impl Default for Val {
-    fn default() -> Self {
-        Val::Auto
-    }
 }
 
 /// Width and height specification for a UI node.

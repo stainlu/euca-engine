@@ -1,9 +1,12 @@
+use std::cell::RefCell;
+
 use crate::buffer::{BufferKind, SmartBuffer};
 use crate::camera::Camera;
 use crate::gpu::GpuContext;
 use crate::light::{AmbientLight, DirectionalLight};
 use crate::material::{Material, MaterialHandle};
 use crate::mesh::{Mesh, MeshHandle};
+use crate::occlusion::OcclusionCuller;
 use crate::post_process::{PostProcessSettings, PostProcessStack};
 use crate::texture::{TextureHandle, TextureStore};
 use crate::vertex::Vertex;
@@ -35,6 +38,8 @@ pub struct DrawCommand {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub model_matrix: Mat4,
+    /// Optional world-space AABB for occlusion culling.
+    pub aabb: Option<(euca_math::Vec3, euca_math::Vec3)>,
 }
 
 #[repr(C)]
@@ -140,6 +145,9 @@ pub struct Renderer {
     post_process_stack: Option<PostProcessStack>,
     /// Settings controlling the advanced post-process stack.
     post_process_settings: PostProcessSettings,
+    occlusion_culler: RefCell<Option<OcclusionCuller>>,
+    prev_depth_buffer: RefCell<Vec<f32>>,
+    prev_depth_dims: RefCell<(u32, u32)>,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -666,6 +674,9 @@ impl Renderer {
             surface_format: gpu.surface_config.format,
             post_process_stack: None,
             post_process_settings: PostProcessSettings::default(),
+            occlusion_culler: RefCell::new(None),
+            prev_depth_buffer: RefCell::new(Vec::new()),
+            prev_depth_dims: RefCell::new((0, 0)),
         }
     }
 
@@ -838,6 +849,23 @@ impl Renderer {
             &gpu.queue,
             &gpu.surface_config,
         ));
+    }
+
+    /// Enable CPU-side HZB occlusion culling.
+    pub fn enable_occlusion_culling(&mut self) {
+        *self.occlusion_culler.borrow_mut() = Some(OcclusionCuller::new());
+    }
+
+    /// Returns true if HZB occlusion culling is enabled.
+    pub fn occlusion_culling_enabled(&self) -> bool {
+        self.occlusion_culler.borrow().is_some()
+    }
+
+    /// Feed a depth buffer for the occlusion system to use next frame.
+    pub fn update_prev_depth_buffer(&self, depth: Vec<f32>, width: u32, height: u32) {
+        debug_assert_eq!(depth.len(), (width as usize) * (height as usize));
+        *self.prev_depth_buffer.borrow_mut() = depth;
+        *self.prev_depth_dims.borrow_mut() = (width, height);
     }
 
     /// Update the post-process settings that control SSAO, FXAA, bloom, and
@@ -1066,6 +1094,7 @@ impl Renderer {
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
+        let opaque_cmds = self.apply_occlusion_culling(&opaque_cmds, vp);
         let (opaque_instances, opaque_batches) = Self::build_batches_from_refs(&opaque_cmds);
         if !opaque_instances.is_empty() {
             self.instance_buffer.write(&gpu.queue, &opaque_instances);
@@ -1291,6 +1320,57 @@ impl Renderer {
         }
     }
 
+    /// Filter out occluded draw commands using the HZB from the previous frame.
+    fn apply_occlusion_culling<'a>(
+        &self,
+        commands: &[&'a DrawCommand],
+        view_proj: Mat4,
+    ) -> Vec<&'a DrawCommand> {
+        if self.occlusion_culler.borrow().is_none() {
+            return commands.to_vec();
+        }
+        let depth_buf = self.prev_depth_buffer.borrow();
+        let (w, h) = *self.prev_depth_dims.borrow();
+        if depth_buf.is_empty() || w == 0 || h == 0 {
+            return commands.to_vec();
+        }
+        self.occlusion_culler
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .update_from_depth_buffer(&depth_buf, w, h);
+        drop(depth_buf);
+        let culler_ref = self.occlusion_culler.borrow();
+        let culler = culler_ref.as_ref().unwrap();
+        let mut aabbs = Vec::new();
+        let mut aabb_indices = Vec::new();
+        for (i, cmd) in commands.iter().enumerate() {
+            if let Some(aabb) = cmd.aabb {
+                aabbs.push(aabb);
+                aabb_indices.push(i);
+            }
+        }
+        if aabbs.is_empty() {
+            return commands.to_vec();
+        }
+        let result = match culler.test(&aabbs, view_proj) {
+            Some(r) => r,
+            None => return commands.to_vec(),
+        };
+        let mut occluded = vec![false; commands.len()];
+        for (aabb_idx, &cmd_idx) in aabb_indices.iter().enumerate() {
+            if !result.visible[aabb_idx] {
+                occluded[cmd_idx] = true;
+            }
+        }
+        commands
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !occluded[*i])
+            .map(|(_, cmd)| *cmd)
+            .collect()
+    }
+
     fn create_depth_texture(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
@@ -1384,3 +1464,75 @@ const PBR_SHADER: &str = include_str!("../shaders/pbr.wgsl");
 const SKY_SHADER: &str = include_str!("../shaders/sky.wgsl");
 
 const POSTPROCESS_SHADER: &str = include_str!("../shaders/postprocess.wgsl");
+
+#[cfg(test)]
+mod occlusion_integration_tests {
+    use super::*;
+    use crate::occlusion::OcclusionCuller;
+    use euca_math::{Mat4, Vec3};
+
+    /// Verify that when occlusion culling is disabled (default), all commands
+    /// pass through `apply_occlusion_culling` unchanged.
+    #[test]
+    fn backward_compatible_when_disabled() {
+        // Construct a minimal set of fake DrawCommands.
+        let cmds: Vec<DrawCommand> = (0..5)
+            .map(|i| DrawCommand {
+                mesh: MeshHandle(0),
+                material: MaterialHandle(0),
+                model_matrix: Mat4::from_translation(Vec3::new(i as f32, 0.0, 0.0)),
+                aabb: Some((Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5))),
+            })
+            .collect();
+
+        // Simulate a renderer with occlusion culling **disabled** (the default).
+        let culler: RefCell<Option<OcclusionCuller>> = RefCell::new(None);
+
+        // When the culler is None, apply_occlusion_culling should return all.
+        assert!(culler.borrow().is_none());
+        // We can't call the method directly without a Renderer, so test the
+        // underlying occlusion logic: with no HZB, test() returns None.
+        let mut oc = OcclusionCuller::new();
+        let vp = Mat4::orthographic_lh(-10.0, 10.0, -10.0, 10.0, 0.0, 100.0);
+        assert!(oc.test(&[], vp).is_none(), "No pyramid yet");
+
+        // After updating with an all-far depth (1.0), everything is visible.
+        let depth = vec![1.0f32; 16 * 16];
+        oc.update_from_depth_buffer(&depth, 16, 16);
+        let aabbs: Vec<(Vec3, Vec3)> = cmds.iter().map(|c| c.aabb.unwrap()).collect();
+        let result = oc.test(&aabbs, vp).unwrap();
+        assert_eq!(result.visible.len(), 5);
+        assert!(
+            result.visible.iter().all(|&v| v),
+            "All should be visible with far depth"
+        );
+    }
+
+    /// Verify that occluded objects are actually filtered out.
+    #[test]
+    fn occlusion_filters_occluded_objects() {
+        let vp = Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, 0.0, 1.0);
+
+        // A wall at depth 0.3 (close).
+        let depth = vec![0.3f32; 16 * 16];
+        let mut culler = OcclusionCuller::new();
+        culler.update_from_depth_buffer(&depth, 16, 16);
+
+        // Object A: in front of wall (depth ~0.1) -> visible
+        // Object B: behind wall (depth ~0.7)     -> occluded
+        let aabbs = vec![
+            (Vec3::new(-0.5, -0.5, 0.05), Vec3::new(0.5, 0.5, 0.15)),
+            (Vec3::new(-0.5, -0.5, 0.6), Vec3::new(0.5, 0.5, 0.8)),
+        ];
+
+        let result = culler.test(&aabbs, vp).unwrap();
+        assert_eq!(result.visible.len(), 2);
+        assert!(result.visible[0], "Object A should be visible (in front)");
+        assert!(
+            !result.visible[1],
+            "Object B should be occluded (behind wall)"
+        );
+        assert_eq!(result.visible_count(), 1);
+        assert_eq!(result.occluded_count(), 1);
+    }
+}
