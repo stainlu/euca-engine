@@ -230,6 +230,12 @@ pub struct Renderer {
     volumetric_fog_pass: Option<VolumetricFogPass>,
     /// Settings for volumetric fog (density, scattering, etc.).
     volumetric_fog_settings: VolumetricFogSettings,
+    /// Optional HZB occlusion culler. Uses previous frame's depth.
+    occlusion_culler: RefCell<Option<OcclusionCuller>>,
+    /// Previous frame's depth buffer for occlusion culling.
+    prev_depth_buffer: RefCell<Vec<f32>>,
+    /// Dimensions of the previous depth buffer.
+    prev_depth_dims: RefCell<(u32, u32)>,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -758,6 +764,9 @@ impl Renderer {
             post_process_settings: PostProcessSettings::default(),
             volumetric_fog_pass: None,
             volumetric_fog_settings: VolumetricFogSettings::default(),
+            occlusion_culler: RefCell::new(None),
+            prev_depth_buffer: RefCell::new(Vec::new()),
+            prev_depth_dims: RefCell::new((0, 0)),
         }
     }
 

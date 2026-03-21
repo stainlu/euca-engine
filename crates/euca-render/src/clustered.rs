@@ -287,8 +287,7 @@ pub fn cluster_index(
     let tile_x = ((screen_uv[0] * TILES_X as f32) as u32).min(TILES_X - 1);
     let tile_y = ((screen_uv[1] * TILES_Y as f32) as u32).min(TILES_Y - 1);
     let log_ratio = (far_z / near_z).ln();
-    let slice =
-        ((linear_depth / near_z).ln() / log_ratio * DEPTH_SLICES as f32).floor() as u32;
+    let slice = ((linear_depth / near_z).ln() / log_ratio * DEPTH_SLICES as f32).floor() as u32;
     let slice = slice.min(DEPTH_SLICES - 1);
     Some(tile_x + tile_y * TILES_X + slice * TILES_X * TILES_Y)
 }
@@ -434,7 +433,15 @@ mod tests {
     #[test]
     fn gpu_light_data_spot() {
         let (inner, outer) = (0.3_f32, 0.5_f32);
-        let l = GpuLightData::spot([1.0, 2.0, 3.0], 15.0, [1.0, 1.0, 1.0], 1.0, [0.0, -1.0, 0.0], inner, outer);
+        let l = GpuLightData::spot(
+            [1.0, 2.0, 3.0],
+            15.0,
+            [1.0, 1.0, 1.0],
+            1.0,
+            [0.0, -1.0, 0.0],
+            inner,
+            outer,
+        );
         assert_eq!(l.position_range, [1.0, 2.0, 3.0, 15.0]);
         assert_eq!(l.direction_type[3], 1.0);
         assert!((l.cone_angles[0] - inner.cos()).abs() < 1e-6);

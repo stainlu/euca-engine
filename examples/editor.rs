@@ -530,6 +530,7 @@ impl EditorApp {
                             mesh: layer.mesh,
                             material: layer.material,
                             model_matrix,
+                            aabb: None,
                         });
                     }
                 }

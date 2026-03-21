@@ -29,8 +29,8 @@ pub use wgpu;
 pub use buffer::{BufferKind, SmartBuffer};
 pub use camera::{Camera, Frustum};
 pub use clustered::{
-    cluster_index, sphere_aabb_intersect, ClusterConfig, ClusteredLightGrid, GpuLightData,
-    LightType, UpdateParams,
+    ClusterConfig, ClusteredLightGrid, GpuLightData, LightType, UpdateParams, cluster_index,
+    sphere_aabb_intersect,
 };
 pub use compute::{
     ComputeManager, ComputePipeline, ComputePipelineDesc, CullParams, GpuAabb, GpuBuffer,
