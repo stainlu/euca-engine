@@ -27,7 +27,11 @@ pub struct BlendSpace1D {
 impl BlendSpace1D {
     /// Create a new 1D blend space. Samples will be sorted by position.
     pub fn new(mut samples: Vec<BlendSample1D>) -> Self {
-        samples.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+        samples.sort_by(|a, b| {
+            a.position
+                .partial_cmp(&b.position)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Self { samples }
     }
 
@@ -164,7 +168,14 @@ where
     }
 
     if pose_weights.len() == 1 {
-        return Some(pose_weights.into_iter().next().unwrap().0);
+        // SAFETY: len() == 1 was just checked, so next() will yield a value.
+        return Some(
+            pose_weights
+                .into_iter()
+                .next()
+                .expect("non-empty vec yields a value")
+                .0,
+        );
     }
 
     // Blend all poses together with normalized weights

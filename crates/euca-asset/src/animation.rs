@@ -50,8 +50,9 @@ pub fn sample_vec3(times: &[f32], values: &[KeyframeValue], t: f32) -> Vec3 {
             _ => Vec3::ZERO,
         };
     }
-    if t >= *times.last().unwrap() {
-        return match values.last().unwrap() {
+    // SAFETY: empty case handled above, so last() is guaranteed Some.
+    if t >= *times.last().expect("non-empty times") {
+        return match values.last().expect("non-empty values") {
             KeyframeValue::Vec3(v) => *v,
             _ => Vec3::ZERO,
         };
@@ -83,8 +84,9 @@ pub fn sample_quat(times: &[f32], values: &[KeyframeValue], t: f32) -> Quat {
             _ => Quat::IDENTITY,
         };
     }
-    if t >= *times.last().unwrap() {
-        return match values.last().unwrap() {
+    // SAFETY: empty case handled above, so last() is guaranteed Some.
+    if t >= *times.last().expect("non-empty times") {
+        return match values.last().expect("non-empty values") {
             KeyframeValue::Quat(q) => *q,
             _ => Quat::IDENTITY,
         };

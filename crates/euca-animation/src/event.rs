@@ -34,7 +34,11 @@ pub struct ClipEvents {
 impl ClipEvents {
     /// Create a new event collection. Events are sorted by time on construction.
     pub fn new(mut events: Vec<AnimationEvent>) -> Self {
-        events.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+        events.sort_by(|a, b| {
+            a.time
+                .partial_cmp(&b.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Self { events }
     }
 

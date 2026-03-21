@@ -95,19 +95,19 @@ impl<T: Send + 'static> AssetStore<T> {
 
         // Set to loading
         {
-            let mut h = handle.lock().unwrap();
+            let mut h = handle.lock().expect("asset handle lock poisoned");
             h.state = LoadState::Loading;
         }
 
         // Spawn background thread for loading
         std::thread::spawn(move || match loader() {
             Ok(data) => {
-                let mut h = handle.lock().unwrap();
+                let mut h = handle.lock().expect("asset handle lock poisoned");
                 h.data = Some(data);
                 h.state = LoadState::Ready;
             }
             Err(e) => {
-                let mut h = handle.lock().unwrap();
+                let mut h = handle.lock().expect("asset handle lock poisoned");
                 h.state = LoadState::Failed(e);
             }
         });
@@ -119,7 +119,7 @@ impl<T: Send + 'static> AssetStore<T> {
     pub fn state(&self, id: u32) -> Option<LoadState> {
         self.assets
             .get(&id)
-            .map(|h| h.lock().unwrap().state.clone())
+            .map(|h| h.lock().expect("asset handle lock poisoned").state.clone())
     }
 
     /// Get a reference to the asset data (only if Ready).

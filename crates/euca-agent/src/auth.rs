@@ -100,7 +100,7 @@ impl AuthStore {
         // Check timestamp is within 5 minutes
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock before UNIX epoch")
             .as_secs();
         if now.abs_diff(payload.timestamp) > 300 {
             return Err("Timestamp expired (>5 minutes)".to_string());
@@ -115,13 +115,16 @@ impl AuthStore {
         };
 
         // Store session
-        self.sessions.write().unwrap().insert(
-            token.clone(),
-            Session {
-                agent_id: payload.agent_id.clone(),
-                created_at: now,
-            },
-        );
+        self.sessions
+            .write()
+            .expect("AuthStore lock poisoned")
+            .insert(
+                token.clone(),
+                Session {
+                    agent_id: payload.agent_id.clone(),
+                    created_at: now,
+                },
+            );
 
         log::info!("Agent {} authenticated", payload.agent_id);
         Ok(token)
@@ -131,7 +134,7 @@ impl AuthStore {
     pub fn validate(&self, token: &str) -> Option<String> {
         self.sessions
             .read()
-            .unwrap()
+            .expect("AuthStore lock poisoned")
             .get(token)
             .map(|s| s.agent_id.clone())
     }

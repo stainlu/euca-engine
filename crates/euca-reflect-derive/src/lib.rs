@@ -38,7 +38,7 @@ fn gen_named(
         .named
         .iter()
         .map(|f| {
-            let i = f.ident.as_ref().unwrap();
+            let i = f.ident.as_ref().expect("named field must have ident");
             let s = i.to_string();
             quote! {(#s, format!("{:?}", self.#i))}
         })
@@ -47,7 +47,7 @@ fn gen_named(
         .named
         .iter()
         .map(|f| {
-            let i = f.ident.as_ref().unwrap();
+            let i = f.ident.as_ref().expect("named field must have ident");
             let s = i.to_string();
             quote! {#s => Some(&self.#i as &dyn euca_reflect::Reflect)}
         })
@@ -56,17 +56,17 @@ fn gen_named(
         .named
         .iter()
         .map(|f| {
-            let i = f.ident.as_ref().unwrap();
+            let i = f.ident.as_ref().expect("named field must have ident");
             let s = i.to_string();
             quote! {#s => Some(&mut self.#i as &mut dyn euca_reflect::Reflect)}
         })
         .collect();
-    let sa: Vec<_> = fields.named.iter().map(|f| { let i = f.ident.as_ref().unwrap(); let s = i.to_string(); let t = &f.ty; quote!{#s => { if let Some(v) = value.as_any().downcast_ref::<#t>() { self.#i = v.clone(); true } else { false } }} }).collect();
+    let sa: Vec<_> = fields.named.iter().map(|f| { let i = f.ident.as_ref().expect("named field must have ident"); let s = i.to_string(); let t = &f.ty; quote!{#s => { if let Some(v) = value.as_any().downcast_ref::<#t>() { self.#i = v.clone(); true } else { false } }} }).collect();
     let fi: Vec<_> = fields
         .named
         .iter()
         .map(|f| {
-            let i = f.ident.as_ref().unwrap();
+            let i = f.ident.as_ref().expect("named field must have ident");
             let s = i.to_string();
             quote! {euca_reflect::FieldInfo{name:#s,type_name:self.#i.type_name()}}
         })

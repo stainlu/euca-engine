@@ -159,7 +159,7 @@ pub fn pick_gizmo_axis(ray: &Ray, entity_pos: Vec3, camera_eye: Vec3) -> Option<
 
         if let Some(hit) = raycast_aabb(ray, center, hx, hy, hz)
             && hit.t >= 0.0
-            && (closest.is_none() || hit.t < closest.unwrap().1)
+            && closest.as_ref().is_none_or(|(_, t)| hit.t < *t)
         {
             closest = Some((*axis, hit.t));
         }

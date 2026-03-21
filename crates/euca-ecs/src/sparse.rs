@@ -207,7 +207,7 @@ impl SparseSet {
                 } else {
                     let old_layout =
                         Layout::from_size_align(size * self.capacity, self.item_layout.align())
-                            .unwrap();
+                            .expect("old sparse set layout invalid");
                     // SAFETY: self.data was allocated with old_layout.
                     unsafe { alloc::realloc(self.data, old_layout, new_layout.size()) }
                 };
@@ -232,8 +232,8 @@ impl Drop for SparseSet {
             }
         }
         if size > 0 && !self.data.is_null() {
-            let layout =
-                Layout::from_size_align(size * self.capacity, self.item_layout.align()).unwrap();
+            let layout = Layout::from_size_align(size * self.capacity, self.item_layout.align())
+                .expect("sparse set dealloc layout invalid");
             // SAFETY: self.data was allocated with this layout.
             unsafe { alloc::dealloc(self.data, layout) };
         }

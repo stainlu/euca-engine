@@ -128,7 +128,10 @@ impl HzbPyramid {
             let dst_w = src_w.div_ceil(2);
             let dst_h = src_h.div_ceil(2);
 
-            let src = &levels.last().unwrap().data;
+            let src = &levels
+                .last()
+                .expect("mip chain non-empty during build")
+                .data;
             let mut dst = vec![0.0f32; (dst_w * dst_h) as usize];
 
             for dy in 0..dst_h {

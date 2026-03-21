@@ -39,7 +39,7 @@ impl AgentBridge {
     ) -> (NetworkId, SocketAddr) {
         let fake_addr: SocketAddr = format!("127.0.0.1:{}", self.next_fake_port)
             .parse()
-            .unwrap();
+            .expect("valid loopback socket address");
         self.next_fake_port += 1;
 
         let network_id = server.handle_connect(fake_addr, name, current_tick);
