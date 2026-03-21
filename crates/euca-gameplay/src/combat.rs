@@ -12,6 +12,7 @@ use euca_scene::{LocalTransform, SpatialIndex};
 
 use crate::health::{DamageEvent, Health};
 use crate::teams::Team;
+use crate::player::PlayerHero;
 
 /// Entity that moves in a direction and damages what it hits.
 #[derive(Clone, Debug)]
@@ -176,11 +177,6 @@ impl Default for AttackStyle {
         Self::Melee
     }
 }
-
-/// Marker: this hero is controlled by a player via `PlayerCommandQueue`.
-/// Entities with this component are skipped by `auto_combat_system`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PlayerHero;
 
 /// Entity automatically detects nearby enemies, chases, and attacks.
 /// Just add this + Health + Team to make an entity fight.
