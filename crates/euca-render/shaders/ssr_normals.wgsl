@@ -1,6 +1,7 @@
 // SSR Normals reconstruction from depth buffer.
 // Reconstructs view-space normals from the depth buffer using cross-product of
 // partial derivatives of the view-space position.
+// Uses textureLoad() because R32Float depth is not filterable.
 
 struct SsrNormalsUniforms {
     inv_projection: mat4x4<f32>,
@@ -35,17 +36,19 @@ fn reconstruct_view_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let depth = textureSample(depth_tex, tex_sampler, in.uv).r;
+    let dims = textureDimensions(depth_tex);
+    let px = vec2<i32>(in.uv * vec2<f32>(dims));
+    let depth = textureLoad(depth_tex, px, 0).r;
     if depth >= 1.0 {
         return vec4<f32>(0.5, 0.5, 1.0, 1.0); // sky: up normal
     }
 
     let pos_c = reconstruct_view_pos(in.uv, depth);
 
-    // Sample neighboring depths for cross-product normal reconstruction
+    // Load neighboring depths for cross-product normal reconstruction
     let ts = uniforms.texel_size;
-    let depth_r = textureSample(depth_tex, tex_sampler, in.uv + vec2<f32>(ts.x, 0.0)).r;
-    let depth_u = textureSample(depth_tex, tex_sampler, in.uv + vec2<f32>(0.0, ts.y)).r;
+    let depth_r = textureLoad(depth_tex, px + vec2<i32>(1, 0), 0).r;
+    let depth_u = textureLoad(depth_tex, px + vec2<i32>(0, 1), 0).r;
 
     let pos_r = reconstruct_view_pos(in.uv + vec2<f32>(ts.x, 0.0), depth_r);
     let pos_u = reconstruct_view_pos(in.uv + vec2<f32>(0.0, ts.y), depth_u);

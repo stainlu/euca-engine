@@ -52,12 +52,12 @@ pub struct PostProcessSettings {
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
-            ssao_enabled: false, // disabled until depth texture filtering is fixed
+            ssao_enabled: true,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
             ssr_enabled: false,
             ssr: crate::ssr::SsrSettings::default(),
-            fxaa_enabled: false, // disabled until SSAO/depth pipeline is stable
+            fxaa_enabled: true,
             bloom_enabled: true,
             bloom_threshold: 0.8,
             exposure: 0.0,
@@ -1179,17 +1179,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
     let screen_size = ssao.params.zw;
     let radius = ssao.params.x;
     let intensity = ssao.params.y;
-    let depth = textureSample(depth_tex, tex_sampler, in.uv).r;
+    let dims = textureDimensions(depth_tex);
+    let px = vec2<i32>(in.uv * vec2<f32>(dims));
+    let depth = textureLoad(depth_tex, px, 0).r;
     if depth >= 1.0 {{ return vec4<f32>(1.0, 0.0, 0.0, 1.0); }}
     let view_pos = view_pos_from_depth(in.uv, depth);
     let texel = 1.0 / screen_size;
-    let depth_r = textureSample(depth_tex, tex_sampler, in.uv + vec2<f32>(texel.x, 0.0)).r;
-    let depth_u = textureSample(depth_tex, tex_sampler, in.uv + vec2<f32>(0.0, texel.y)).r;
+    let depth_r = textureLoad(depth_tex, px + vec2<i32>(1, 0), 0).r;
+    let depth_u = textureLoad(depth_tex, px + vec2<i32>(0, 1), 0).r;
     let pos_r = view_pos_from_depth(in.uv + vec2<f32>(texel.x, 0.0), depth_r);
     let pos_u = view_pos_from_depth(in.uv + vec2<f32>(0.0, texel.y), depth_u);
     let normal = normalize(cross(pos_r - view_pos, pos_u - view_pos));
-    let noise_uv = in.uv * screen_size / 4.0;
-    let noise = textureSample(noise_tex, tex_sampler, noise_uv).rg * 2.0 - 1.0;
+    let noise_px = vec2<i32>(in.uv * screen_size) % vec2<i32>(4, 4);
+    let noise = textureLoad(noise_tex, noise_px, 0).rg * 2.0 - 1.0;
     let tangent = normalize(vec3<f32>(noise.x, noise.y, 0.0) - normal * dot(vec3<f32>(noise.x, noise.y, 0.0), normal));
     let bitangent = cross(normal, tangent);
     var occlusion = 0.0;
@@ -1205,7 +1207,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
         let scale = mix(0.1, 1.0, xi3 * xi3);
         let sample_pos = view_pos + sample_dir * radius * scale;
         let offset_uv = in.uv + sample_dir.xy * radius / max(abs(view_pos.z), 0.1) * 0.5;
-        let sample_depth = textureSample(depth_tex, tex_sampler, offset_uv).r;
+        let sample_px = vec2<i32>(offset_uv * vec2<f32>(dims));
+        let sample_depth = textureLoad(depth_tex, clamp(sample_px, vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
         let sample_view = view_pos_from_depth(offset_uv, sample_depth);
         let range_check = smoothstep(0.0, 1.0, radius / max(abs(view_pos.z - sample_view.z), 0.001));
         let is_occluded = select(0.0, 1.0, sample_view.z < sample_pos.z);
@@ -1414,10 +1417,10 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_have_bloom_enabled() {
+    fn default_settings_have_ssao_fxaa_bloom_enabled() {
         let settings = PostProcessSettings::default();
-        assert!(!settings.ssao_enabled); // disabled until depth filtering fixed
-        assert!(!settings.fxaa_enabled);
+        assert!(settings.ssao_enabled);
+        assert!(settings.fxaa_enabled);
         assert!(settings.bloom_enabled);
     }
 
