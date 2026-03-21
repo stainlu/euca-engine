@@ -29,6 +29,8 @@ fn reflect_component<T: 'static + Send + Sync + Reflect>(
 pub enum ToolbarAction {
     SaveScene,
     LoadScene,
+    /// Load the hardcoded MOBA arena level.
+    LoadMoba,
 }
 
 /// Top toolbar: Play/Pause/Step controls + Save/Load + info + FPS.
@@ -65,6 +67,9 @@ pub fn toolbar_panel(
             }
             if ui.button("Load").clicked() {
                 action = Some(ToolbarAction::LoadScene);
+            }
+            if ui.button("MOBA").clicked() {
+                action = Some(ToolbarAction::LoadMoba);
             }
 
             ui.separator();

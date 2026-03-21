@@ -155,6 +155,7 @@ fn test_template_create_and_spawn() {
                 xp_bounty: None,
                 role: None,
                 spawn_point: None,
+                player: None,
             },
         );
     });

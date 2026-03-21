@@ -56,7 +56,7 @@ impl Default for MobaCamera {
     fn default() -> Self {
         Self {
             follow_entity: None,
-            offset: Vec3::new(0.0, 12.0, 8.0),
+            offset: Vec3::new(0.0, 8.0, 5.0),
             look_at_offset: Vec3::ZERO,
             zoom: 1.0,
             min_zoom: 0.5,
@@ -216,8 +216,8 @@ mod tests {
 
         let cam = world.resource::<euca_render::Camera>().unwrap();
 
-        // Eye = hero_pos + offset * zoom = (10,0,5) + (0,12,8)*1.0 = (10,12,13)
-        let expected_eye = Vec3::new(10.0, 12.0, 13.0);
+        // Eye = hero_pos + offset * zoom = (10,0,5) + (0,8,5)*1.0 = (10,8,10)
+        let expected_eye = Vec3::new(10.0, 8.0, 10.0);
         assert!(
             (cam.eye.x - expected_eye.x).abs() < 1e-5,
             "eye.x: expected {}, got {}",
@@ -383,7 +383,7 @@ mod tests {
 
         let cam = world.resource::<euca_render::Camera>().unwrap();
         // Should still have moved to follow hero
-        let expected_eye = Vec3::new(10.0, 12.0, 13.0);
+        let expected_eye = Vec3::new(10.0, 8.0, 10.0);
         assert!((cam.eye.x - expected_eye.x).abs() < 1e-5);
         assert!((cam.eye.y - expected_eye.y).abs() < 1e-5);
         assert!((cam.eye.z - expected_eye.z).abs() < 1e-5);

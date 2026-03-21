@@ -121,6 +121,253 @@ fn setup_moba_action_map() -> euca_input::ActionMap {
     map
 }
 
+/// Load the MOBA arena level directly into the world.
+///
+/// Spawns bases, towers, heroes, and game rules -- equivalent to `scripts/moba.sh`.
+/// Sets the editor camera to the MOBA isometric view and starts the game state.
+fn load_moba_level(world: &mut World) {
+    // Game state -- deathmatch, score limit 100
+    let config = euca_gameplay::MatchConfig {
+        mode: "deathmatch".to_string(),
+        score_limit: 100,
+        time_limit: 300.0,
+        respawn_delay: 3.0,
+    };
+    let mut game_state = euca_gameplay::GameState::new(config);
+    game_state.start();
+    world.insert_resource(game_state);
+
+    // Spawn points
+    let sp1 = world.spawn(euca_scene::LocalTransform(
+        euca_math::Transform::from_translation(Vec3::new(-7.0, 0.5, 0.0)),
+    ));
+    world.insert(sp1, euca_scene::GlobalTransform::default());
+    world.insert(sp1, euca_gameplay::SpawnPoint { team: 1 });
+
+    let sp2 = world.spawn(euca_scene::LocalTransform(
+        euca_math::Transform::from_translation(Vec3::new(7.0, 0.5, 0.0)),
+    ));
+    world.insert(sp2, euca_scene::GlobalTransform::default());
+    world.insert(sp2, euca_gameplay::SpawnPoint { team: 2 });
+
+    let assets = world
+        .resource::<euca_agent::routes::DefaultAssets>()
+        .cloned();
+
+    // -- Bases (structures) --
+    let spawn_structure = |world: &mut World,
+                           assets: &Option<euca_agent::routes::DefaultAssets>,
+                           pos: Vec3,
+                           color: &str,
+                           team: u8| {
+        let mut t = euca_math::Transform::from_translation(pos);
+        t.scale = Vec3::new(1.5, 1.5, 1.5);
+        let e = world.spawn(euca_scene::LocalTransform(t));
+        world.insert(e, euca_scene::GlobalTransform::default());
+        if let Some(a) = assets {
+            if let Some(mesh) = a.mesh("cube") {
+                world.insert(e, MeshRenderer { mesh });
+            }
+            if let Some(mat) = a.material(color) {
+                world.insert(e, MaterialRef { handle: mat });
+            }
+        }
+        world.insert(e, euca_gameplay::Health::new(2000.0));
+        world.insert(e, euca_gameplay::Team(team));
+        world.insert(
+            e,
+            euca_physics::PhysicsBody {
+                body_type: euca_physics::RigidBodyType::Static,
+            },
+        );
+        world.insert(e, euca_gameplay::EntityRole::Structure);
+    };
+
+    spawn_structure(world, &assets, Vec3::new(-8.0, 0.5, 0.0), "blue", 1);
+    spawn_structure(world, &assets, Vec3::new(8.0, 0.5, 0.0), "red", 2);
+
+    // -- Towers --
+    let spawn_tower = |world: &mut World,
+                       assets: &Option<euca_agent::routes::DefaultAssets>,
+                       pos: Vec3,
+                       color: &str,
+                       team: u8| {
+        let mut t = euca_math::Transform::from_translation(pos);
+        t.scale = Vec3::new(0.4, 2.5, 0.4);
+        let e = world.spawn(euca_scene::LocalTransform(t));
+        world.insert(e, euca_scene::GlobalTransform::default());
+        if let Some(a) = assets {
+            if let Some(mesh) = a.mesh("cube") {
+                world.insert(e, MeshRenderer { mesh });
+            }
+            if let Some(mat) = a.material(color) {
+                world.insert(e, MaterialRef { handle: mat });
+            }
+        }
+        world.insert(e, euca_gameplay::Health::new(800.0));
+        world.insert(e, euca_gameplay::Team(team));
+        world.insert(
+            e,
+            euca_physics::PhysicsBody {
+                body_type: euca_physics::RigidBodyType::Static,
+            },
+        );
+        let mut ac = euca_gameplay::AutoCombat::new();
+        ac.damage = 40.0;
+        ac.range = 5.0;
+        ac.detect_range = 5.0;
+        ac.cooldown = 1.5;
+        ac.attack_style = euca_gameplay::AttackStyle::Stationary;
+        ac.speed = 0.0;
+        world.insert(e, ac);
+        world.insert(e, euca_gameplay::EntityRole::Tower);
+        world.insert(e, euca_gameplay::GoldBounty(150));
+        world.insert(e, euca_gameplay::XpBounty(100));
+    };
+
+    spawn_tower(world, &assets, Vec3::new(-4.0, 1.0, 0.0), "cyan", 1);
+    spawn_tower(world, &assets, Vec3::new(4.0, 1.0, 0.0), "orange", 2);
+
+    // -- Heroes --
+    let spawn_hero = |world: &mut World,
+                      assets: &Option<euca_agent::routes::DefaultAssets>,
+                      pos: Vec3,
+                      color: &str,
+                      team: u8,
+                      is_player: bool| {
+        let mut t = euca_math::Transform::from_translation(pos);
+        t.scale = Vec3::new(1.2, 1.2, 1.2);
+        let e = world.spawn(euca_scene::LocalTransform(t));
+        world.insert(e, euca_scene::GlobalTransform::default());
+        if let Some(a) = assets {
+            if let Some(mesh) = a.mesh("sphere") {
+                world.insert(e, MeshRenderer { mesh });
+            }
+            if let Some(mat) = a.material(color) {
+                world.insert(e, MaterialRef { handle: mat });
+            }
+        }
+        world.insert(e, euca_gameplay::Health::new(500.0));
+        world.insert(e, euca_gameplay::Team(team));
+        world.insert(
+            e,
+            euca_physics::PhysicsBody {
+                body_type: euca_physics::RigidBodyType::Kinematic,
+            },
+        );
+        world.insert(e, euca_physics::Collider::sphere(0.6));
+        world.insert(e, euca_physics::Velocity::default());
+        let mut ac = euca_gameplay::AutoCombat::new();
+        ac.damage = 30.0;
+        ac.range = 2.0;
+        ac.detect_range = 2.0;
+        ac.speed = 4.0;
+        ac.cooldown = 0.8;
+        world.insert(e, ac);
+        world.insert(e, euca_gameplay::EntityRole::Hero);
+        world.insert(e, euca_gameplay::Gold(0));
+        world.insert(e, euca_gameplay::Level::new(1));
+        world.insert(e, euca_gameplay::GoldBounty(300));
+        world.insert(e, euca_gameplay::XpBounty(200));
+
+        let dir = if team == 1 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(-1.0, 0.0, 0.0)
+        };
+        world.insert(e, euca_gameplay::MarchDirection(dir));
+
+        if is_player {
+            world.insert(e, euca_gameplay::player::PlayerHero);
+            world.insert(e, euca_gameplay::player::PlayerCommandQueue::default());
+            if let Some(cam) = world.resource_mut::<euca_gameplay::camera::MobaCamera>() {
+                cam.follow_entity = Some(e);
+            }
+        }
+    };
+
+    spawn_hero(world, &assets, Vec3::new(-7.0, 0.5, 0.0), "cyan", 1, true);
+    spawn_hero(world, &assets, Vec3::new(7.0, 0.5, 0.0), "orange", 2, false);
+
+    // -- Rules: minion waves every 20s --
+    let minion_actions_t1 = std::sync::Arc::new(vec![euca_gameplay::GameAction::Spawn {
+        mesh: "cube".to_string(),
+        position: [-7.0, 0.5, 0.0],
+        color: Some("blue".to_string()),
+        health: Some(80.0),
+        team: Some(1),
+        combat: Some(true),
+        waypoints: Some(vec![[-7.0, 0.0, 0.0], [0.0, 0.0, 0.0], [7.0, 0.0, 0.0]]),
+        speed: Some(3.0),
+        scale: Some([0.5, 0.5, 0.5]),
+        gold_bounty: None,
+        xp_bounty: None,
+        role: Some("minion".to_string()),
+        count: Some(3),
+    }]);
+    world.spawn(euca_gameplay::TimerRule {
+        interval: 20.0,
+        elapsed: 0.0,
+        repeat: true,
+        actions: minion_actions_t1,
+    });
+
+    let minion_actions_t2 = std::sync::Arc::new(vec![euca_gameplay::GameAction::Spawn {
+        mesh: "cube".to_string(),
+        position: [7.0, 0.5, 0.0],
+        color: Some("red".to_string()),
+        health: Some(80.0),
+        team: Some(2),
+        combat: Some(true),
+        waypoints: Some(vec![[7.0, 0.0, 0.0], [0.0, 0.0, 0.0], [-7.0, 0.0, 0.0]]),
+        speed: Some(3.0),
+        scale: Some([0.5, 0.5, 0.5]),
+        gold_bounty: None,
+        xp_bounty: None,
+        role: Some("minion".to_string()),
+        count: Some(3),
+    }]);
+    world.spawn(euca_gameplay::TimerRule {
+        interval: 20.0,
+        elapsed: 0.0,
+        repeat: true,
+        actions: minion_actions_t2,
+    });
+
+    // -- Rules: score on kills --
+    let score_action = std::sync::Arc::new(vec![euca_gameplay::GameAction::Score {
+        target: euca_gameplay::ActionTarget::Source,
+        points: 1,
+    }]);
+    world.spawn(euca_gameplay::OnDeathRule {
+        filter: euca_gameplay::RuleFilter::Team(2),
+        actions: score_action.clone(),
+    });
+    world.spawn(euca_gameplay::OnDeathRule {
+        filter: euca_gameplay::RuleFilter::Team(1),
+        actions: score_action,
+    });
+
+    // -- HUD title --
+    if let Some(canvas) = world.resource_mut::<euca_agent::hud::HudCanvas>() {
+        canvas.add(euca_agent::hud::HudElement::Text {
+            text: "EUCA ARENA".to_string(),
+            x: 0.5,
+            y: 0.02,
+            size: 28.0,
+            color: "yellow".to_string(),
+        });
+    }
+
+    // -- Camera: MOBA isometric view --
+    if let Some(cam) = world.resource_mut::<Camera>() {
+        cam.eye = Vec3::new(0.0, 6.0, 6.0);
+        cam.target = Vec3::new(0.0, 0.5, 0.0);
+    }
+
+    log::info!("MOBA arena level loaded");
+}
+
 /// Run all gameplay systems for a single simulation tick.
 ///
 /// Called once per frame when the editor is in play mode (or stepping).
@@ -493,6 +740,7 @@ struct EditorApp {
     ctrl_held: bool,
     shift_held: bool,
     _tokio_rt: Option<tokio::runtime::Runtime>,
+    pending_level_load: Option<String>,
 }
 
 impl EditorApp {
@@ -531,6 +779,7 @@ impl EditorApp {
             ctrl_held: false,
             shift_held: false,
             _tokio_rt: None,
+            pending_level_load: None,
         }
     }
 
@@ -838,6 +1087,15 @@ impl EditorApp {
                     }
                     Err(e) => log::error!("Load failed: {e}"),
                 },
+                ToolbarAction::LoadMoba => {
+                    load_moba_level(world);
+                    // Set editor camera to MOBA overview
+                    self.cam_target = Vec3::new(0.0, 0.5, 0.0);
+                    self.cam_distance = 10.0;
+                    self.cam_yaw = 0.0;
+                    self.cam_pitch = 0.6;
+                    self.editor_state.selected_entity = None;
+                }
             }
         }
 
@@ -976,6 +1234,24 @@ impl ApplicationHandler for EditorApp {
             self.egui_winit = Some(egui_winit);
             self.egui_renderer = Some(egui_renderer);
             self.setup_scene();
+
+            // Auto-load level if --level was specified
+            if let Some(ref level_path) = self.pending_level_load {
+                if level_path.contains("moba") {
+                    let mut pool = self.shared.lock();
+                    let world = pool.world();
+                    load_moba_level(world);
+                    // Set editor camera for MOBA view
+                    self.cam_target = Vec3::new(0.0, 0.5, 0.0);
+                    self.cam_distance = 10.0;
+                    self.cam_yaw = 0.0;
+                    self.cam_pitch = 0.6;
+                    log::info!("Auto-loaded level: {}", level_path);
+                } else {
+                    log::warn!("Unknown level: {} (only 'moba' supported)", level_path);
+                }
+                self.pending_level_load = None;
+            }
 
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -1486,7 +1762,12 @@ fn capture_screenshot(
 
 fn main() {
     env_logger::init();
+
+    // Parse --level argument for auto-loading a level on startup
+    let level_path = std::env::args().skip_while(|a| a != "--level").nth(1);
+
     let event_loop = EventLoop::new().unwrap();
     let mut app = EditorApp::new();
+    app.pending_level_load = level_path;
     event_loop.run_app(&mut app).unwrap();
 }
