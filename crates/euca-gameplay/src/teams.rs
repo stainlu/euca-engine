@@ -7,6 +7,8 @@ use euca_ecs::{Entity, Events, Query, World};
 use euca_math::Vec3;
 use euca_scene::LocalTransform;
 
+use crate::cleanup::CorpseTimer;
+use crate::combat::EntityRole;
 use crate::health::{Dead, DeathEvent, Health};
 
 /// Which team this entity belongs to.
@@ -86,7 +88,13 @@ pub fn respawn_system(world: &mut World, dt: f32) {
     }
 }
 
-/// When an entity dies, start a respawn timer (if it has a Team).
+/// Default corpse duration for minions (seconds).
+const MINION_CORPSE_DURATION: f32 = 2.0;
+
+/// When an entity dies, start a respawn timer or corpse timer depending on role.
+///
+/// - **Minions** get a `CorpseTimer` (they are despawned after a short delay).
+/// - **All other entities with a Team** get a `RespawnTimer` (they respawn).
 pub fn start_respawn_on_death(world: &mut World, respawn_delay: f32) {
     let deaths: Vec<Entity> = world
         .resource::<Events>()
@@ -94,7 +102,20 @@ pub fn start_respawn_on_death(world: &mut World, respawn_delay: f32) {
         .unwrap_or_default();
 
     for entity in deaths {
-        if world.get::<Team>(entity).is_some() && world.get::<RespawnTimer>(entity).is_none() {
+        if world.get::<Team>(entity).is_none() {
+            continue;
+        }
+
+        let is_minion = world
+            .get::<EntityRole>(entity)
+            .map(|r| *r == EntityRole::Minion)
+            .unwrap_or(false);
+
+        if is_minion {
+            if world.get::<CorpseTimer>(entity).is_none() {
+                world.insert(entity, CorpseTimer::new(MINION_CORPSE_DURATION));
+            }
+        } else if world.get::<RespawnTimer>(entity).is_none() {
             world.insert(
                 entity,
                 RespawnTimer {

@@ -116,6 +116,7 @@ fn run_gameplay_systems(world: &mut World, dt: f32) {
         euca_gameplay::respawn_system(world, dt);
         euca_gameplay::start_respawn_on_death(world, delay);
     }
+    euca_gameplay::corpse_cleanup_system(world, dt);
 
     // Attach visuals to rule-spawned entities
     let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = world

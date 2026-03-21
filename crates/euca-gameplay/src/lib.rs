@@ -12,6 +12,7 @@
 
 pub mod abilities;
 pub mod ai;
+pub mod cleanup;
 pub mod combat;
 pub mod data_table;
 pub mod economy;
@@ -46,5 +47,6 @@ pub use abilities::{
     Ability, AbilityEffect, AbilitySet, AbilitySlot, Mana, SpeedBuff, UseAbilityEvent,
     ability_tick_system, use_ability_system,
 };
+pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use economy::{Gold, GoldBounty, gold_on_kill_system};
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
