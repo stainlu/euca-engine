@@ -1,5 +1,6 @@
 mod buffer;
 mod camera;
+pub mod clustered;
 pub mod compute;
 pub mod decal;
 pub mod deferred;
@@ -26,6 +27,10 @@ pub use wgpu;
 
 pub use buffer::{BufferKind, SmartBuffer};
 pub use camera::{Camera, Frustum};
+pub use clustered::{
+    cluster_index, sphere_aabb_intersect, ClusterConfig, ClusteredLightGrid, GpuLightData,
+    LightType, UpdateParams,
+};
 pub use compute::{
     ComputeManager, ComputePipeline, ComputePipelineDesc, CullParams, GpuAabb, GpuBuffer,
     GpuFrustumPlanes,
