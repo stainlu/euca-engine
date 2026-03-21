@@ -701,10 +701,7 @@ impl EditorApp {
             }
             // Auto-detect PlayerHero and set camera follow
             let hero = {
-                let q = Query::<(
-                    euca_ecs::Entity,
-                    &euca_gameplay::player::PlayerHero,
-                )>::new(world);
+                let q = Query::<(euca_ecs::Entity, &euca_gameplay::player::PlayerHero)>::new(world);
                 q.iter().map(|(e, _)| e).next()
             };
             if let Some(hero) = hero {
