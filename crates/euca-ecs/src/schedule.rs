@@ -1,3 +1,6 @@
+use std::any::TypeId;
+use std::collections::HashSet;
+
 use crate::system::{IntoSystem, System};
 use crate::system_param::validate_no_conflicts;
 use crate::world::World;
@@ -31,21 +34,13 @@ impl Stage {
         self.dirty = true;
     }
 
-    /// Group systems into batches for parallel execution.
-    ///
-    /// Algorithm: greedy batching. For each system, try to place it in an
-    /// existing batch. If it conflicts with any system in that batch, or if
-    /// it has no declared accesses (conservative), start a new batch.
     fn rebuild_batches(&mut self) {
         self.batches.clear();
-
-        // Topological sort: respect after() dependencies
         let order = self.topological_order();
 
         for &sys_idx in &order {
             let sys_accesses = self.systems[sys_idx].accesses();
 
-            // Systems with no declared accesses are conservative — own batch
             if sys_accesses.is_empty() {
                 self.batches.push(Batch {
                     system_indices: vec![sys_idx],
@@ -53,7 +48,6 @@ impl Stage {
                 continue;
             }
 
-            // Try to fit into an existing batch
             let mut placed = false;
             for batch in &mut self.batches {
                 let mut conflicts = false;
@@ -83,12 +77,9 @@ impl Stage {
         self.dirty = false;
     }
 
-    /// Topological sort of systems respecting after() dependencies.
-    /// Returns indices in execution order.
     fn topological_order(&self) -> Vec<usize> {
         use std::collections::HashMap;
 
-        // Build label → index map
         let mut label_to_idx: HashMap<&str, usize> = HashMap::new();
         for (i, sys) in self.systems.iter().enumerate() {
             if let Some(label) = sys.label() {
@@ -96,7 +87,6 @@ impl Stage {
             }
         }
 
-        // Build adjacency list (edges: dep → dependent)
         let n = self.systems.len();
         let mut in_degree = vec![0u32; n];
         let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -110,7 +100,6 @@ impl Stage {
             }
         }
 
-        // Kahn's algorithm (FIFO queue for stable ordering)
         let mut queue: std::collections::VecDeque<usize> =
             (0..n).filter(|&i| in_degree[i] == 0).collect();
         let mut order = Vec::with_capacity(n);
@@ -125,7 +114,6 @@ impl Stage {
             }
         }
 
-        // Cycle detection: if not all systems were ordered, there's a dependency cycle
         if order.len() < n {
             let unresolved: Vec<_> = (0..n)
                 .filter(|i| !order.contains(i))
@@ -136,7 +124,6 @@ impl Stage {
                  These systems will run in declaration order.",
                 unresolved
             );
-            // Append in declaration order as fallback (deterministic, but not ideal)
             for i in 0..n {
                 if !order.contains(&i) {
                     order.push(i);
@@ -154,13 +141,8 @@ impl Stage {
 
         for batch in &self.batches {
             if batch.system_indices.len() == 1 {
-                // Single system — run directly, no overhead
                 self.systems[batch.system_indices[0]].run(world);
             } else {
-                // Multiple systems — run in parallel via rayon
-                // SAFETY: Systems in this batch have been validated to have
-                // non-conflicting accesses. Each system gets a raw pointer to
-                // World, which is sound because they access disjoint data.
                 unsafe {
                     run_batch_parallel(&mut self.systems, &batch.system_indices, world);
                 }
@@ -169,29 +151,15 @@ impl Stage {
     }
 }
 
-/// A system + world pointer pair that can be sent across threads.
-///
-/// Fields are private to force edition 2024 closures to capture the whole
-/// struct (not individual fields), respecting our unsafe Send impl.
-///
-/// SAFETY: Caller must ensure no aliasing between different SystemJob instances.
 struct SystemJob(*mut dyn System, *mut World);
 unsafe impl Send for SystemJob {}
 
 impl SystemJob {
-    /// # Safety
-    /// Caller must ensure exclusive access to the system and that the system's
-    /// world access doesn't alias with other concurrently running systems.
     unsafe fn run(self) {
         unsafe { (*self.0).run(&mut *self.1) }
     }
 }
 
-/// Run multiple systems in parallel using std::thread::scope.
-///
-/// # Safety
-/// Caller must ensure that the systems at the given indices have non-conflicting
-/// accesses (validated by `validate_no_conflicts`).
 unsafe fn run_batch_parallel(
     systems: &mut [Box<dyn System>],
     indices: &[usize],
@@ -236,8 +204,6 @@ impl Schedule {
     }
 
     /// Add a system to the default (first) stage.
-    ///
-    /// Accepts both old-style `fn(&mut World)` and new-style typed-param systems.
     pub fn add_system<M: 'static, S: IntoSystem<M> + 'static>(&mut self, system: S) -> &mut Self
     where
         S::System: 'static,
@@ -291,12 +257,7 @@ impl Schedule {
     }
 
     /// Run all stages in order, then advance the world tick.
-    ///
-    /// On the first call, startup systems run before the main schedule.
-    /// Within each stage, systems are grouped into batches. Systems in the same
-    /// batch run in parallel via rayon. Batches run sequentially.
     pub fn run(&mut self, world: &mut World) {
-        // Run startup systems once
         if !self.started {
             self.started = true;
             for sys in &mut self.startup_systems {
@@ -332,6 +293,389 @@ impl Schedule {
 impl Default for Schedule {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ParallelSchedule - opt-in parallel system scheduler
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Describes the component and resource accesses of a system for parallel scheduling.
+///
+/// Two systems conflict if one writes a component/resource that the other reads or writes.
+/// Systems with no conflicts can execute simultaneously.
+#[derive(Clone, Debug, Default)]
+pub struct ParallelSystemAccess {
+    /// Component `TypeId`s this system reads.
+    pub reads: HashSet<TypeId>,
+    /// Component `TypeId`s this system writes.
+    pub writes: HashSet<TypeId>,
+    /// Resource `TypeId`s this system reads.
+    pub resources_read: HashSet<TypeId>,
+    /// Resource `TypeId`s this system writes.
+    pub resources_write: HashSet<TypeId>,
+}
+
+impl ParallelSystemAccess {
+    /// Create an empty access descriptor (no declared accesses).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Declare a component type as read.
+    pub fn read<T: 'static>(mut self) -> Self {
+        self.reads.insert(TypeId::of::<T>());
+        self
+    }
+
+    /// Declare a component type as written.
+    pub fn write<T: 'static>(mut self) -> Self {
+        self.writes.insert(TypeId::of::<T>());
+        self
+    }
+
+    /// Declare a resource type as read.
+    pub fn resource_read<T: 'static>(mut self) -> Self {
+        self.resources_read.insert(TypeId::of::<T>());
+        self
+    }
+
+    /// Declare a resource type as written.
+    pub fn resource_write<T: 'static>(mut self) -> Self {
+        self.resources_write.insert(TypeId::of::<T>());
+        self
+    }
+
+    /// Returns true if this access set has no declared accesses at all.
+    pub fn is_empty(&self) -> bool {
+        self.reads.is_empty()
+            && self.writes.is_empty()
+            && self.resources_read.is_empty()
+            && self.resources_write.is_empty()
+    }
+
+    /// Returns true if `self` and `other` conflict.
+    ///
+    /// A conflict exists when one system writes a component/resource that the
+    /// other reads or writes.
+    pub fn conflicts_with(&self, other: &Self) -> bool {
+        if !self.writes.is_disjoint(&other.reads)
+            || !self.writes.is_disjoint(&other.writes)
+            || !self.reads.is_disjoint(&other.writes)
+        {
+            return true;
+        }
+
+        if !self.resources_write.is_disjoint(&other.resources_read)
+            || !self.resources_write.is_disjoint(&other.resources_write)
+            || !self.resources_read.is_disjoint(&other.resources_write)
+        {
+            return true;
+        }
+
+        false
+    }
+}
+
+/// A group of non-conflicting systems that can execute simultaneously.
+pub struct SystemBatch {
+    indices: Vec<usize>,
+}
+
+impl SystemBatch {
+    /// Returns the system indices in this batch.
+    pub fn system_indices(&self) -> &[usize] {
+        &self.indices
+    }
+
+    /// Returns how many systems are in this batch.
+    pub fn len(&self) -> usize {
+        self.indices.len()
+    }
+
+    /// Returns true if this batch contains no systems.
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+}
+
+/// Internal entry for a system registered with `ParallelSchedule`.
+struct ParallelSystemEntry {
+    name: String,
+    system: Box<dyn System>,
+    access: ParallelSystemAccess,
+    after: Vec<String>,
+}
+
+/// An alternative to [`Schedule`] that analyzes access patterns and groups
+/// non-conflicting systems into parallel batches.
+///
+/// Users opt in to `ParallelSchedule` when they want fine-grained control
+/// over declared accesses and explicit parallelism.
+///
+/// # Usage
+///
+/// ```ignore
+/// let mut sched = ParallelSchedule::new();
+/// sched.add_system("physics", physics_fn, ParallelSystemAccess::new().write::<Vel>());
+/// sched.add_system("render", render_fn, ParallelSystemAccess::new().read::<Pos>());
+/// sched.build();
+/// sched.run(&mut world);
+/// ```
+pub struct ParallelSchedule {
+    systems: Vec<ParallelSystemEntry>,
+    batches: Vec<SystemBatch>,
+    built: bool,
+}
+
+impl ParallelSchedule {
+    /// Create an empty parallel schedule.
+    pub fn new() -> Self {
+        Self {
+            systems: Vec::new(),
+            batches: Vec::new(),
+            built: false,
+        }
+    }
+
+    /// Register a system with a name and declared access pattern.
+    ///
+    /// Returns a [`SystemHandle`] that can be used to add ordering constraints.
+    pub fn add_system<M: 'static, S: IntoSystem<M> + 'static>(
+        &mut self,
+        name: &str,
+        system: S,
+        access: ParallelSystemAccess,
+    ) -> SystemHandle<'_>
+    where
+        S::System: 'static,
+    {
+        let idx = self.systems.len();
+        self.systems.push(ParallelSystemEntry {
+            name: name.to_string(),
+            system: Box::new(system.into_system()),
+            access,
+            after: Vec::new(),
+        });
+        self.built = false;
+        SystemHandle {
+            schedule: self,
+            index: idx,
+        }
+    }
+
+    /// Analyze access patterns, resolve ordering constraints, and group
+    /// non-conflicting systems into parallel batches.
+    ///
+    /// Must be called before `run()`. Calling `add_system()` after `build()`
+    /// invalidates the schedule and requires another `build()`.
+    pub fn build(&mut self) {
+        let order = self.topological_order();
+        self.batches.clear();
+
+        for &sys_idx in &order {
+            let sys_access = &self.systems[sys_idx].access;
+            let min_batch = self.min_batch_for(sys_idx);
+
+            let mut placed = false;
+            for batch_idx in min_batch..self.batches.len() {
+                let batch = &self.batches[batch_idx];
+                let conflicts = batch.indices.iter().any(|&other_idx| {
+                    sys_access.conflicts_with(&self.systems[other_idx].access)
+                });
+                if !conflicts {
+                    self.batches[batch_idx].indices.push(sys_idx);
+                    placed = true;
+                    break;
+                }
+            }
+
+            if !placed {
+                self.batches.push(SystemBatch {
+                    indices: vec![sys_idx],
+                });
+            }
+        }
+
+        self.built = true;
+    }
+
+    /// Execute each batch. Systems within a batch run in parallel using
+    /// `std::thread::scope`; batches run sequentially.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `build()` has not been called since the last `add_system()`.
+    pub fn run(&mut self, world: &mut World) {
+        assert!(
+            self.built,
+            "ParallelSchedule::run() called before build(). Call build() first."
+        );
+
+        for batch_idx in 0..self.batches.len() {
+            let batch_len = self.batches[batch_idx].indices.len();
+            if batch_len == 1 {
+                let sys_idx = self.batches[batch_idx].indices[0];
+                self.systems[sys_idx].system.run(world);
+            } else {
+                let indices: Vec<usize> = self.batches[batch_idx].indices.clone();
+                // SAFETY: Systems in this batch have been validated to have
+                // non-conflicting accesses. Each system accesses disjoint data.
+                unsafe {
+                    self.run_batch_parallel(&indices, world);
+                }
+            }
+        }
+    }
+
+    /// Returns the batches produced by `build()`.
+    pub fn batches(&self) -> &[SystemBatch] {
+        &self.batches
+    }
+
+    /// Total number of registered systems.
+    pub fn len(&self) -> usize {
+        self.systems.len()
+    }
+
+    /// Whether the schedule has no systems.
+    pub fn is_empty(&self) -> bool {
+        self.systems.is_empty()
+    }
+
+    /// Topological sort respecting `after()` dependencies using Kahn's algorithm.
+    fn topological_order(&self) -> Vec<usize> {
+        use std::collections::HashMap;
+        use std::collections::VecDeque;
+
+        let n = self.systems.len();
+
+        let name_to_idx: HashMap<&str, usize> = self
+            .systems
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| (entry.name.as_str(), i))
+            .collect();
+
+        let mut in_degree = vec![0u32; n];
+        let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+        for (i, entry) in self.systems.iter().enumerate() {
+            for dep_name in &entry.after {
+                if let Some(&dep_idx) = name_to_idx.get(dep_name.as_str()) {
+                    dependents[dep_idx].push(i);
+                    in_degree[i] += 1;
+                }
+            }
+        }
+
+        let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
+        let mut order = Vec::with_capacity(n);
+
+        while let Some(idx) = queue.pop_front() {
+            order.push(idx);
+            for &dep in &dependents[idx] {
+                in_degree[dep] -= 1;
+                if in_degree[dep] == 0 {
+                    queue.push_back(dep);
+                }
+            }
+        }
+
+        if order.len() < n {
+            let unresolved: Vec<_> = (0..n)
+                .filter(|i| !order.contains(i))
+                .map(|i| self.systems[i].name.clone())
+                .collect();
+            eprintln!(
+                "[WARN] ParallelSchedule: dependency cycle detected involving: {:?}. \
+                 Falling back to declaration order for these systems.",
+                unresolved
+            );
+            for i in 0..n {
+                if !order.contains(&i) {
+                    order.push(i);
+                }
+            }
+        }
+
+        order
+    }
+
+    /// Find the earliest batch index where `sys_idx` can be placed,
+    /// respecting `after()` ordering constraints.
+    fn min_batch_for(&self, sys_idx: usize) -> usize {
+        let entry = &self.systems[sys_idx];
+        if entry.after.is_empty() {
+            return 0;
+        }
+
+        let name_to_idx: std::collections::HashMap<&str, usize> = self
+            .systems
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.name.as_str(), i))
+            .collect();
+
+        let mut min_batch = 0;
+        for dep_name in &entry.after {
+            if let Some(&dep_idx) = name_to_idx.get(dep_name.as_str()) {
+                for (batch_idx, batch) in self.batches.iter().enumerate() {
+                    if batch.indices.contains(&dep_idx) {
+                        min_batch = min_batch.max(batch_idx + 1);
+                    }
+                }
+            }
+        }
+        min_batch
+    }
+
+    /// Run a batch of systems in parallel using `std::thread::scope`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the systems at the given indices have
+    /// non-conflicting accesses.
+    unsafe fn run_batch_parallel(&mut self, indices: &[usize], world: &mut World) {
+        let world_ptr = world as *mut World;
+
+        std::thread::scope(|s| {
+            let mut handles = Vec::new();
+            for &idx in indices {
+                let job = SystemJob(
+                    &mut *self.systems[idx].system as *mut dyn System,
+                    world_ptr,
+                );
+                handles.push(s.spawn(move || unsafe { job.run() }));
+            }
+            for h in handles {
+                h.join()
+                    .expect("System panicked during parallel execution");
+            }
+        });
+    }
+}
+
+impl Default for ParallelSchedule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Handle returned by [`ParallelSchedule::add_system`] for adding ordering
+/// constraints via method chaining.
+pub struct SystemHandle<'a> {
+    schedule: &'a mut ParallelSchedule,
+    index: usize,
+}
+
+impl SystemHandle<'_> {
+    /// Declare that this system must run after the named system.
+    pub fn after(self, dependency: &str) -> Self {
+        self.schedule.systems[self.index]
+            .after
+            .push(dependency.to_string());
+        self
     }
 }
 
@@ -438,18 +782,15 @@ mod tests {
 
         let mut schedule = Schedule::new();
 
-        // Stage 0 (default)
         schedule.add_system(|w: &mut World| {
             w.resource_mut::<Vec<String>>().unwrap().push("S0".into());
         });
 
-        // Stage 1
         let s1 = schedule.add_stage();
         schedule.add_system_to_stage(s1, |w: &mut World| {
             w.resource_mut::<Vec<String>>().unwrap().push("S1".into());
         });
 
-        // Stage 2
         let s2 = schedule.add_stage();
         schedule.add_system_to_stage(s2, |w: &mut World| {
             w.resource_mut::<Vec<String>>().unwrap().push("S2".into());
@@ -482,12 +823,8 @@ mod tests {
         assert_eq!(count.load(Ordering::Relaxed), 100);
     }
 
-    // ── New tests: parallel scheduling ──
-
     #[test]
     fn undeclared_systems_run_sequentially() {
-        // Systems with no accesses (default) should each get their own batch
-        // and run in order — same behavior as before.
         let mut world = World::new();
         world.insert_resource(Vec::<String>::new());
 
@@ -511,7 +848,6 @@ mod tests {
 
     #[test]
     fn parallel_batch_no_conflict() {
-        // Two systems reading different resources → same batch → parallel
         use std::any::TypeId;
 
         let counter = std::sync::Arc::new(AtomicU32::new(0));
@@ -535,25 +871,19 @@ mod tests {
         );
 
         let mut schedule = Schedule::new();
-        // Must use add_system_to_stage with IntoSystem — but AccessSystem is already a System.
-        // We need to box them directly.
         schedule.stages[0].add_system(Box::new(sys_a));
         schedule.stages[0].add_system(Box::new(sys_b));
 
         let mut world = World::new();
         schedule.run(&mut world);
 
-        // Both systems ran
         assert_eq!(counter.load(Ordering::Relaxed), 2);
-
-        // Verify they were batched together (1 batch with 2 systems)
         assert_eq!(schedule.stages[0].batches.len(), 1);
         assert_eq!(schedule.stages[0].batches[0].system_indices.len(), 2);
     }
 
     #[test]
     fn parallel_batch_with_conflict() {
-        // Two systems writing the same resource → separate batches
         use std::any::TypeId;
 
         let sys_a = AccessSystem::new(
@@ -573,21 +903,16 @@ mod tests {
         let mut world = World::new();
         schedule.run(&mut world);
 
-        // Should be 2 separate batches (conflict)
         assert_eq!(schedule.stages[0].batches.len(), 2);
     }
 
     #[test]
     fn mixed_declared_and_undeclared() {
-        // Undeclared system gets its own batch, declared systems may batch together
         use std::any::TypeId;
 
         let mut schedule = Schedule::new();
-
-        // Undeclared (default) — own batch
         schedule.add_system(|_w: &mut World| {});
 
-        // Two declared, non-conflicting — can batch
         let sys_a = AccessSystem::new(
             (|_w: &mut World| {}).into_system(),
             vec![SystemAccess::ResourceRead(TypeId::of::<Position>())],
@@ -602,9 +927,211 @@ mod tests {
         let mut world = World::new();
         schedule.run(&mut world);
 
-        // 2 batches: [undeclared] + [sys_a, sys_b]
         assert_eq!(schedule.stages[0].batches.len(), 2);
-        assert_eq!(schedule.stages[0].batches[0].system_indices.len(), 1); // undeclared alone
-        assert_eq!(schedule.stages[0].batches[1].system_indices.len(), 2); // declared together
+        assert_eq!(schedule.stages[0].batches[0].system_indices.len(), 1);
+        assert_eq!(schedule.stages[0].batches[1].system_indices.len(), 2);
+    }
+
+    // -- ParallelSchedule tests --
+
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct Health(f32);
+
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct Mana(f32);
+
+    #[test]
+    fn parallel_schedule_no_conflict_same_batch() {
+        let counter = std::sync::Arc::new(AtomicU32::new(0));
+        let c1 = counter.clone();
+        let c2 = counter.clone();
+
+        let mut schedule = ParallelSchedule::new();
+        schedule.add_system(
+            "read_pos",
+            move |_w: &mut World| {
+                c1.fetch_add(1, Ordering::Relaxed);
+            },
+            ParallelSystemAccess::new().read::<Position>(),
+        );
+        schedule.add_system(
+            "read_vel",
+            move |_w: &mut World| {
+                c2.fetch_add(1, Ordering::Relaxed);
+            },
+            ParallelSystemAccess::new().read::<Velocity>(),
+        );
+        schedule.build();
+
+        let mut world = World::new();
+        schedule.run(&mut world);
+
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
+        assert_eq!(schedule.batches().len(), 1);
+        assert_eq!(schedule.batches()[0].len(), 2);
+    }
+
+    #[test]
+    fn parallel_schedule_write_write_conflict_sequential() {
+        let mut schedule = ParallelSchedule::new();
+        schedule.add_system(
+            "write_pos_a",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().write::<Position>(),
+        );
+        schedule.add_system(
+            "write_pos_b",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().write::<Position>(),
+        );
+        schedule.build();
+
+        assert_eq!(schedule.batches().len(), 2);
+        assert_eq!(schedule.batches()[0].len(), 1);
+        assert_eq!(schedule.batches()[1].len(), 1);
+    }
+
+    #[test]
+    fn parallel_schedule_read_read_same_batch() {
+        let mut schedule = ParallelSchedule::new();
+        schedule.add_system(
+            "read_pos_a",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().read::<Position>(),
+        );
+        schedule.add_system(
+            "read_pos_b",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().read::<Position>(),
+        );
+        schedule.build();
+
+        assert_eq!(schedule.batches().len(), 1);
+        assert_eq!(schedule.batches()[0].len(), 2);
+    }
+
+    #[test]
+    fn parallel_schedule_ordering_constraint_respected() {
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let o1 = order.clone();
+        let o2 = order.clone();
+
+        let mut schedule = ParallelSchedule::new();
+        schedule
+            .add_system(
+                "render",
+                move |_w: &mut World| {
+                    o2.lock().unwrap().push("render".into());
+                },
+                ParallelSystemAccess::new().read::<Position>(),
+            )
+            .after("physics");
+        schedule.add_system(
+            "physics",
+            move |_w: &mut World| {
+                o1.lock().unwrap().push("physics".into());
+            },
+            ParallelSystemAccess::new().read::<Velocity>(),
+        );
+        schedule.build();
+
+        let mut world = World::new();
+        schedule.run(&mut world);
+
+        let log = order.lock().unwrap();
+        assert_eq!(*log, vec!["physics".to_string(), "render".to_string()]);
+        assert_eq!(schedule.batches().len(), 2);
+    }
+
+    #[test]
+    fn parallel_schedule_empty() {
+        let mut schedule = ParallelSchedule::new();
+        schedule.build();
+
+        assert!(schedule.batches().is_empty());
+        assert!(schedule.is_empty());
+        assert_eq!(schedule.len(), 0);
+
+        let mut world = World::new();
+        schedule.run(&mut world);
+    }
+
+    #[test]
+    fn parallel_schedule_read_write_conflict() {
+        let mut schedule = ParallelSchedule::new();
+        schedule.add_system(
+            "reader",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().read::<Position>(),
+        );
+        schedule.add_system(
+            "writer",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().write::<Position>(),
+        );
+        schedule.build();
+
+        assert_eq!(schedule.batches().len(), 2);
+    }
+
+    #[test]
+    fn parallel_schedule_mixed_accesses_batching() {
+        let mut schedule = ParallelSchedule::new();
+        schedule.add_system(
+            "A",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().read::<Position>(),
+        );
+        schedule.add_system(
+            "B",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().read::<Velocity>(),
+        );
+        schedule.add_system(
+            "C",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().write::<Position>(),
+        );
+        schedule.add_system(
+            "D",
+            |_w: &mut World| {},
+            ParallelSystemAccess::new().read::<Health>(),
+        );
+        schedule.build();
+
+        assert_eq!(schedule.batches().len(), 2);
+        assert_eq!(schedule.batches()[0].len(), 3);
+        assert_eq!(schedule.batches()[1].len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "build()")]
+    fn parallel_schedule_run_without_build_panics() {
+        let mut schedule = ParallelSchedule::new();
+        schedule.add_system("sys", |_w: &mut World| {}, ParallelSystemAccess::new());
+        let mut world = World::new();
+        schedule.run(&mut world);
+    }
+
+    #[test]
+    fn parallel_system_access_conflicts_with() {
+        let a = ParallelSystemAccess::new()
+            .read::<Position>()
+            .write::<Velocity>();
+        let b = ParallelSystemAccess::new().read::<Velocity>();
+        assert!(a.conflicts_with(&b));
+
+        let c = ParallelSystemAccess::new().read::<Position>();
+        assert!(!a.conflicts_with(&c));
+
+        let d = ParallelSystemAccess::new().resource_write::<Health>();
+        let e = ParallelSystemAccess::new().resource_read::<Health>();
+        assert!(d.conflicts_with(&e));
+
+        let f = ParallelSystemAccess::new().resource_read::<Health>();
+        let g = ParallelSystemAccess::new().resource_read::<Health>();
+        assert!(!f.conflicts_with(&g));
     }
 }
