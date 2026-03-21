@@ -3,6 +3,7 @@ use crate::gpu::GpuContext;
 use crate::light::{AmbientLight, DirectionalLight};
 use crate::material::{Material, MaterialHandle};
 use crate::mesh::{Mesh, MeshHandle};
+use crate::post_process::{PostProcessSettings, PostProcessStack};
 use crate::texture::{TextureHandle, TextureStore};
 use crate::vertex::Vertex;
 use euca_math::Mat4;
@@ -132,6 +133,12 @@ pub struct Renderer {
     depth_texture: wgpu::TextureView,
     depth_format: wgpu::TextureFormat,
     surface_format: wgpu::TextureFormat,
+    /// Optional advanced post-process stack (SSAO, FXAA, color grading).
+    /// When `Some`, the renderer delegates post-processing to the stack
+    /// instead of using its inline postprocess pass.
+    post_process_stack: Option<PostProcessStack>,
+    /// Settings controlling the advanced post-process stack.
+    post_process_settings: PostProcessSettings,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -652,6 +659,8 @@ impl Renderer {
             depth_texture,
             depth_format,
             surface_format: gpu.surface_config.format,
+            post_process_stack: None,
+            post_process_settings: PostProcessSettings::default(),
         }
     }
 
@@ -803,6 +812,38 @@ impl Renderer {
             &self.hdr_view,
             &self.postprocess_sampler,
         );
+        if let Some(ref mut stack) = self.post_process_stack {
+            stack.resize(
+                &gpu.device,
+                gpu.surface_config.width,
+                gpu.surface_config.height,
+            );
+        }
+    }
+
+    /// Initialize the advanced post-process stack (SSAO, FXAA, color grading, bloom).
+    ///
+    /// Once enabled, `render_to_view_with_lights` delegates post-processing to
+    /// `PostProcessStack::execute()` instead of the inline tonemapping pass.
+    /// With default `PostProcessSettings` (SSAO off, FXAA off, bloom on, neutral
+    /// color grading) the visual output matches the inline path.
+    pub fn enable_post_process_stack(&mut self, gpu: &GpuContext) {
+        self.post_process_stack = Some(PostProcessStack::new(
+            &gpu.device,
+            &gpu.queue,
+            &gpu.surface_config,
+        ));
+    }
+
+    /// Update the post-process settings that control SSAO, FXAA, bloom, and
+    /// color grading. Has no effect unless `enable_post_process_stack` was called.
+    pub fn set_post_process_settings(&mut self, settings: PostProcessSettings) {
+        self.post_process_settings = settings;
+    }
+
+    /// Read-only access to the current post-process settings.
+    pub fn post_process_settings(&self) -> &PostProcessSettings {
+        &self.post_process_settings
     }
 
     fn light_vp_for_cascade(light: &DirectionalLight, ortho_size: f32) -> Mat4 {
@@ -1139,12 +1180,21 @@ impl Renderer {
         };
         gpu.queue
             .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
+
+        // Choose the MSAA resolve target: when the advanced post-process stack
+        // is active, resolve into its ping buffer so the stack can read from it.
+        // Otherwise resolve into the renderer's own HDR texture.
+        let resolve_target = match self.post_process_stack {
+            Some(ref stack) => stack.ping_view(),
+            None => &self.hdr_view,
+        };
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("PBR Pass (MSAA)"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.msaa_hdr_view,
-                    resolve_target: Some(&self.hdr_view),
+                    resolve_target: Some(resolve_target),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.05,
@@ -1211,7 +1261,23 @@ impl Renderer {
                 }
             }
         }
-        {
+
+        // Post-processing: delegate to the advanced stack if available,
+        // otherwise use the inline tonemapping pass.
+        if let Some(ref stack) = self.post_process_stack {
+            let inv_projection = camera
+                .projection_matrix(gpu.aspect_ratio())
+                .inverse()
+                .to_cols_array_2d();
+            stack.execute(
+                &gpu.device,
+                &gpu.queue,
+                encoder,
+                color_view,
+                &self.post_process_settings,
+                &inv_projection,
+            );
+        } else {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Postprocess Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
