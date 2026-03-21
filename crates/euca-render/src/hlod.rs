@@ -214,8 +214,7 @@ mod tests {
         let e1 = spawn_at(&mut world, Vec3::new(95.0, 0.0, 0.0));
         let e2 = spawn_at(&mut world, Vec3::new(105.0, 0.0, 0.0));
 
-        let cluster =
-            generate_hlod_cluster(&[e1, e2], &world).expect("should produce a cluster");
+        let cluster = generate_hlod_cluster(&[e1, e2], &world).expect("should produce a cluster");
         assert!((cluster.transition_distance - 100.0).abs() < 1e-3);
 
         let mut registry = HlodRegistry::new();

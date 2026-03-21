@@ -305,6 +305,7 @@ impl GpuDrivenPipeline {
             &self.cull_pipeline,
             &[&bind_group],
             [workgroup_count, 1, 1],
+            None,
         );
     }
 

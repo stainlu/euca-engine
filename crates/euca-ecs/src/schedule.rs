@@ -480,9 +480,10 @@ impl ParallelSchedule {
             let mut placed = false;
             for batch_idx in min_batch..self.batches.len() {
                 let batch = &self.batches[batch_idx];
-                let conflicts = batch.indices.iter().any(|&other_idx| {
-                    sys_access.conflicts_with(&self.systems[other_idx].access)
-                });
+                let conflicts = batch
+                    .indices
+                    .iter()
+                    .any(|&other_idx| sys_access.conflicts_with(&self.systems[other_idx].access));
                 if !conflicts {
                     self.batches[batch_idx].indices.push(sys_idx);
                     placed = true;
@@ -642,15 +643,11 @@ impl ParallelSchedule {
         std::thread::scope(|s| {
             let mut handles = Vec::new();
             for &idx in indices {
-                let job = SystemJob(
-                    &mut *self.systems[idx].system as *mut dyn System,
-                    world_ptr,
-                );
+                let job = SystemJob(&mut *self.systems[idx].system as *mut dyn System, world_ptr);
                 handles.push(s.spawn(move || unsafe { job.run() }));
             }
             for h in handles {
-                h.join()
-                    .expect("System panicked during parallel execution");
+                h.join().expect("System panicked during parallel execution");
             }
         });
     }

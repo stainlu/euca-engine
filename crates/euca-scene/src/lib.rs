@@ -9,11 +9,11 @@ pub use prefab::{
     ComponentData, Damage, Health, Name, Prefab, PrefabRegistry, Speed, Team, WorldPrefabExt,
 };
 pub use spatial::{SpatialIndex, spatial_index_update_system};
-pub use transform::{GlobalTransform, LocalTransform};
 pub use streaming::{
     CameraPosition, ChunkData, ChunkEntityData, ChunkLoader, NullChunkLoader, StreamingConfig,
     StreamingState, WorldChunk, chunks_in_radius, streaming_update_system, world_to_chunk,
 };
+pub use transform::{GlobalTransform, LocalTransform};
 
 use std::collections::VecDeque;
 

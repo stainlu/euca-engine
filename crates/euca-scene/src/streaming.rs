@@ -360,7 +360,10 @@ mod tests {
 
         set_camera(&mut world, Vec3::ZERO);
         streaming_update_system(&mut world);
-        assert_eq!(world.resource::<StreamingState>().unwrap().loaded_count(), 9);
+        assert_eq!(
+            world.resource::<StreamingState>().unwrap().loaded_count(),
+            9
+        );
 
         set_camera(&mut world, Vec3::new(640.0, 0.0, 0.0));
         streaming_update_system(&mut world);
@@ -383,7 +386,10 @@ mod tests {
 
         set_camera(&mut world, Vec3::ZERO);
         streaming_update_system(&mut world);
-        assert_eq!(world.resource::<StreamingState>().unwrap().loaded_count(), 9);
+        assert_eq!(
+            world.resource::<StreamingState>().unwrap().loaded_count(),
+            9
+        );
 
         set_camera(&mut world, Vec3::new(64.0, 0.0, 0.0));
         streaming_update_system(&mut world);
