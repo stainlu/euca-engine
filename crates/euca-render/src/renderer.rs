@@ -205,12 +205,6 @@ pub struct Renderer {
     shadow_sampler: wgpu::Sampler,
     shadow_instance_buffer: SmartBuffer,
     shadow_instance_bind_group: wgpu::BindGroup,
-    postprocess_pipeline: wgpu::RenderPipeline,
-    postprocess_bgl: wgpu::BindGroupLayout,
-    postprocess_sampler: wgpu::Sampler,
-    hdr_texture: wgpu::Texture,
-    hdr_view: wgpu::TextureView,
-    postprocess_bind_group: wgpu::BindGroup,
     msaa_hdr_view: wgpu::TextureView,
     #[allow(dead_code)]
     msaa_hdr_texture: wgpu::Texture,
@@ -218,10 +212,8 @@ pub struct Renderer {
     depth_texture: wgpu::TextureView,
     depth_format: wgpu::TextureFormat,
     surface_format: wgpu::TextureFormat,
-    /// Optional advanced post-process stack (SSAO, FXAA, color grading).
-    /// When `Some`, the renderer delegates post-processing to the stack
-    /// instead of using its inline postprocess pass.
-    post_process_stack: Option<PostProcessStack>,
+    /// Advanced post-process stack (SSAO, FXAA, color grading, bloom).
+    post_process_stack: PostProcessStack,
     /// Settings controlling the advanced post-process stack.
     post_process_settings: PostProcessSettings,
     /// Optional volumetric fog pass. Created lazily via `enable_volumetric_fog`.
@@ -643,87 +635,10 @@ impl Renderer {
                 cache: None,
             });
 
-        let (hdr_texture, hdr_view) = Self::create_hdr_texture(&gpu.device, &gpu.surface_config);
         let (msaa_hdr_texture, msaa_hdr_view) =
             Self::create_msaa_hdr_texture(&gpu.device, &gpu.surface_config);
-        let postprocess_shader = gpu
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Postprocess Shader"),
-                source: wgpu::ShaderSource::Wgsl(POSTPROCESS_SHADER.into()),
-            });
-        let postprocess_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Postprocess Sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let postprocess_bgl =
-            gpu.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Postprocess BGL"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
-        let postprocess_bind_group = Self::create_postprocess_bind_group(
-            &gpu.device,
-            &postprocess_bgl,
-            &hdr_view,
-            &postprocess_sampler,
-        );
-        let postprocess_pipeline_layout =
-            gpu.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Postprocess Pipeline Layout"),
-                    bind_group_layouts: &[&postprocess_bgl],
-                    push_constant_ranges: &[],
-                });
-        let postprocess_pipeline =
-            gpu.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("Postprocess Pipeline"),
-                    layout: Some(&postprocess_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &postprocess_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &postprocess_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: gpu.surface_config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: Default::default(),
-                    multiview: None,
-                    cache: None,
-                });
+        let post_process_stack =
+            PostProcessStack::new(&gpu.device, &gpu.queue, &gpu.surface_config);
 
         Self {
             pipeline,
@@ -746,19 +661,13 @@ impl Renderer {
             shadow_sampler,
             shadow_instance_buffer,
             shadow_instance_bind_group,
-            postprocess_pipeline,
-            postprocess_bgl,
-            postprocess_sampler,
-            hdr_texture,
-            hdr_view,
-            postprocess_bind_group,
             msaa_hdr_texture,
             msaa_hdr_view,
             meshes: Vec::new(),
             depth_texture,
             depth_format,
             surface_format: gpu.surface_config.format,
-            post_process_stack: None,
+            post_process_stack,
             post_process_settings: PostProcessSettings::default(),
             volumetric_fog_pass: None,
             volumetric_fog_settings: VolumetricFogSettings::default(),
@@ -903,26 +812,15 @@ impl Renderer {
     pub fn resize(&mut self, gpu: &GpuContext) {
         self.depth_texture =
             Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
-        let (hdr_texture, hdr_view) = Self::create_hdr_texture(&gpu.device, &gpu.surface_config);
-        self.hdr_texture = hdr_texture;
-        self.hdr_view = hdr_view;
         let (msaa_hdr_texture, msaa_hdr_view) =
             Self::create_msaa_hdr_texture(&gpu.device, &gpu.surface_config);
         self.msaa_hdr_texture = msaa_hdr_texture;
         self.msaa_hdr_view = msaa_hdr_view;
-        self.postprocess_bind_group = Self::create_postprocess_bind_group(
+        self.post_process_stack.resize(
             &gpu.device,
-            &self.postprocess_bgl,
-            &self.hdr_view,
-            &self.postprocess_sampler,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
         );
-        if let Some(ref mut stack) = self.post_process_stack {
-            stack.resize(
-                &gpu.device,
-                gpu.surface_config.width,
-                gpu.surface_config.height,
-            );
-        }
         if let Some(ref mut fog_pass) = self.volumetric_fog_pass {
             fog_pass.resize(
                 &gpu.device,
@@ -930,20 +828,6 @@ impl Renderer {
                 gpu.surface_config.height,
             );
         }
-    }
-
-    /// Initialize the advanced post-process stack (SSAO, FXAA, color grading, bloom).
-    ///
-    /// Once enabled, `render_to_view_with_lights` delegates post-processing to
-    /// `PostProcessStack::execute()` instead of the inline tonemapping pass.
-    /// With default `PostProcessSettings` (SSAO off, FXAA off, bloom on, neutral
-    /// color grading) the visual output matches the inline path.
-    pub fn enable_post_process_stack(&mut self, gpu: &GpuContext) {
-        self.post_process_stack = Some(PostProcessStack::new(
-            &gpu.device,
-            &gpu.queue,
-            &gpu.surface_config,
-        ));
     }
 
     /// Enable CPU-side HZB occlusion culling.
@@ -964,7 +848,7 @@ impl Renderer {
     }
 
     /// Update the post-process settings that control SSAO, FXAA, bloom, and
-    /// color grading. Has no effect unless `enable_post_process_stack` was called.
+    /// color grading.
     pub fn set_post_process_settings(&mut self, settings: PostProcessSettings) {
         self.post_process_settings = settings;
     }
@@ -976,12 +860,8 @@ impl Renderer {
 
     /// Enable screen-space reflections in the post-process pipeline.
     ///
-    /// Automatically enables the advanced post-process stack if not already active.
     /// SSR settings can be further tuned via `set_post_process_settings`.
-    pub fn enable_ssr(&mut self, gpu: &GpuContext) {
-        if self.post_process_stack.is_none() {
-            self.enable_post_process_stack(gpu);
-        }
+    pub fn enable_ssr(&mut self) {
         self.post_process_settings.ssr_enabled = true;
     }
 
@@ -1343,12 +1223,8 @@ impl Renderer {
         self.scene_buffer
             .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
 
-        // Choose the MSAA resolve target: when the advanced post-process stack
-        // is active, resolve into its ping buffer so the stack can read from it.
-        let resolve_target = match self.post_process_stack {
-            Some(ref stack) => stack.ping_view(),
-            None => &self.hdr_view,
-        };
+        // Resolve MSAA into the post-process stack's ping buffer.
+        let resolve_target = self.post_process_stack.ping_view();
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1437,13 +1313,12 @@ impl Renderer {
             fog_pass.execute(&gpu.device, encoder, resolve_target, &gpu.queue, &frame);
         }
 
-        // Post-processing: delegate to the advanced stack if available,
-        // otherwise use the inline tonemapping pass.
-        if let Some(ref stack) = self.post_process_stack {
+        // Post-processing via the modular stack.
+        {
             let proj = camera.projection_matrix(gpu.aspect_ratio());
             let inv_projection = proj.inverse().to_cols_array_2d();
             let projection = proj.to_cols_array_2d();
-            stack.execute(
+            self.post_process_stack.execute(
                 &gpu.device,
                 &gpu.queue,
                 encoder,
@@ -1452,24 +1327,6 @@ impl Renderer {
                 &inv_projection,
                 &projection,
             );
-        } else {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Postprocess Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
-            pass.set_pipeline(&self.postprocess_pipeline);
-            pass.set_bind_group(0, &self.postprocess_bind_group, &[]);
-            pass.draw(0..3, 0..1);
         }
     }
 
@@ -1544,27 +1401,6 @@ impl Renderer {
         });
         texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
-    fn create_hdr_texture(
-        device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("HDR Resolve Texture"),
-            size: wgpu::Extent3d {
-                width: config.width.max(1),
-                height: config.height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
-    }
     fn create_msaa_hdr_texture(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
@@ -1586,27 +1422,6 @@ impl Renderer {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         (texture, view)
     }
-    fn create_postprocess_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        hdr_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Postprocess BG"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(hdr_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        })
-    }
 }
 
 const SHADOW_SHADER: &str = include_str!("../shaders/shadow.wgsl");
@@ -1614,8 +1429,6 @@ const SHADOW_SHADER: &str = include_str!("../shaders/shadow.wgsl");
 const PBR_SHADER: &str = include_str!("../shaders/pbr.wgsl");
 
 const SKY_SHADER: &str = include_str!("../shaders/sky.wgsl");
-
-const POSTPROCESS_SHADER: &str = include_str!("../shaders/postprocess.wgsl");
 
 #[cfg(test)]
 mod tests {
