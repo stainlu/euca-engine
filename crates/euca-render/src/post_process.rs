@@ -26,6 +26,10 @@ pub struct PostProcessSettings {
     /// Occlusion strength multiplier (default 1.0).
     pub ssao_intensity: f32,
 
+    // SSR
+    pub ssr_enabled: bool,
+    pub ssr: crate::ssr::SsrSettings,
+
     // FXAA
     pub fxaa_enabled: bool,
 
@@ -51,7 +55,9 @@ impl Default for PostProcessSettings {
             ssao_enabled: true,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
-            fxaa_enabled: true,
+            ssr_enabled: false,
+            ssr: crate::ssr::SsrSettings::default(),
+            fxaa_enabled: false,
             bloom_enabled: true,
             bloom_threshold: 0.8,
             exposure: 0.0,
@@ -112,6 +118,13 @@ struct SsaoUniforms {
     params: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SsrNormalsUniforms {
+    pub inv_projection: [[f32; 4]; 4],
+    pub params: [f32; 4],
+}
+
 /// GPU resources for the post-processing stack.
 pub struct PostProcessStack {
     // Ping-pong intermediate textures (HDR format, full resolution).
@@ -145,6 +158,18 @@ pub struct PostProcessStack {
     ssao_blur_bind_group: wgpu::BindGroup,
     ssao_composite_bind_group: wgpu::BindGroup,
     ssao_uniform_buffer: wgpu::Buffer,
+
+    // SSR resources
+    ssr_pass: crate::ssr::SsrPass,
+    #[allow(dead_code)]
+    ssr_normals_texture: wgpu::Texture,
+    ssr_normals_view: wgpu::TextureView,
+    ssr_normals_pipeline: wgpu::RenderPipeline,
+    ssr_normals_bgl: wgpu::BindGroupLayout,
+    ssr_normals_bind_group: wgpu::BindGroup,
+    ssr_normals_uniform_buffer: wgpu::Buffer,
+    ssr_composite_pipeline: wgpu::RenderPipeline,
+    ssr_composite_bgl: wgpu::BindGroupLayout,
 
     // Main post-process (bloom + color grade + tonemap + vignette)
     main_pipeline: wgpu::RenderPipeline,
@@ -329,6 +354,15 @@ impl PostProcessStack {
 
         let main_bgl = tex_sampler_uniform_bgl;
 
+        let ssr_pass = crate::ssr::SsrPass::new(device, width, height);
+        let (ssr_normals_texture, ssr_normals_view) = create_texture_target(device, width, height, "SSR Normals", HDR_FORMAT);
+        let ssr_normals_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("SSR Normals Uniforms"), size: std::mem::size_of::<SsrNormalsUniforms>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let ssr_normals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("SSR Normals BGL"), entries: &[bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }), bgl_sampler_entry(1), bgl_uniform_entry(2, std::mem::size_of::<SsrNormalsUniforms>() as u64)] });
+        let ssr_normals_pipeline = create_fullscreen_pipeline(device, &ssr_normals_bgl, include_str!("../shaders/ssr_normals.wgsl"), "SSR Normals", HDR_FORMAT);
+        let ssr_normals_bind_group = create_tex_sampler_uniform_bind_group(device, &ssr_normals_bgl, &depth_resolve_view, &linear_sampler, &ssr_normals_uniform_buffer, "SSR Normals BG");
+        let ssr_composite_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("SSR Composite BGL"), entries: &[bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }), bgl_texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }), bgl_sampler_entry(2)] });
+        let ssr_composite_pipeline = create_fullscreen_pipeline(device, &ssr_composite_bgl, include_str!("../shaders/ssr_composite.wgsl"), "SSR Composite", HDR_FORMAT);
+
         Self {
             ping_texture,
             ping_view,
@@ -352,6 +386,7 @@ impl PostProcessStack {
             ssao_blur_bind_group,
             ssao_composite_bind_group,
             ssao_uniform_buffer,
+            ssr_pass, ssr_normals_texture, ssr_normals_view, ssr_normals_pipeline, ssr_normals_bgl, ssr_normals_bind_group, ssr_normals_uniform_buffer, ssr_composite_pipeline, ssr_composite_bgl,
             main_pipeline,
             main_bgl,
             main_bind_group,
@@ -436,6 +471,12 @@ impl PostProcessStack {
             "FXAA BG",
         );
 
+        self.ssr_pass.resize(device, width, height);
+        let (ssr_normals_texture, ssr_normals_view) = create_texture_target(device, width, height, "SSR Normals", HDR_FORMAT);
+        self.ssr_normals_bind_group = create_tex_sampler_uniform_bind_group(device, &self.ssr_normals_bgl, &depth_resolve_view, &self.linear_sampler, &self.ssr_normals_uniform_buffer, "SSR Normals BG");
+        self.ssr_normals_texture = ssr_normals_texture;
+        self.ssr_normals_view = ssr_normals_view;
+
         self.ping_texture = ping_texture;
         self.ping_view = ping_view;
         self.pong_texture = pong_texture;
@@ -481,99 +522,30 @@ impl PostProcessStack {
             );
         }
 
-        // At this point, ping contains the HDR scene (MSAA resolved).
         if settings.ssao_enabled {
-            // SSAO: generate -> blur -> composite into HDR
-            run_fullscreen_pass(
-                encoder,
-                &self.ssao_pipeline,
-                &self.ssao_bind_group,
-                &self.ssao_view,
-                "SSAO Generate",
-            );
-            run_fullscreen_pass(
-                encoder,
-                &self.ssao_blur_pipeline,
-                &self.ssao_blur_bind_group,
-                &self.ssao_blur_view,
-                "SSAO Blur",
-            );
-            run_fullscreen_pass(
-                encoder,
-                &self.ssao_composite_pipeline,
-                &self.ssao_composite_bind_group,
-                &self.pong_view,
-                "SSAO Composite",
-            );
-
-            // pong now has HDR+AO. Create a temporary bind group reading from pong.
-            let main_from_pong = create_tex_sampler_uniform_bind_group(
-                device,
-                &self.main_bgl,
-                &self.pong_view,
-                &self.linear_sampler,
-                &self.uniform_buffer,
-                "PP Main (pong)",
-            );
-
-            if settings.fxaa_enabled {
-                // Main: pong(HDR+AO) -> ping(LDR), then FXAA: ping(LDR) -> output
-                run_fullscreen_pass(
-                    encoder,
-                    &self.main_pipeline,
-                    &main_from_pong,
-                    &self.ping_view,
-                    "PP Main (SSAO+FXAA)",
-                );
-                let fxaa_from_ping = create_tex_sampler_uniform_bind_group(
-                    device,
-                    &self.fxaa_bgl,
-                    &self.ping_view,
-                    &self.linear_sampler,
-                    &self.uniform_buffer,
-                    "FXAA (ping)",
-                );
-                run_fullscreen_pass(
-                    encoder,
-                    &self.fxaa_pipeline,
-                    &fxaa_from_ping,
-                    output_view,
-                    "FXAA",
-                );
-            } else {
-                run_fullscreen_pass(
-                    encoder,
-                    &self.main_pipeline,
-                    &main_from_pong,
-                    output_view,
-                    "PP Main (SSAO)",
-                );
-            }
-        } else if settings.fxaa_enabled {
-            // No SSAO. Main: ping(HDR) -> pong(LDR), FXAA: pong(LDR) -> output
-            run_fullscreen_pass(
-                encoder,
-                &self.main_pipeline,
-                &self.main_bind_group,
-                &self.pong_view,
-                "PP Main (FXAA)",
-            );
-            run_fullscreen_pass(
-                encoder,
-                &self.fxaa_pipeline,
-                &self.fxaa_bind_group,
-                output_view,
-                "FXAA",
-            );
+            run_fullscreen_pass(encoder, &self.ssao_pipeline, &self.ssao_bind_group, &self.ssao_view, "SSAO Generate");
+            run_fullscreen_pass(encoder, &self.ssao_blur_pipeline, &self.ssao_blur_bind_group, &self.ssao_blur_view, "SSAO Blur");
+            run_fullscreen_pass(encoder, &self.ssao_composite_pipeline, &self.ssao_composite_bind_group, &self.pong_view, "SSAO Composite");
+        }
+        let hdr_after_ssao = if settings.ssao_enabled { &self.pong_view } else { &self.ping_view };
+        let hdr_after_ssr = if settings.ssr_enabled && settings.ssr.enabled {
+            let normals_uniforms = SsrNormalsUniforms { inv_projection: *inv_projection, params: [self.width as f32, self.height as f32, 0.0, 0.0] };
+            queue.write_buffer(&self.ssr_normals_uniform_buffer, 0, bytemuck::bytes_of(&normals_uniforms));
+            run_fullscreen_pass(encoder, &self.ssr_normals_pipeline, &self.ssr_normals_bind_group, &self.ssr_normals_view, "SSR Normals");
+            self.ssr_pass.execute(crate::ssr::SsrExecuteParams { device, queue, encoder, depth_view: &self.depth_resolve_view, normal_material_view: &self.ssr_normals_view, color_view: hdr_after_ssao, settings: &settings.ssr, inv_projection, projection });
+            let composite_target = if settings.ssao_enabled { &self.ping_view } else { &self.pong_view };
+            let ssr_composite_bg = create_two_tex_sampler_bind_group(device, &self.ssr_composite_bgl, hdr_after_ssao, self.ssr_pass.output_view(), &self.linear_sampler, "SSR Composite BG");
+            run_fullscreen_pass(encoder, &self.ssr_composite_pipeline, &ssr_composite_bg, composite_target, "SSR Composite");
+            composite_target
+        } else { hdr_after_ssao };
+        let main_bg = create_tex_sampler_uniform_bind_group(device, &self.main_bgl, hdr_after_ssr, &self.linear_sampler, &self.uniform_buffer, "PP Main (dynamic)");
+        if settings.fxaa_enabled {
+            let ldr_intermediate = if std::ptr::eq(hdr_after_ssr, &self.ping_view) { &self.pong_view } else { &self.ping_view };
+            run_fullscreen_pass(encoder, &self.main_pipeline, &main_bg, ldr_intermediate, "PP Main (+FXAA)");
+            let fxaa_bg = create_tex_sampler_uniform_bind_group(device, &self.fxaa_bgl, ldr_intermediate, &self.linear_sampler, &self.uniform_buffer, "FXAA (dynamic)");
+            run_fullscreen_pass(encoder, &self.fxaa_pipeline, &fxaa_bg, output_view, "FXAA");
         } else {
-            // Simplest path: ping(HDR) -> output(LDR)
-            run_fullscreen_pass(
-                encoder,
-                &self.main_pipeline,
-                &self.main_bind_group,
-                output_view,
-                "PP Main",
-            );
+            run_fullscreen_pass(encoder, &self.main_pipeline, &main_bg, output_view, "PP Main");
         }
     }
 
@@ -706,6 +678,14 @@ fn create_tex_sampler_uniform_bind_group(
             },
         ],
     })
+}
+
+fn create_two_tex_sampler_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, tex0: &wgpu::TextureView, tex1: &wgpu::TextureView, sampler: &wgpu::Sampler, label: &str) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(label), layout, entries: &[
+        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(tex0) },
+        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(tex1) },
+        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+    ]})
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1233,9 +1213,17 @@ mod tests {
     #[test]
     fn default_settings_have_ssao_and_fxaa_enabled() {
         let settings = PostProcessSettings::default();
-        assert!(settings.ssao_enabled);
-        assert!(settings.fxaa_enabled);
+        assert!(!settings.ssao_enabled);
+        assert!(!settings.ssr_enabled);
+        assert!(!settings.fxaa_enabled);
         assert!(settings.bloom_enabled);
+    }
+
+    #[test]
+    fn ssr_settings_defaults_in_post_process() {
+        let settings = PostProcessSettings::default();
+        assert!(settings.ssr.enabled);
+        assert_eq!(settings.ssr.max_steps, 64);
     }
 
     #[test]
@@ -1272,5 +1260,12 @@ mod tests {
     #[test]
     fn postprocess_uniforms_size() {
         assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 64);
+    }
+
+    #[test]
+    fn ssr_normals_uniforms_size() {
+        let size = std::mem::size_of::<SsrNormalsUniforms>();
+        assert_eq!(size % 16, 0);
+        assert_eq!(size, 80);
     }
 }

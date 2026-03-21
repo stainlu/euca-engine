@@ -578,4 +578,44 @@ mod tests {
         assert!(VOLUMETRIC_FOG_SHADER.contains("fn main"));
         assert!(VOLUMETRIC_FOG_SHADER.contains("FogParams"));
     }
+
+    #[test]
+    fn settings_enabled_toggle() {
+        let mut s = VolumetricFogSettings::default();
+        assert!(s.enabled, "Default settings should have fog enabled");
+
+        s.enabled = false;
+        assert!(!s.enabled, "Should be able to disable fog");
+
+        s.enabled = true;
+        assert!(s.enabled, "Should be able to re-enable fog");
+    }
+
+    #[test]
+    fn settings_clone_is_independent() {
+        let original = VolumetricFogSettings {
+            density: 0.05,
+            scattering: 0.8,
+            height_falloff: 0.3,
+            ..VolumetricFogSettings::default()
+        };
+
+        let mut cloned = original.clone();
+        cloned.density = 0.1;
+        cloned.scattering = 0.2;
+
+        // Original must remain unchanged after mutating the clone.
+        assert!(
+            (original.density - 0.05).abs() < 1e-8,
+            "Original density should be unchanged"
+        );
+        assert!(
+            (original.scattering - 0.8).abs() < 1e-8,
+            "Original scattering should be unchanged"
+        );
+        assert!(
+            (cloned.density - 0.1).abs() < 1e-8,
+            "Cloned density should be updated"
+        );
+    }
 }
