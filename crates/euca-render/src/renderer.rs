@@ -1178,6 +1178,14 @@ impl Renderer {
         };
         self.scene_buffer
             .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
+
+        // Choose the MSAA resolve target: when the advanced post-process stack
+        // is active, resolve into its ping buffer so the stack can read from it.
+        let resolve_target = match self.post_process_stack {
+            Some(ref stack) => stack.ping_view(),
+            None => &self.hdr_view,
+        };
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("PBR Pass (MSAA)"),
