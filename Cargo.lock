@@ -1165,6 +1165,7 @@ dependencies = [
  "euca-animation",
  "euca-asset",
  "euca-audio",
+ "euca-core",
  "euca-ecs",
  "euca-game",
  "euca-gameplay",
