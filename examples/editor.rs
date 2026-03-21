@@ -335,6 +335,10 @@ impl EditorApp {
                 profiler_end(p);
             }
 
+            // Update transforms + spatial index so combat can use SpatialIndex queries.
+            euca_scene::transform_propagation_system(world);
+            euca_scene::spatial_index_update_system(world);
+
             // Combat
             if let Some(p) = world.resource_mut::<Profiler>() {
                 profiler_begin(p, "combat");
@@ -970,8 +974,7 @@ impl ApplicationHandler for EditorApp {
         if self.window.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
             let gpu = GpuContext::new(window, &self.survey, &self.wgpu_instance);
-            let mut renderer = Renderer::new(&gpu);
-            renderer.enable_post_process_stack(&gpu);
+            let renderer = Renderer::new(&gpu);
 
             let egui_winit = egui_winit::State::new(
                 self.egui_ctx.clone(),
