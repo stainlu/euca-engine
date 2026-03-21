@@ -33,7 +33,10 @@ pub async fn scene_save(
         })
     });
 
-    match std::fs::write(&path, serde_json::to_string_pretty(&scene_data).unwrap()) {
+    match std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&scene_data).expect("scene data serialization failed"),
+    ) {
         Ok(()) => Json(MessageResponse {
             ok: true,
             message: Some(format!("Scene saved to {path}")),
@@ -150,7 +153,7 @@ pub async fn screenshot(
                 "euca_screenshot_{}.png",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .expect("system clock before UNIX epoch")
                     .as_millis()
             ));
             if let Err(e) = std::fs::write(&path, &png_bytes) {

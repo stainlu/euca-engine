@@ -194,7 +194,11 @@ pub fn streaming_update_system(world: &mut World) {
     };
 
     // Read config (copy to release borrow).
-    let config = world.resource::<StreamingConfig>().unwrap().clone();
+    // SAFETY: resource was just ensured above.
+    let config = world
+        .resource::<StreamingConfig>()
+        .expect("StreamingConfig resource missing")
+        .clone();
 
     let camera_chunk = world_to_chunk(camera_pos, config.chunk_size);
 
@@ -206,7 +210,9 @@ pub fn streaming_update_system(world: &mut World) {
     // 3. Determine what to load and unload.
     //    We collect into Vecs to avoid borrowing StreamingState while mutating world.
     let (to_load, to_unload) = {
-        let state = world.resource::<StreamingState>().unwrap();
+        let state = world
+            .resource::<StreamingState>()
+            .expect("StreamingState resource missing");
 
         let to_load: Vec<(i32, i32)> = desired
             .iter()
@@ -232,7 +238,9 @@ pub fn streaming_update_system(world: &mut World) {
     // 4. Unload: despawn chunk entities and remove from state.
     for chunk_id in &to_unload {
         let chunk = {
-            let state = world.resource_mut::<StreamingState>().unwrap();
+            let state = world
+                .resource_mut::<StreamingState>()
+                .expect("StreamingState resource missing");
             state.loaded.remove(chunk_id)
         };
         if let Some(chunk) = chunk {
@@ -279,7 +287,9 @@ pub fn streaming_update_system(world: &mut World) {
             entities: spawned_entities,
             loaded: true,
         };
-        let state = world.resource_mut::<StreamingState>().unwrap();
+        let state = world
+            .resource_mut::<StreamingState>()
+            .expect("StreamingState resource missing");
         state.loaded.insert(chunk_id, chunk);
     }
 }

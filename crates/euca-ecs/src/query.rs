@@ -373,7 +373,10 @@ unsafe impl<T: Component> WorldQuery for &T {
     }
 
     unsafe fn fetch<'w>(world: &'w World, archetype: &'w Archetype, row: usize) -> Self::Item<'w> {
-        let comp_id = world.components.id_of::<T>().unwrap();
+        let comp_id = world
+            .components
+            .id_of::<T>()
+            .expect("component not registered");
         unsafe { archetype.get::<T>(comp_id, row) }
     }
 }
@@ -400,7 +403,10 @@ unsafe impl<T: Component> WorldQuery for &mut T {
     }
 
     unsafe fn fetch<'w>(world: &'w World, archetype: &'w Archetype, row: usize) -> Self::Item<'w> {
-        let comp_id = world.components.id_of::<T>().unwrap();
+        let comp_id = world
+            .components
+            .id_of::<T>()
+            .expect("component not registered");
         // SAFETY: Aliasing is validated at Query::new() -- no other access to this component
         // in the same query. Change tick updated for change detection.
         unsafe { archetype.set_change_tick_unchecked(comp_id, row, world.tick as u32) };

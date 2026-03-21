@@ -1204,7 +1204,10 @@ fn main() {
                     )
                 };
                 if dry_run {
-                    println!("{}", serde_json::to_string_pretty(&body).unwrap());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&body).expect("JSON serialization failed")
+                    );
                     println!("(dry-run: not created)");
                     Ok(())
                 } else {
@@ -1229,7 +1232,10 @@ fn main() {
                     build_update_body(&color, &position, &scale, &velocity, &physics, &collider)
                 };
                 if dry_run {
-                    println!("{}", serde_json::to_string_pretty(&body).unwrap());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&body).expect("JSON serialization failed")
+                    );
                     println!("(dry-run: entity {id} not updated)");
                     Ok(())
                 } else {

@@ -152,7 +152,10 @@ impl EngineCurve {
     /// Evaluate engine torque at a given RPM by linearly interpolating
     /// the sample curve.
     pub fn torque_at_rpm(&self, rpm: f32) -> f32 {
-        let clamped = rpm.clamp(self.samples[0].rpm, self.samples.last().unwrap().rpm);
+        let clamped = rpm.clamp(
+            self.samples[0].rpm,
+            self.samples.last().expect("non-empty torque samples").rpm,
+        );
         // Find the two bracketing samples.
         for window in self.samples.windows(2) {
             let lo = &window[0];
@@ -162,7 +165,10 @@ impl EngineCurve {
                 return lo.torque + (hi.torque - lo.torque) * t;
             }
         }
-        self.samples.last().unwrap().torque
+        self.samples
+            .last()
+            .expect("non-empty torque samples")
+            .torque
     }
 
     /// Current combined gear ratio (gear * final drive).

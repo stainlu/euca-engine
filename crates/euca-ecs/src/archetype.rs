@@ -74,7 +74,7 @@ impl Column {
                 self.item_layout.size() * self.capacity,
                 self.item_layout.align(),
             )
-            .unwrap();
+            .expect("old column layout invalid");
             // SAFETY: self.data was allocated with old_layout, new_layout has same alignment.
             unsafe { alloc::realloc(self.data, old_layout, new_layout.size()) }
         };
@@ -211,7 +211,7 @@ impl Drop for Column {
                 self.item_layout.size() * self.capacity,
                 self.item_layout.align(),
             )
-            .unwrap();
+            .expect("column dealloc layout invalid");
             unsafe { alloc::dealloc(self.data, layout) };
         }
     }
@@ -275,7 +275,12 @@ impl Archetype {
         let row = self.entities.len();
         self.entities.push(entity);
         for (id, data) in component_data {
-            unsafe { self.columns.get_mut(id).unwrap().push(*data, tick) };
+            unsafe {
+                self.columns
+                    .get_mut(id)
+                    .expect("component column missing from archetype")
+                    .push(*data, tick)
+            };
         }
         row
     }
@@ -323,7 +328,10 @@ impl Archetype {
         dst: *mut u8,
     ) {
         unsafe {
-            self.columns.get(&component_id).unwrap().read_raw(row, dst);
+            self.columns
+                .get(&component_id)
+                .expect("component column missing from archetype")
+                .read_raw(row, dst);
         }
     }
 
@@ -331,7 +339,10 @@ impl Archetype {
     /// `T` must match the component type for `component_id`.
     #[inline]
     pub(crate) unsafe fn get<T: 'static>(&self, component_id: ComponentId, row: usize) -> &T {
-        let column = self.columns.get(&component_id).unwrap();
+        let column = self
+            .columns
+            .get(&component_id)
+            .expect("component column missing from archetype");
         unsafe { &*(column.get(row) as *const T) }
     }
 
@@ -345,20 +356,29 @@ impl Archetype {
         component_id: ComponentId,
         row: usize,
     ) -> &mut T {
-        let column = self.columns.get(&component_id).unwrap();
+        let column = self
+            .columns
+            .get(&component_id)
+            .expect("component column missing from archetype");
         unsafe { &mut *(column.get_mut(row) as *mut T) }
     }
 
     /// Get the change tick for a component at the given row.
     #[inline]
     pub(crate) fn get_change_tick(&self, component_id: ComponentId, row: usize) -> u32 {
-        self.columns.get(&component_id).unwrap().change_ticks[row]
+        self.columns
+            .get(&component_id)
+            .expect("component column missing from archetype")
+            .change_ticks[row]
     }
 
     /// Set the change tick for a component at the given row.
     #[inline]
     pub(crate) fn set_change_tick(&mut self, component_id: ComponentId, row: usize, tick: u32) {
-        self.columns.get_mut(&component_id).unwrap().change_ticks[row] = tick;
+        self.columns
+            .get_mut(&component_id)
+            .expect("component column missing from archetype")
+            .change_ticks[row] = tick;
     }
 
     /// Set change tick via interior mutability (for mutable queries that hold `&self`).
@@ -372,7 +392,10 @@ impl Archetype {
         row: usize,
         tick: u32,
     ) {
-        let column = self.columns.get(&component_id).unwrap();
+        let column = self
+            .columns
+            .get(&component_id)
+            .expect("component column missing from archetype");
         unsafe { column.set_change_tick_unchecked(row, tick) };
     }
 }

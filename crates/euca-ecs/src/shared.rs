@@ -68,12 +68,15 @@ impl SharedWorld {
 
     /// Allocate a new sequential ID (for agents, sessions, etc.).
     pub fn next_id(&self) -> u32 {
-        self.inner.write().unwrap().next_id()
+        self.inner
+            .write()
+            .expect("WorldPool lock poisoned")
+            .next_id()
     }
 
     /// Create a new independent world, returning its index.
     pub fn create_world(&self, world: World, schedule: Schedule) -> usize {
-        let mut pool = self.inner.write().unwrap();
+        let mut pool = self.inner.write().expect("WorldPool lock poisoned");
         let idx = pool.worlds.len();
         pool.worlds.push(WorldState { world, schedule });
         idx
@@ -81,7 +84,11 @@ impl SharedWorld {
 
     /// Number of worlds in the pool.
     pub fn world_count(&self) -> usize {
-        self.inner.read().unwrap().worlds.len()
+        self.inner
+            .read()
+            .expect("WorldPool lock poisoned")
+            .worlds
+            .len()
     }
 
     /// Run a closure with exclusive access to the default world + schedule.
@@ -97,7 +104,7 @@ impl SharedWorld {
     where
         F: FnOnce(&mut World, &mut Schedule) -> R,
     {
-        let mut pool = self.inner.write().unwrap();
+        let mut pool = self.inner.write().expect("WorldPool lock poisoned");
         let state = &mut pool.worlds[index];
         f(&mut state.world, &mut state.schedule)
     }
@@ -107,7 +114,7 @@ impl SharedWorld {
     where
         F: FnOnce(&World) -> R,
     {
-        let pool = self.inner.read().unwrap();
+        let pool = self.inner.read().expect("WorldPool lock poisoned");
         f(&pool.worlds[0].world)
     }
 
@@ -120,14 +127,14 @@ impl SharedWorld {
     /// operations that also access other state (e.g. editor fields).
     pub fn lock(&self) -> WorldWriteGuard<'_> {
         WorldWriteGuard {
-            guard: self.inner.write().unwrap(),
+            guard: self.inner.write().expect("WorldPool lock poisoned"),
         }
     }
 
     /// Acquire a read lock on the world pool.
     pub fn lock_read(&self) -> WorldReadGuard<'_> {
         WorldReadGuard {
-            guard: self.inner.read().unwrap(),
+            guard: self.inner.read().expect("WorldPool lock poisoned"),
         }
     }
 }

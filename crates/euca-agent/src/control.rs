@@ -65,13 +65,19 @@ impl ScreenshotChannel {
     /// Place a screenshot request. Returns the receiver for PNG bytes.
     pub fn request(&self) -> oneshot::Receiver<Vec<u8>> {
         let (tx, rx) = oneshot::channel();
-        *self.pending.lock().unwrap() = Some(tx);
+        *self
+            .pending
+            .lock()
+            .expect("ScreenshotChannel lock poisoned") = Some(tx);
         rx
     }
 
     /// Take the pending request (called by the render loop).
     pub fn take(&self) -> Option<oneshot::Sender<Vec<u8>>> {
-        self.pending.lock().unwrap().take()
+        self.pending
+            .lock()
+            .expect("ScreenshotChannel lock poisoned")
+            .take()
     }
 }
 

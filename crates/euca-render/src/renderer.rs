@@ -1492,11 +1492,13 @@ impl Renderer {
         self.occlusion_culler
             .borrow_mut()
             .as_mut()
-            .unwrap()
+            .expect("occlusion culler initialized in Renderer::new")
             .update_from_depth_buffer(&depth_buf, w, h);
         drop(depth_buf);
         let culler_ref = self.occlusion_culler.borrow();
-        let culler = culler_ref.as_ref().unwrap();
+        let culler = culler_ref
+            .as_ref()
+            .expect("occlusion culler initialized in Renderer::new");
         let mut aabbs = Vec::new();
         let mut aabb_indices = Vec::new();
         for (i, cmd) in commands.iter().enumerate() {

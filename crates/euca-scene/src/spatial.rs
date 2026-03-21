@@ -178,7 +178,10 @@ pub fn spatial_index_update_system(world: &mut World) {
     };
 
     // Rebuild the index.
-    let index = world.resource_mut::<SpatialIndex>().unwrap();
+    // SAFETY: resource was just ensured above.
+    let index = world
+        .resource_mut::<SpatialIndex>()
+        .expect("SpatialIndex resource missing");
     index.clear();
     for (entity, pos) in entries {
         index.insert(entity, pos);

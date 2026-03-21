@@ -59,7 +59,10 @@ impl App {
     /// Useful for AI agent simulations and testing.
     pub fn run_headless(&mut self, ticks: u64) {
         for _ in 0..ticks {
-            self.world.resource_mut::<Time>().unwrap().update();
+            self.world
+                .resource_mut::<Time>()
+                .expect("Time resource missing — App::new inserts it")
+                .update();
             self.schedule.run(&mut self.world);
         }
     }
@@ -67,7 +70,10 @@ impl App {
     /// Run a single headless tick. Non-blocking — returns immediately.
     /// Useful for integration with external event loops (Tokio, game servers).
     pub fn tick(&mut self) {
-        self.world.resource_mut::<Time>().unwrap().update();
+        self.world
+            .resource_mut::<Time>()
+            .expect("Time resource missing — App::new inserts it")
+            .update();
         self.schedule.run(&mut self.world);
     }
 
@@ -116,7 +122,10 @@ impl App {
                     }
                     WindowEvent::RedrawRequested => {
                         // Update time
-                        self.world.resource_mut::<Time>().unwrap().update();
+                        self.world
+                            .resource_mut::<Time>()
+                            .expect("Time resource missing")
+                            .update();
 
                         // Run ECS schedule
                         self.schedule.run(&mut self.world);
