@@ -6,6 +6,7 @@ pub mod deferred;
 pub mod foliage;
 mod gpu;
 mod hardware;
+mod hlod;
 mod light;
 mod lod;
 mod material;
@@ -35,6 +36,10 @@ pub use foliage::{
 };
 pub use gpu::GpuContext;
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
+pub use hlod::{
+    HlodCluster, HlodClusterId, HlodRegistry, HlodVisibility, generate_hlod_cluster,
+    hlod_select_system,
+};
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
 pub use lod::{LodSettings, lod_select_system};
 pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
