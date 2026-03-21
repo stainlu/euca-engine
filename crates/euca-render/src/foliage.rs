@@ -255,6 +255,19 @@ pub fn scatter_foliage(layer: &mut FoliageLayer, area_min: Vec3, area_max: Vec3,
 }
 
 // ---------------------------------------------------------------------------
+// World resource wrapper
+// ---------------------------------------------------------------------------
+
+/// Collection of foliage layers stored as a world resource.
+///
+/// The editor and agent routes insert/read this resource to manage foliage.
+#[derive(Clone, Debug, Default)]
+pub struct FoliageLayers {
+    /// All active foliage layers.
+    pub layers: Vec<FoliageLayer>,
+}
+
+// ---------------------------------------------------------------------------
 // Foliage renderer
 // ---------------------------------------------------------------------------
 
@@ -611,5 +624,88 @@ mod tests {
             (mat.cols[3][2] - pos.z).abs() < 1e-5,
             "Translation Z mismatch"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests for FoliageLayers and render pipeline wiring
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use euca_math::Vec3;
+
+    // ── Test: FoliageLayers default is empty ──
+
+    #[test]
+    fn foliage_layers_default_is_empty() {
+        let layers = FoliageLayers::default();
+        assert!(
+            layers.layers.is_empty(),
+            "Default FoliageLayers should have no layers"
+        );
+    }
+
+    // ── Test: Scatter and collect produces DrawCommand-compatible output ──
+
+    #[test]
+    fn scatter_then_collect_produces_draw_commands() {
+        let mesh = MeshHandle(5);
+        let material = MaterialHandle(2);
+
+        let mut layer = FoliageLayer {
+            mesh,
+            material,
+            density: 2.0,
+            min_scale: 0.9,
+            max_scale: 1.1,
+            max_distance: 200.0,
+            instances: Vec::new(),
+        };
+
+        // Scatter on a 10x10 area
+        let area_min = Vec3::new(-5.0, 0.0, -5.0);
+        let area_max = Vec3::new(5.0, 0.0, 5.0);
+        scatter_foliage(&mut layer, area_min, area_max, 77);
+
+        assert!(
+            !layer.instances.is_empty(),
+            "Scatter should produce instances"
+        );
+
+        // Store in FoliageLayers
+        let layers = FoliageLayers {
+            layers: vec![layer.clone()],
+        };
+        assert_eq!(layers.layers.len(), 1);
+
+        // Collect visible instances (camera above, looking down)
+        let cam = crate::camera::Camera {
+            eye: Vec3::new(0.0, 50.0, 0.0),
+            target: Vec3::new(0.0, 0.0, 0.01),
+            up: Vec3::Y,
+            fov_y: std::f32::consts::FRAC_PI_2,
+            near: 0.1,
+            far: 1000.0,
+            orthographic: false,
+            ortho_size: 10.0,
+        };
+        let vp = cam.view_projection_matrix(1.0);
+        let frustum = crate::camera::Frustum::from_view_projection(&vp);
+
+        let matrices =
+            FoliageRenderer::collect_visible_instances(&layers.layers[0], cam.eye, &frustum);
+
+        // All instances should be visible (within 200m distance, camera sees the whole area)
+        assert_eq!(
+            matrices.len(),
+            layer.instances.len(),
+            "All scattered instances should be visible from directly above"
+        );
+
+        // Each matrix should be a valid 4x4 with the correct mesh/material preserved
+        assert_eq!(layers.layers[0].mesh, MeshHandle(5));
+        assert_eq!(layers.layers[0].material, MaterialHandle(2));
     }
 }

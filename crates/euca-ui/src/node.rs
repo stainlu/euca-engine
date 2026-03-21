@@ -37,7 +37,7 @@ impl Anchor {
 }
 
 /// A dimensional value for UI sizing.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum Val {
     /// Absolute pixels (at reference resolution).
     Px(f32),

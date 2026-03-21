@@ -510,6 +510,29 @@ impl EditorApp {
                 }
             }
 
+            // Foliage instancing: collect visible instances from all layers
+            if let Some(foliage_layers) = world.resource::<FoliageLayers>() {
+                let camera = world.resource::<Camera>().unwrap();
+                let aspect = self
+                    .gpu
+                    .as_ref()
+                    .map(|g| g.surface_config.width as f32 / g.surface_config.height as f32)
+                    .unwrap_or(16.0 / 9.0);
+                let vp = camera.view_projection_matrix(aspect);
+                let frustum = Frustum::from_view_projection(&vp);
+                for layer in &foliage_layers.layers {
+                    let matrices =
+                        FoliageRenderer::collect_visible_instances(layer, camera.eye, &frustum);
+                    for model_matrix in matrices {
+                        draw_commands.push(DrawCommand {
+                            mesh: layer.mesh,
+                            material: layer.material,
+                            model_matrix,
+                        });
+                    }
+                }
+            }
+
             let light = {
                 let query = Query::<&DirectionalLight>::new(world);
                 query.iter().next().cloned().unwrap_or_default()

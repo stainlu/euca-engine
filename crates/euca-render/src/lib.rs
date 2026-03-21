@@ -44,7 +44,7 @@ pub use deferred::{
     DeferredLightingUniforms, DeferredPipeline, GBuffer, GBufferFormats, RenderPath,
 };
 pub use foliage::{
-    FoliageDrawData, FoliageInstance, FoliageLayer, FoliageRenderer, scatter_foliage,
+    FoliageDrawData, FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, scatter_foliage,
 };
 pub use gpu::GpuContext;
 pub use gpu_driven::{
