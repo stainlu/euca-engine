@@ -1382,6 +1382,7 @@ dependencies = [
 name = "euca-physics"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "euca-ecs",
  "euca-math",
  "euca-reflect",
