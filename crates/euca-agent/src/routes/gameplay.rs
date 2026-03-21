@@ -307,6 +307,9 @@ pub async fn rule_create(
         }));
     }
 
+    // Wrap once in Arc -- cloning inside the ECS systems is then a cheap refcount bump.
+    let actions = std::sync::Arc::new(actions);
+
     let rule_id = world.with(|w, _| match condition {
         euca_gameplay::RuleCondition::Death => {
             let entity = w.spawn(euca_gameplay::OnDeathRule { filter, actions });

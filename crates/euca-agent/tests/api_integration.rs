@@ -247,7 +247,7 @@ fn test_rule_creation() {
             interval: 5.0,
             elapsed: 0.0,
             repeat: true,
-            actions: vec![],
+            actions: std::sync::Arc::new(vec![]),
         });
         assert!(w.is_alive(entity));
     });

@@ -161,7 +161,7 @@ pub struct MarchDirection(pub Vec3);
 // ── Auto-PvP Combat ──
 
 /// How the entity attacks.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AttackStyle {
     /// Chase enemies and melee attack in range.
     Melee,
@@ -177,7 +177,7 @@ impl Default for AttackStyle {
 
 /// Entity automatically detects nearby enemies, chases, and attacks.
 /// Just add this + Health + Team to make an entity fight.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct AutoCombat {
     pub damage: f32,
     pub range: f32,
@@ -261,7 +261,7 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
         }
 
         let combat = match world.get::<AutoCombat>(entity) {
-            Some(c) => c.clone(),
+            Some(c) => *c,
             None => continue,
         };
 
