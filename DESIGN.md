@@ -39,30 +39,33 @@ External AI Agents (Claude Code, OpenClaw, etc.)
                     └─────────┘
 ```
 
-## Crate Map
+## Crate Map (24 crates, 767+ tests)
 
-| Crate | Purpose | Status | Tests |
-|-------|---------|--------|-------|
-| `euca-ecs` | Custom ECS: Entity, Component, Archetype, World, Query (&T + &mut T), Resource, Event, Command, Schedule (parallel batching), Snapshot, Change Detection, par_for_each, SystemAccess | Done | 69 |
-| `euca-math` | Custom SIMD-ready Vec2/3/4, Quat, Mat4, Transform, AABB (zero deps) | Done | 28 |
-| `euca-reflect` | `#[derive(Reflect)]` proc macro for runtime type info, integrated into editor inspector | Done | 1 |
-| `euca-scene` | Transform hierarchy, Parent/Children BFS propagation, dirty-flag optimization | Done | 5 |
-| `euca-core` | App builder, Plugin trait, Time resource, winit event loop | Done | 1 |
-| `euca-render` | wgpu PBR renderer: Cook-Torrance BRDF, textures, shadow mapping, procedural sky, GPU instancing, HDR post-processing, hardware survey | Done | 16 |
-| `euca-physics` | Custom AABB/sphere/capsule collision, spatial hash broadphase, CCD, iterative solver, raycasting, gravity (zero deps) | Done | 23 |
-| `euca-asset` | glTF 2.0 model loading (meshes + PBR materials) | Done | 1 |
-| `euca-agent` | HTTP API server for external AI agents (axum + tokio), multi-world pool, entity ownership | Done | 3 |
-| `euca-editor` | egui editor: 3D viewport, hierarchy, inspector, play/pause/stop, transform gizmos, undo/redo, scene save/load, entity creation, grid, keyboard shortcuts | Done | 11 |
-| `euca-input` | InputState, ActionMap, InputSnapshot for humans + AI agents | Done | 4 |
-| `euca-net` | Raw UDP networking: PacketHeader, GameServer, GameClient, protocol | Done | 11 |
-| `euca-gameplay` | ECS-native game logic library: Health, Damage, Teams, Triggers, Projectiles, AI, Rules, GameState, DataTables | Done | 39 |
-| `euca-game` | Arena game: health, projectiles, shooting, elimination | Done | 4 |
-| `euca-cli` | CLI tool for AI agents (`euca observe`, `euca step`, etc.) | Done | 0 |
-| `euca-animation` | Animation blending, state machines, blend spaces, root motion, montages, events | Done | 50 |
-| `euca-ai` | Behavior trees, blackboard, decorators, composites, action/condition nodes | Done | 23 |
-| `euca-ui` | Runtime UI: anchored layout, flex, widgets, input routing, world-space UI | Done | 15+ |
-| `euca-terrain` | Heightmap terrain, chunk LOD, texture splatting, physics colliders, brush editing | Done | 30 |
-| `euca-script` | Lua scripting (mlua): hot reload, sandboxing, ECS bridge, event handlers | Done | 10+ |
+| Crate | Purpose | Tests |
+|-------|---------|-------|
+| `euca-ecs` | Archetype ECS: Entity, World, Query, Schedule, Events, change detection, query caching, ParallelSchedule | 89 |
+| `euca-math` | SIMD-accelerated (SSE2/NEON) Vec2/3/4, Quat, Mat4, Transform, AABB | 39 |
+| `euca-reflect` | Runtime reflection: field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` | 6 |
+| `euca-scene` | Transform hierarchy, prefabs, spatial index, world streaming, level file format | 28 |
+| `euca-core` | App lifecycle, Plugin trait, Time resource, frame Profiler | 9 |
+| `euca-render` | Forward+ PBR, cascaded shadows, FXAA, SSAO, SSR, volumetric fog, LOD, HLOD, HZB occlusion, GPU-driven, clustered lights (256+), foliage, decals, compute, Metal hints, SmartBuffer | 171 |
+| `euca-physics` | Collision layers/masks, mass, character controller, vehicle physics, CCD, spatial hash, scene queries, joints | 53 |
+| `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload | 11 |
+| `euca-agent` | HTTP API (axum), 70+ endpoints, nit auth, HUD canvas, level loading | — |
+| `euca-editor` | egui: viewport, hierarchy, inspector, play/pause/stop/reset, gizmos, undo/redo, level loading | 13 |
+| `euca-input` | InputState, ActionMap, gamepad, input contexts, MOBA keybindings | 8 |
+| `euca-net` | UDP transport, reliable layer, property replication, delta compression, RPCs, interest culling | 39 |
+| `euca-gameplay` | Health, combat (role-aware targeting, SpatialIndex), economy, abilities, rules, player control, MOBA camera, corpse cleanup | 95 |
+| `euca-audio` | Spatial audio (kira): bus mixing, reverb zones, occlusion, priority | 19 |
+| `euca-particle` | CPU particle emitters, billboard render data, texture atlas, blend modes | 14 |
+| `euca-nav` | Grid navmesh, A* pathfinding, steering behaviors | 10 |
+| `euca-animation` | Blending, state machines, blend spaces, root motion, events, montages, IK (two-bone + FABRIK) | 54 |
+| `euca-ai` | Behavior trees, blackboard, decorators, composites, action/condition nodes | 23 |
+| `euca-ui` | Runtime UI: anchored layout, flex, widgets, input routing, world-space UI | 27 |
+| `euca-terrain` | Heightmap terrain, chunk LOD, 4-layer splatting, physics colliders, brush editing | 30 |
+| `euca-script` | Lua scripting (mlua): hot reload, sandboxing, ECS bridge, event handlers | 25 |
+| `euca-game` | Standalone game runner | 4 |
+| `euca-cli` | CLI tool: 25+ command groups, level load/save | 0 |
 
 ## Dependency DAG
 
@@ -95,20 +98,20 @@ euca-ecs (euca-reflect, euca-math, serde)
 **Why**: Cache-friendly iteration for large-scale sim, natural Rust ownership, trivial serialization for AI agent observation, no GC needed.
 **Trade-off**: Hierarchical relationships (scene graph) are less natural — handled via Parent/Children components.
 
-### 2. External AI agents over internal AI systems
-**Decision**: No built-in BehaviorTree/NavMesh/AI Perception. Instead, the engine exposes API endpoints and CLI tools.
-**Why**: AI agents like Claude Code interact via terminals and HTTP. The engine should be a tool they use, not a platform with built-in AI. This keeps the engine lean and lets agent intelligence evolve independently.
-**Trade-off**: No out-of-the-box AI for traditional game dev. Users who want NPC AI must bring their own.
+### 2. Dual AI: Agent-native + built-in NPC AI
+**Decision**: External AI agents control the engine via CLI/HTTP. Built-in behavior trees (euca-ai) and navmesh (euca-nav) provide NPC AI at engine speed.
+**Why**: External agents (Claude Code) need HTTP/CLI for observation and control. But NPCs need sub-millisecond AI at 60 FPS — HTTP round-trips are too slow. Both coexist: agents design the game, BTs run the NPCs.
+**Trade-off**: Two AI paradigms to maintain.
 
 ### 3. Custom ECS over Bevy ECS
 **Decision**: Build ECS from scratch, study Bevy/flecs/EnTT for reference.
 **Why**: Full control over memory layout, query system, and archetype storage. Can optimize for large-scale sim + AI agent access patterns. No coupling to Bevy's runtime.
 **Trade-off**: More implementation effort. Must validate correctness and performance independently.
 
-### 4. Forward+ over Deferred Shading
-**Decision**: Start with Forward+ (clustered forward shading).
-**Why**: Simpler to implement, handles transparency naturally, MSAA works out of the box. Good enough for pragmatic high-quality rendering.
-**Trade-off**: Less efficient with many lights (>100). Can add deferred path later.
+### 4. Enhanced Forward+ as primary rendering path
+**Decision**: Forward+ with clustered light culling (256+ lights) as primary. Deferred available as opt-in.
+**Why**: Apple Silicon TBDR does deferred in hardware — our own G-buffer adds overhead. Forward handles transparency and MSAA natively. Clustered culling makes forward competitive with deferred for light count.
+**Trade-off**: Visibility buffer (Nanite-style) is the future but requires mesh shaders wgpu doesn't support yet.
 
 ### 5. wgpu over raw Vulkan/Metal
 **Decision**: Use wgpu for GPU abstraction.
@@ -155,30 +158,23 @@ Entity { index: u32, generation: u32 }
 
 ## Rendering Pipeline
 
-### 4-Pass Architecture
+### Enhanced Forward+ Architecture
 ```
-Pass 1 — Shadow Map
-  Directional light depth pass → 2048×2048 depth texture
-  Depth bias to reduce shadow acne
-  Used by PBR pass for shadow sampling (3×3 PCF soft shadows)
+Pass 1 — Shadow Maps (3 cascades, 2048×2048 depth array)
+Pass 2 — Clustered Light Assignment (compute, 16×9×24 clusters, 256 lights)
+Pass 3 — Sky + PBR Forward (HDR, 4× MSAA, Cook-Torrance BRDF)
+         PBR textures: albedo, normal, metallic/roughness, AO, emissive
+         Alpha blend/cutout transparency (back-to-front)
+         GPU instancing (16K instances), HZB occlusion culling, LOD selection
+Pass 4 — Post-Processing Stack (modular):
+         SSAO (GTAO, needs depth prepass), FXAA (default on),
+         Bloom + ACES tonemapping, color grading, volumetric fog, SSR
+         Quality presets: Low/Medium/High/Ultra
 
-Pass 2 — Procedural Sky
-  Full-screen quad, no depth write
-  Gradient horizon→zenith, sun disk + glow, atmospheric scattering
+Additional subsystems: foliage instancing, decals, HLOD, GPU-driven (draw indirect),
+deferred G-buffer (opt-in), depth+normal prepass, compute shaders
 
-Pass 3 — PBR Forward (HDR)
-  Renders to offscreen Rgba16Float target (HDR color space)
-  Cook-Torrance BRDF (GGX distribution, Smith geometry, Fresnel-Schlick)
-  Texture sampling: albedo maps, UV coordinates, procedural textures (checkerboard)
-  Shadow sampling from Pass 1 depth map
-  GPU instancing via storage buffers — batched draws by mesh+material (up to 16K instances)
-
-Pass 4 — Post-Processing
-  Reads HDR target from Pass 3
-  13-tap Gaussian bloom (bright extraction → blur → composite)
-  ACES filmic tone mapping (HDR → LDR)
-  Vignette
-  Outputs to swapchain (final present)
+Apple Silicon: Metal TBDR hints, unified memory SmartBuffer, 32-thread compute, NEON SIMD
 ```
 
 ## Agent Interface Protocol
