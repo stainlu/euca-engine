@@ -185,6 +185,11 @@ impl InputState {
     pub fn set_mouse_position(&mut self, x: f32, y: f32) {
         self.mouse_position = [x, y];
     }
+
+    /// Accumulate scroll wheel delta.
+    pub fn set_scroll(&mut self, delta: f32) {
+        self.scroll_delta += delta;
+    }
 }
 
 /// Maps physical inputs to game actions.
