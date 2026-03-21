@@ -112,6 +112,8 @@ impl AgentServer {
             .route("/input/context/pop", post(routes::input_context_pop))
             .route("/foliage/scatter", post(routes::foliage_scatter))
             .route("/foliage/list", get(routes::foliage_list))
+            .route("/level/load", post(routes::level_load))
+            .route("/level/save", post(routes::level_save))
             .with_state(self.shared.clone())
     }
 

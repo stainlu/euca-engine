@@ -36,6 +36,12 @@ enum Commands {
         command: SceneCommands,
     },
 
+    /// Level management: load/save complete level files
+    Level {
+        #[command(subcommand)]
+        command: LevelCommands,
+    },
+
     /// Camera control: get, set
     Camera {
         #[command(subcommand)]
@@ -398,6 +404,20 @@ enum SceneCommands {
     /// Load scene from file
     Load {
         /// Input file path
+        path: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum LevelCommands {
+    /// Load a complete level file (entities + rules + camera + game)
+    Load {
+        /// Path to level JSON file
+        path: String,
+    },
+    /// Save current world state to a level file
+    Save {
+        /// Output file path
         path: String,
     },
 }
@@ -1309,6 +1329,24 @@ fn main() {
             SceneCommands::Load { path } => {
                 let resp = client
                     .post(format!("{server}/scene/load"))
+                    .json(&serde_json::json!({"path": path}))
+                    .send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Level ──
+        Commands::Level { command } => match command {
+            LevelCommands::Load { path } => {
+                let resp = client
+                    .post(format!("{server}/level/load"))
+                    .json(&serde_json::json!({"path": path}))
+                    .send();
+                handle_response(resp)
+            }
+            LevelCommands::Save { path } => {
+                let resp = client
+                    .post(format!("{server}/level/save"))
                     .json(&serde_json::json!({"path": path}))
                     .send();
                 handle_response(resp)
