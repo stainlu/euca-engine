@@ -58,6 +58,9 @@ pub enum GameAction {
         /// "hero", "minion", "tower", "structure"
         #[serde(default)]
         role: Option<String>,
+        /// How many entities to spawn (default 1). Entities are spread along Z.
+        #[serde(default)]
+        count: Option<u32>,
     },
     #[serde(rename = "damage")]
     Damage { target: ActionTarget, amount: f32 },
@@ -396,90 +399,103 @@ pub fn execute_action(
             gold_bounty,
             xp_bounty,
             role,
+            count,
         } => {
-            let mut transform = euca_math::Transform::from_translation(Vec3::new(
-                position[0],
-                position[1],
-                position[2],
-            ));
-            if let Some(s) = scale {
-                transform.scale = Vec3::new(s[0], s[1], s[2]);
-            }
-            let entity = world.spawn(LocalTransform(transform));
-            world.insert(entity, euca_scene::GlobalTransform::default());
-            if let Some(h) = health {
-                world.insert(entity, Health::new(*h));
-            }
-            if let Some(t) = team {
-                world.insert(entity, Team(*t));
-            }
-            if *combat == Some(true) {
-                let mut ac = crate::combat::AutoCombat::new();
-                if let Some(s) = speed {
-                    ac.speed = *s;
+            let n = count.unwrap_or(1).max(1);
+            // Spread entities along Z axis, centered on the original position.
+            // Spacing of 1.0 unit between each entity.
+            let z_spacing = 1.0_f32;
+            let z_offset_base = -z_spacing * (n as f32 - 1.0) / 2.0;
+
+            for i in 0..n {
+                let z_offset = z_offset_base + z_spacing * i as f32;
+                let mut transform = euca_math::Transform::from_translation(Vec3::new(
+                    position[0],
+                    position[1],
+                    position[2] + z_offset,
+                ));
+                if let Some(s) = scale {
+                    transform.scale = Vec3::new(s[0], s[1], s[2]);
                 }
-                world.insert(entity, ac);
-                // Combat entities need Velocity + Kinematic PhysicsBody for movement.
-                // Kinematic = gameplay-driven movement (no gravity, no collision blocking).
-                world.insert(entity, euca_physics::Velocity::default());
-                world.insert(
-                    entity,
-                    euca_physics::PhysicsBody {
-                        body_type: euca_physics::RigidBodyType::Kinematic,
-                    },
+                let entity = world.spawn(LocalTransform(transform));
+                world.insert(entity, euca_scene::GlobalTransform::default());
+                if let Some(h) = health {
+                    world.insert(entity, Health::new(*h));
+                }
+                if let Some(t) = team {
+                    world.insert(entity, Team(*t));
+                }
+                if *combat == Some(true) {
+                    let mut ac = crate::combat::AutoCombat::new();
+                    if let Some(s) = speed {
+                        ac.speed = *s;
+                    }
+                    world.insert(entity, ac);
+                    // Combat entities need Velocity + Kinematic PhysicsBody for movement.
+                    // Kinematic = gameplay-driven movement (no gravity, no collision blocking).
+                    world.insert(entity, euca_physics::Velocity::default());
+                    world.insert(
+                        entity,
+                        euca_physics::PhysicsBody {
+                            body_type: euca_physics::RigidBodyType::Kinematic,
+                        },
+                    );
+                }
+                // Set march direction based on team (toward enemy base).
+                // Team 1 marches +X, Team 2 marches -X.
+                if combat == &Some(true) {
+                    let dir = if *team == Some(1) {
+                        Vec3::new(1.0, 0.0, 0.0)
+                    } else {
+                        Vec3::new(-1.0, 0.0, 0.0)
+                    };
+                    world.insert(entity, crate::combat::MarchDirection(dir));
+                }
+                // Legacy: still support patrol waypoints for non-combat entities
+                if let Some(wps) = waypoints
+                    && combat != &Some(true)
+                {
+                    let wp_vecs: Vec<Vec3> =
+                        wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
+                    let patrol_speed = speed.unwrap_or(3.0);
+                    world.insert(entity, crate::ai::AiGoal::patrol(wp_vecs, patrol_speed));
+                }
+                // Economy + role
+                if let Some(b) = gold_bounty {
+                    world.insert(entity, crate::economy::GoldBounty(*b));
+                }
+                if let Some(xp) = xp_bounty {
+                    world.insert(entity, crate::leveling::XpBounty(*xp));
+                }
+                if let Some(r) = role {
+                    let entity_role = match r.as_str() {
+                        "hero" => crate::combat::EntityRole::Hero,
+                        "tower" => crate::combat::EntityRole::Tower,
+                        "structure" => crate::combat::EntityRole::Structure,
+                        _ => crate::combat::EntityRole::Minion,
+                    };
+                    world.insert(entity, entity_role);
+                }
+
+                // Emit event so the rendering layer can attach MeshRenderer + MaterialRef
+                if let Some(events) = world.resource_mut::<Events>() {
+                    events.send(RuleSpawnEvent {
+                        entity,
+                        mesh: _mesh.clone(),
+                        color: _color.clone(),
+                        scale: *scale,
+                    });
+                }
+                log::info!(
+                    "Rule spawned entity {} at ({}, {}, {}) [batch {}/{}]",
+                    entity.index(),
+                    position[0],
+                    position[1],
+                    position[2] + z_offset,
+                    i + 1,
+                    n
                 );
             }
-            // Set march direction based on team (toward enemy base).
-            // Team 1 marches +X, Team 2 marches -X.
-            if combat == &Some(true) {
-                let dir = if *team == Some(1) {
-                    Vec3::new(1.0, 0.0, 0.0)
-                } else {
-                    Vec3::new(-1.0, 0.0, 0.0)
-                };
-                world.insert(entity, crate::combat::MarchDirection(dir));
-            }
-            // Legacy: still support patrol waypoints for non-combat entities
-            if let Some(wps) = waypoints
-                && combat != &Some(true)
-            {
-                let wp_vecs: Vec<Vec3> = wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
-                let patrol_speed = speed.unwrap_or(3.0);
-                world.insert(entity, crate::ai::AiGoal::patrol(wp_vecs, patrol_speed));
-            }
-            // Economy + role
-            if let Some(b) = gold_bounty {
-                world.insert(entity, crate::economy::GoldBounty(*b));
-            }
-            if let Some(xp) = xp_bounty {
-                world.insert(entity, crate::leveling::XpBounty(*xp));
-            }
-            if let Some(r) = role {
-                let entity_role = match r.as_str() {
-                    "hero" => crate::combat::EntityRole::Hero,
-                    "tower" => crate::combat::EntityRole::Tower,
-                    "structure" => crate::combat::EntityRole::Structure,
-                    _ => crate::combat::EntityRole::Minion,
-                };
-                world.insert(entity, entity_role);
-            }
-
-            // Emit event so the rendering layer can attach MeshRenderer + MaterialRef
-            if let Some(events) = world.resource_mut::<Events>() {
-                events.send(RuleSpawnEvent {
-                    entity,
-                    mesh: _mesh.clone(),
-                    color: _color.clone(),
-                    scale: *scale,
-                });
-            }
-            log::info!(
-                "Rule spawned entity {} at ({}, {}, {})",
-                entity.index(),
-                position[0],
-                position[1],
-                position[2]
-            );
         }
         GameAction::Damage { target, amount } => {
             if let Some(entity) = resolve_target(target, trigger_entity, source)
@@ -576,6 +592,7 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
             let gold_bounty = args.get(9).and_then(|s| s.parse::<i32>().ok());
             let xp_bounty = args.get(10).and_then(|s| s.parse::<u32>().ok());
             let role = args.get(11).map(|s| s.to_string());
+            let count = args.get(12).and_then(|s| s.parse::<u32>().ok());
             Some(GameAction::Spawn {
                 mesh,
                 position: pos,
@@ -589,6 +606,7 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
                 gold_bounty,
                 xp_bounty,
                 role,
+                count,
             })
         }
         "damage" => {
@@ -813,6 +831,7 @@ mod tests {
                 gold_bounty: None,
                 xp_bounty: None,
                 role: None,
+                count: None,
             }]),
         });
         let _ = rule;
@@ -847,6 +866,7 @@ mod tests {
                 gold_bounty: None,
                 xp_bounty: None,
                 role: None,
+                count: None,
             }]),
         });
 
@@ -893,5 +913,61 @@ mod tests {
         // Second call — should NOT heal again (already triggered)
         health_below_rule_system(&mut world);
         assert_eq!(world.get::<Health>(entity).unwrap().current, 70.0);
+    }
+
+    #[test]
+    fn batch_spawn_creates_correct_count() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let count_before = world.entity_count();
+        let action = GameAction::Spawn {
+            mesh: "cube".to_string(),
+            position: [0.0, 1.0, 0.0],
+            color: Some("blue".to_string()),
+            health: Some(80.0),
+            team: Some(1),
+            combat: None,
+            speed: None,
+            waypoints: None,
+            scale: None,
+            gold_bounty: None,
+            xp_bounty: None,
+            role: Some("minion".to_string()),
+            count: Some(3),
+        };
+        let dummy = Entity::from_raw(0, 0);
+        execute_action(&mut world, &action, dummy, None);
+
+        // Should have spawned exactly 3 new entities
+        assert_eq!(world.entity_count() - count_before, 3);
+    }
+
+    #[test]
+    fn single_spawn_still_works_with_no_count() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let count_before = world.entity_count();
+        let action = GameAction::Spawn {
+            mesh: "sphere".to_string(),
+            position: [5.0, 0.5, 0.0],
+            color: None,
+            health: Some(100.0),
+            team: None,
+            combat: None,
+            speed: None,
+            waypoints: None,
+            scale: None,
+            gold_bounty: None,
+            xp_bounty: None,
+            role: None,
+            count: None,
+        };
+        let dummy = Entity::from_raw(0, 0);
+        execute_action(&mut world, &action, dummy, None);
+
+        // Should have spawned exactly 1 entity (default when count is None)
+        assert_eq!(world.entity_count() - count_before, 1);
     }
 }
