@@ -441,8 +441,7 @@ pub fn execute_action(
             if let Some(wps) = waypoints
                 && combat != &Some(true)
             {
-                let wp_vecs: Vec<Vec3> =
-                    wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
+                let wp_vecs: Vec<Vec3> = wps.iter().map(|w| Vec3::new(w[0], w[1], w[2])).collect();
                 let patrol_speed = speed.unwrap_or(3.0);
                 world.insert(entity, crate::ai::AiGoal::patrol(wp_vecs, patrol_speed));
             }
