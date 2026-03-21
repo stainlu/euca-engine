@@ -26,7 +26,7 @@ pub use entity::Entity;
 pub use event::Events;
 pub use query::{ComponentAccess, Query, QueryCache, QueryFilter, With, Without, WorldQuery};
 pub use resource::Resources;
-pub use schedule::Schedule;
+pub use schedule::{ParallelSchedule, ParallelSystemAccess, Schedule, SystemBatch, SystemHandle};
 pub use shared::SharedWorld;
 pub use snapshot::{EntitySnapshot, WorldSnapshot};
 pub use system::{AccessSystem, IntoSystem, LabeledSystem, System};
