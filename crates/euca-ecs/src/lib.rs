@@ -24,7 +24,7 @@ pub use command::Commands;
 pub use component::{Component, ComponentId, ComponentInfo, ComponentStorage};
 pub use entity::Entity;
 pub use event::Events;
-pub use query::{ComponentAccess, Query, QueryFilter, With, Without, WorldQuery};
+pub use query::{ComponentAccess, Query, QueryCache, QueryFilter, With, Without, WorldQuery};
 pub use resource::Resources;
 pub use schedule::Schedule;
 pub use shared::SharedWorld;
