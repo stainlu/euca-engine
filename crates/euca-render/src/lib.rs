@@ -5,6 +5,7 @@ pub mod decal;
 pub mod deferred;
 pub mod foliage;
 mod gpu;
+pub mod gpu_driven;
 mod hardware;
 mod light;
 mod lod;
@@ -34,6 +35,10 @@ pub use foliage::{
     FoliageDrawData, FoliageInstance, FoliageLayer, FoliageRenderer, scatter_foliage,
 };
 pub use gpu::GpuContext;
+pub use gpu_driven::{
+    DrawCommandGpu, DrawIndexedIndirectArgs, GpuCullParams, GpuDrivenPipeline, GpuFrustumData,
+    IndirectDrawBuffer,
+};
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
 pub use lod::{LodSettings, lod_select_system};
