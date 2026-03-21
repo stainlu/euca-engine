@@ -150,6 +150,9 @@ enum Commands {
         command: AuthCommands,
     },
 
+    /// Show frame profiler: FPS, frame time, per-section timings
+    Profile,
+
     /// Diagnose engine health — find broken entities
     Diagnose,
 
@@ -1965,6 +1968,7 @@ fn main() {
         },
 
         // ── Standalone ──
+        Commands::Profile => run_profile(&client, server),
         Commands::Diagnose => {
             let resp = client.get(format!("{server}/diagnose")).send();
             handle_response(resp)
@@ -2090,6 +2094,25 @@ fn handle_response(
 
     if !status.is_success() {
         return Err(format!("HTTP {status}"));
+    }
+    Ok(())
+}
+
+fn run_profile(client: &reqwest::blocking::Client, server: &str) -> Result<(), String> {
+    let resp = client
+        .get(format!("{server}/profile"))
+        .send()
+        .map_err(|e| e.to_string())?;
+    let json: Value = resp.json().map_err(|e| e.to_string())?;
+    let fps = json["fps"].as_f64().unwrap_or(0.0);
+    let frame_ms = json["frame_ms"].as_f64().unwrap_or(0.0);
+    println!("FPS: {fps:.1}  frame: {frame_ms:.1} ms");
+    if let Some(sections) = json["sections"].as_array() {
+        for s in sections {
+            let name = s["name"].as_str().unwrap_or("?");
+            let us = s["us"].as_f64().unwrap_or(0.0);
+            println!("  {name:<20} {us:>8.1} us");
+        }
     }
     Ok(())
 }
