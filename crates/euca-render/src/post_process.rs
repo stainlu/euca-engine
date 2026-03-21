@@ -48,10 +48,10 @@ pub struct PostProcessSettings {
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
-            ssao_enabled: false,
+            ssao_enabled: true,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
-            fxaa_enabled: false,
+            fxaa_enabled: true,
             bloom_enabled: true,
             bloom_threshold: 0.8,
             exposure: 0.0,
@@ -1231,10 +1231,10 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_ssao_disabled() {
+    fn default_settings_have_ssao_and_fxaa_enabled() {
         let settings = PostProcessSettings::default();
-        assert!(!settings.ssao_enabled);
-        assert!(!settings.fxaa_enabled);
+        assert!(settings.ssao_enabled);
+        assert!(settings.fxaa_enabled);
         assert!(settings.bloom_enabled);
     }
 
