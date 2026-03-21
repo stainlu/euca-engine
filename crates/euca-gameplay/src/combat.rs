@@ -3,10 +3,12 @@
 //! Components: `Projectile`, `AutoCombat`.
 //! Systems: `projectile_system`, `auto_combat_system`.
 
+use std::collections::HashMap;
+
 use euca_ecs::{Entity, Events, Query, World};
 use euca_math::Vec3;
 use euca_physics::Velocity;
-use euca_scene::LocalTransform;
+use euca_scene::{LocalTransform, SpatialIndex};
 
 use crate::health::{DamageEvent, Health};
 use crate::teams::Team;
@@ -224,11 +226,12 @@ impl Default for AutoCombat {
 /// Auto-PvP: entities with AutoCombat + Health + Team detect enemies, chase, and attack.
 ///
 /// Behavior per entity each tick:
-/// 1. Dead → zero velocity, skip.
+/// 1. Dead -> zero velocity, skip.
 /// 2. Validate CurrentTarget (alive? in detect_range?). Remove if invalid.
-/// 3. If no CurrentTarget → scan for best enemy using role-aware priority.
-/// 4. If CurrentTarget exists → chase or attack.
-/// 5. If no target at all → march in MarchDirection (or stop).
+/// 3. If no CurrentTarget -> scan for best enemy using role-aware priority.
+///    Uses `SpatialIndex` for O(k) queries when available; falls back to O(n).
+/// 4. If CurrentTarget exists -> chase or attack.
+/// 5. If no target at all -> march in MarchDirection (or stop).
 pub fn auto_combat_system(world: &mut World, dt: f32) {
     // Collect all combat entities: position, team, alive, role
     let fighters: Vec<(Entity, Vec3, u8, bool, EntityRole)> = {
@@ -245,6 +248,12 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             })
             .collect()
     };
+
+    // Build a lookup map for O(1) access to fighter data by entity.
+    let fighter_map: HashMap<Entity, (Vec3, u8, bool, EntityRole)> = fighters
+        .iter()
+        .map(|&(e, pos, team, dead, role)| (e, (pos, team, dead, role)))
+        .collect();
 
     let mut velocity_updates: Vec<(Entity, Vec3)> = Vec::new();
     let mut damage_events: Vec<DamageEvent> = Vec::new();
@@ -265,15 +274,13 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             None => continue,
         };
 
-        // --- Step 2: Validate CurrentTarget ---
+        // --- Step 2: Validate CurrentTarget (O(1) via fighter_map) ---
         let mut current_target: Option<(Entity, Vec3, f32)> = None;
         if let Some(ct) = world.get::<CurrentTarget>(entity) {
             let target_entity = ct.0;
-            // Check: alive, in detect_range, still an enemy
-            let valid = fighters
-                .iter()
-                .find(|(e, _, _, _, _)| *e == target_entity)
-                .and_then(|&(_, tpos, tteam, tdead, _)| {
+            let valid = fighter_map
+                .get(&target_entity)
+                .and_then(|&(tpos, tteam, tdead, _)| {
                     if tdead || tteam == team {
                         return None;
                     }
@@ -290,29 +297,65 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
         }
 
         // --- Step 3: Acquire new target if none ---
+        // Use SpatialIndex for O(k) candidate scan when available,
+        // falling back to O(n) full-fighter scan otherwise.
         if current_target.is_none() {
             let mut best: Option<(Entity, Vec3, f32)> = None;
             let mut best_priority: u8 = u8::MAX;
-            for &(other, other_pos, other_team, other_dead, other_role) in &fighters {
-                if other == entity || other_team == team || other_dead {
-                    continue;
-                }
-                let dist = (other_pos - pos).length();
-                if dist >= combat.detect_range {
-                    continue;
-                }
-                let priority = other_role.target_priority_for(&my_role);
-                let better = match best {
-                    None => true,
-                    Some((_, _, best_dist)) => {
-                        priority < best_priority || (priority == best_priority && dist < best_dist)
+
+            if let Some(spatial) = world.resource::<SpatialIndex>() {
+                // O(k): only examine entities within detect_range.
+                let nearby = spatial.query_radius(pos, combat.detect_range);
+                for other in nearby {
+                    if other == entity {
+                        continue;
                     }
-                };
-                if better {
-                    best = Some((other, other_pos, dist));
-                    best_priority = priority;
+                    if let Some(&(other_pos, other_team, other_dead, other_role)) =
+                        fighter_map.get(&other)
+                    {
+                        if other_team == team || other_dead {
+                            continue;
+                        }
+                        let dist = (other_pos - pos).length();
+                        let priority = other_role.target_priority_for(&my_role);
+                        let better = match best {
+                            None => true,
+                            Some((_, _, best_dist)) => {
+                                priority < best_priority
+                                    || (priority == best_priority && dist < best_dist)
+                            }
+                        };
+                        if better {
+                            best = Some((other, other_pos, dist));
+                            best_priority = priority;
+                        }
+                    }
+                }
+            } else {
+                // Fallback O(n): scan all fighters when no SpatialIndex.
+                for &(other, other_pos, other_team, other_dead, other_role) in &fighters {
+                    if other == entity || other_team == team || other_dead {
+                        continue;
+                    }
+                    let dist = (other_pos - pos).length();
+                    if dist >= combat.detect_range {
+                        continue;
+                    }
+                    let priority = other_role.target_priority_for(&my_role);
+                    let better = match best {
+                        None => true,
+                        Some((_, _, best_dist)) => {
+                            priority < best_priority
+                                || (priority == best_priority && dist < best_dist)
+                        }
+                    };
+                    if better {
+                        best = Some((other, other_pos, dist));
+                        best_priority = priority;
+                    }
                 }
             }
+
             if let Some((target_entity, _, _)) = best {
                 target_inserts.push((entity, target_entity));
                 current_target = best;
@@ -419,6 +462,23 @@ mod tests {
         world.insert(e, role);
         world.insert(e, AutoCombat::new());
         world.insert(e, Velocity::default());
+        e
+    }
+
+    /// Spawn a fighter with both LocalTransform and GlobalTransform so the
+    /// spatial index can discover it via GlobalTransform while the combat
+    /// system reads positions from LocalTransform.
+    fn spawn_fighter_with_global(
+        world: &mut World,
+        pos: Vec3,
+        team: u8,
+        role: EntityRole,
+    ) -> Entity {
+        let e = spawn_fighter(world, pos, team, role);
+        world.insert(
+            e,
+            euca_scene::GlobalTransform(Transform::from_translation(pos)),
+        );
         e
     }
 
@@ -704,5 +764,57 @@ mod tests {
             0
         );
         assert_eq!(EntityRole::Hero.target_priority_for(&EntityRole::Tower), 1);
+    }
+
+    // ── SpatialIndex tests ──
+
+    #[test]
+    fn spatial_index_finds_target() {
+        let mut world = setup_world();
+        // Spawn fighters with GlobalTransform so the spatial index indexes them.
+        let hero = spawn_fighter_with_global(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        let enemy =
+            spawn_fighter_with_global(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Hero);
+        // Distant enemy beyond detect_range (default 20) -- should NOT be found.
+        let _far_enemy =
+            spawn_fighter_with_global(&mut world, Vec3::new(100.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        // Build the spatial index (mirrors what editor does before combat).
+        euca_scene::spatial_index_update_system(&mut world);
+
+        auto_combat_system(&mut world, 0.016);
+
+        let target = world
+            .get::<CurrentTarget>(hero)
+            .expect("hero should acquire a target via spatial index");
+        assert_eq!(
+            target.0.index(),
+            enemy.index(),
+            "spatial query should find the nearby enemy, not the distant one"
+        );
+    }
+
+    #[test]
+    fn fallback_without_spatial_index() {
+        let mut world = setup_world();
+        // No SpatialIndex resource -- system must fall back to O(n) scan.
+        assert!(
+            world.resource::<SpatialIndex>().is_none(),
+            "precondition: no SpatialIndex resource"
+        );
+
+        let hero = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        let enemy = spawn_fighter(&mut world, Vec3::new(5.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        auto_combat_system(&mut world, 0.016);
+
+        let target = world
+            .get::<CurrentTarget>(hero)
+            .expect("hero should acquire a target via fallback scan");
+        assert_eq!(
+            target.0.index(),
+            enemy.index(),
+            "fallback scan should find the nearby enemy"
+        );
     }
 }
