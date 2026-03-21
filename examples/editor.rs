@@ -461,6 +461,7 @@ impl EditorApp {
                         mesh: mr.mesh,
                         material: mat.handle,
                         model_matrix: gt.0.to_matrix(),
+                        aabb: None,
                     })
                     .collect()
             };
@@ -488,6 +489,7 @@ impl EditorApp {
                                 mesh: mr.mesh,
                                 material: outline_mat,
                                 model_matrix: t.to_matrix(),
+                                aabb: None,
                             });
                         }
                     }
@@ -506,6 +508,30 @@ impl EditorApp {
                             &self.editor_state.gizmo,
                         );
                         draw_commands.extend(gizmo_cmds);
+                    }
+                }
+            }
+
+            // Foliage instancing: collect visible instances from all layers
+            if let Some(foliage_layers) = world.resource::<FoliageLayers>() {
+                let camera = world.resource::<Camera>().unwrap();
+                let aspect = self
+                    .gpu
+                    .as_ref()
+                    .map(|g| g.surface_config.width as f32 / g.surface_config.height as f32)
+                    .unwrap_or(16.0 / 9.0);
+                let vp = camera.view_projection_matrix(aspect);
+                let frustum = Frustum::from_view_projection(&vp);
+                for layer in &foliage_layers.layers {
+                    let matrices =
+                        FoliageRenderer::collect_visible_instances(layer, camera.eye, &frustum);
+                    for model_matrix in matrices {
+                        draw_commands.push(DrawCommand {
+                            mesh: layer.mesh,
+                            material: layer.material,
+                            model_matrix,
+                            aabb: None,
+                        });
                     }
                 }
             }
@@ -868,6 +894,7 @@ impl EditorApp {
                         mesh: mr.mesh,
                         material: mat.handle,
                         model_matrix: gt.0.to_matrix(),
+                        aabb: None,
                     })
                     .collect()
             };

@@ -17,6 +17,7 @@ pub mod metal_hints;
 pub mod occlusion;
 mod plugin;
 pub mod post_process;
+pub mod prepass;
 mod renderer;
 pub mod ssr;
 mod texture;
@@ -28,8 +29,8 @@ pub use wgpu;
 pub use buffer::{BufferKind, SmartBuffer};
 pub use camera::{Camera, Frustum};
 pub use clustered::{
-    cluster_index, sphere_aabb_intersect, ClusterConfig, ClusteredLightGrid, GpuLightData,
-    LightType, UpdateParams,
+    ClusterConfig, ClusteredLightGrid, GpuLightData, LightType, UpdateParams, cluster_index,
+    sphere_aabb_intersect,
 };
 pub use compute::{
     ComputeManager, ComputePipeline, ComputePipelineDesc, CullParams, GpuAabb, GpuBuffer,
@@ -43,7 +44,7 @@ pub use deferred::{
     DeferredLightingUniforms, DeferredPipeline, GBuffer, GBufferFormats, RenderPath,
 };
 pub use foliage::{
-    FoliageDrawData, FoliageInstance, FoliageLayer, FoliageRenderer, scatter_foliage,
+    FoliageDrawData, FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, scatter_foliage,
 };
 pub use gpu::GpuContext;
 pub use gpu_driven::{

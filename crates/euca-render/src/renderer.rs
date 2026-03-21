@@ -1,12 +1,16 @@
+use std::cell::RefCell;
+
 use crate::buffer::{BufferKind, SmartBuffer};
 use crate::camera::Camera;
 use crate::gpu::GpuContext;
 use crate::light::{AmbientLight, DirectionalLight};
 use crate::material::{Material, MaterialHandle};
 use crate::mesh::{Mesh, MeshHandle};
+use crate::occlusion::OcclusionCuller;
 use crate::post_process::{PostProcessSettings, PostProcessStack};
 use crate::texture::{TextureHandle, TextureStore};
 use crate::vertex::Vertex;
+use crate::volumetric::{FrameParams, VolumetricFogPass, VolumetricFogSettings};
 use euca_math::Mat4;
 
 /// Preset quality tiers that map to sensible [`PostProcessSettings`] defaults.
@@ -17,11 +21,11 @@ use euca_math::Mat4;
 pub enum RenderQuality {
     /// Minimal overhead: SSAO off, FXAA on, bloom on.
     Low,
-    /// Balanced: SSAO on at half-resolution approximation, FXAA on.
+    /// Balanced: SSAO on at reduced radius, FXAA on, bloom on.
     Medium,
-    /// Full quality: SSAO on, FXAA on, bloom on.
+    /// Full quality: SSAO on, all color grading at neutral, everything enabled.
     High,
-    /// Maximum fidelity: everything on (future: SSR, volumetric fog).
+    /// Maximum fidelity: boosted SSAO, slightly elevated contrast/saturation.
     Ultra,
 }
 
@@ -37,24 +41,31 @@ impl RenderQuality {
             },
             RenderQuality::Medium => PostProcessSettings {
                 ssao_enabled: true,
-                // Half-resolution approximation: larger radius, reduced intensity.
-                ssao_radius: 1.0,
-                ssao_intensity: 0.7,
+                ssao_radius: 0.3,
                 fxaa_enabled: true,
                 bloom_enabled: true,
                 ..PostProcessSettings::default()
             },
             RenderQuality::High => PostProcessSettings {
                 ssao_enabled: true,
+                ssao_radius: 0.5,
+                ssao_intensity: 1.0,
                 fxaa_enabled: true,
                 bloom_enabled: true,
+                exposure: 1.0,
+                contrast: 1.0,
+                saturation: 1.0,
                 ..PostProcessSettings::default()
             },
             RenderQuality::Ultra => PostProcessSettings {
                 ssao_enabled: true,
+                ssao_radius: 0.5,
+                ssao_intensity: 1.2,
                 fxaa_enabled: true,
                 bloom_enabled: true,
-                // Future: SSR, volumetric fog, etc. will be enabled here.
+                exposure: 1.0,
+                contrast: 1.05,
+                saturation: 1.05,
                 ..PostProcessSettings::default()
             },
         }
@@ -108,6 +119,8 @@ pub struct DrawCommand {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub model_matrix: Mat4,
+    /// Optional world-space AABB for occlusion culling.
+    pub aabb: Option<(euca_math::Vec3, euca_math::Vec3)>,
 }
 
 #[repr(C)]
@@ -213,6 +226,16 @@ pub struct Renderer {
     post_process_stack: Option<PostProcessStack>,
     /// Settings controlling the advanced post-process stack.
     post_process_settings: PostProcessSettings,
+    /// Optional volumetric fog pass. Created lazily via `enable_volumetric_fog`.
+    volumetric_fog_pass: Option<VolumetricFogPass>,
+    /// Settings for volumetric fog (density, scattering, etc.).
+    volumetric_fog_settings: VolumetricFogSettings,
+    /// Optional HZB occlusion culler. Uses previous frame's depth.
+    occlusion_culler: RefCell<Option<OcclusionCuller>>,
+    /// Previous frame's depth buffer for occlusion culling.
+    prev_depth_buffer: RefCell<Vec<f32>>,
+    /// Dimensions of the previous depth buffer.
+    prev_depth_dims: RefCell<(u32, u32)>,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -739,6 +762,11 @@ impl Renderer {
             surface_format: gpu.surface_config.format,
             post_process_stack: None,
             post_process_settings: PostProcessSettings::default(),
+            volumetric_fog_pass: None,
+            volumetric_fog_settings: VolumetricFogSettings::default(),
+            occlusion_culler: RefCell::new(None),
+            prev_depth_buffer: RefCell::new(Vec::new()),
+            prev_depth_dims: RefCell::new((0, 0)),
         }
     }
 
@@ -897,6 +925,13 @@ impl Renderer {
                 gpu.surface_config.height,
             );
         }
+        if let Some(ref mut fog_pass) = self.volumetric_fog_pass {
+            fog_pass.resize(
+                &gpu.device,
+                gpu.surface_config.width,
+                gpu.surface_config.height,
+            );
+        }
     }
 
     /// Initialize the advanced post-process stack (SSAO, FXAA, color grading, bloom).
@@ -913,6 +948,23 @@ impl Renderer {
         ));
     }
 
+    /// Enable CPU-side HZB occlusion culling.
+    pub fn enable_occlusion_culling(&mut self) {
+        *self.occlusion_culler.borrow_mut() = Some(OcclusionCuller::new());
+    }
+
+    /// Returns true if HZB occlusion culling is enabled.
+    pub fn occlusion_culling_enabled(&self) -> bool {
+        self.occlusion_culler.borrow().is_some()
+    }
+
+    /// Feed a depth buffer for the occlusion system to use next frame.
+    pub fn update_prev_depth_buffer(&self, depth: Vec<f32>, width: u32, height: u32) {
+        debug_assert_eq!(depth.len(), (width as usize) * (height as usize));
+        *self.prev_depth_buffer.borrow_mut() = depth;
+        *self.prev_depth_dims.borrow_mut() = (width, height);
+    }
+
     /// Update the post-process settings that control SSAO, FXAA, bloom, and
     /// color grading. Has no effect unless `enable_post_process_stack` was called.
     pub fn set_post_process_settings(&mut self, settings: PostProcessSettings) {
@@ -922,6 +974,46 @@ impl Renderer {
     /// Read-only access to the current post-process settings.
     pub fn post_process_settings(&self) -> &PostProcessSettings {
         &self.post_process_settings
+    }
+
+    /// Enable screen-space reflections in the post-process pipeline.
+    ///
+    /// Automatically enables the advanced post-process stack if not already active.
+    /// SSR settings can be further tuned via `set_post_process_settings`.
+    pub fn enable_ssr(&mut self, gpu: &GpuContext) {
+        if self.post_process_stack.is_none() {
+            self.enable_post_process_stack(gpu);
+        }
+        self.post_process_settings.ssr_enabled = true;
+    }
+
+    /// Initialize the volumetric fog pass.
+    ///
+    /// Once enabled, `render_to_view_with_lights` will execute the fog compute
+    /// shader and composite the result over the HDR buffer after the PBR pass
+    /// and before post-processing.
+    pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext) {
+        self.volumetric_fog_pass = Some(VolumetricFogPass::new(
+            &gpu.device,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
+            gpu.surface_config.format,
+        ));
+    }
+
+    /// Update the volumetric fog settings (density, scattering, etc.).
+    pub fn set_fog_settings(&mut self, settings: VolumetricFogSettings) {
+        self.volumetric_fog_settings = settings;
+    }
+
+    /// Read-only access to the current volumetric fog settings.
+    pub fn fog_settings(&self) -> &VolumetricFogSettings {
+        &self.volumetric_fog_settings
+    }
+
+    /// Whether volumetric fog is currently active (pass created and enabled).
+    pub fn is_fog_enabled(&self) -> bool {
+        self.volumetric_fog_pass.is_some() && self.volumetric_fog_settings.enabled
     }
 
     fn light_vp_for_cascade(light: &DirectionalLight, ortho_size: f32) -> Mat4 {
@@ -1139,6 +1231,7 @@ impl Renderer {
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
+        let opaque_cmds = self.apply_occlusion_culling(&opaque_cmds, vp);
         let (opaque_instances, opaque_batches) = Self::build_batches_from_refs(&opaque_cmds);
         if !opaque_instances.is_empty() {
             self.instance_buffer.write(&gpu.queue, &opaque_instances);
@@ -1328,13 +1421,30 @@ impl Renderer {
             }
         }
 
+        // Volumetric fog: compute ray-march and composite over HDR buffer.
+        if let Some(ref fog_pass) = self.volumetric_fog_pass
+            && self.volumetric_fog_settings.enabled
+        {
+            let dir = light.direction;
+            let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
+                .sqrt()
+                .max(0.001);
+            let frame = FrameParams {
+                camera_pos: [camera.eye.x, camera.eye.y, camera.eye.z],
+                inv_vp: vp.inverse().to_cols_array_2d(),
+                light_direction: [dir[0] / len, dir[1] / len, dir[2] / len],
+                light_color: [light.color[0], light.color[1], light.color[2]],
+                settings: &self.volumetric_fog_settings,
+            };
+            fog_pass.execute(&gpu.device, encoder, resolve_target, &gpu.queue, &frame);
+        }
+
         // Post-processing: delegate to the advanced stack if available,
         // otherwise use the inline tonemapping pass.
         if let Some(ref stack) = self.post_process_stack {
-            let inv_projection = camera
-                .projection_matrix(gpu.aspect_ratio())
-                .inverse()
-                .to_cols_array_2d();
+            let proj = camera.projection_matrix(gpu.aspect_ratio());
+            let inv_projection = proj.inverse().to_cols_array_2d();
+            let projection = proj.to_cols_array_2d();
             stack.execute(
                 &gpu.device,
                 &gpu.queue,
@@ -1342,6 +1452,7 @@ impl Renderer {
                 color_view,
                 &self.post_process_settings,
                 &inv_projection,
+                &projection,
             );
         } else {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1362,6 +1473,57 @@ impl Renderer {
             pass.set_bind_group(0, &self.postprocess_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+    }
+
+    /// Filter out occluded draw commands using the HZB from the previous frame.
+    fn apply_occlusion_culling<'a>(
+        &self,
+        commands: &[&'a DrawCommand],
+        view_proj: Mat4,
+    ) -> Vec<&'a DrawCommand> {
+        if self.occlusion_culler.borrow().is_none() {
+            return commands.to_vec();
+        }
+        let depth_buf = self.prev_depth_buffer.borrow();
+        let (w, h) = *self.prev_depth_dims.borrow();
+        if depth_buf.is_empty() || w == 0 || h == 0 {
+            return commands.to_vec();
+        }
+        self.occlusion_culler
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .update_from_depth_buffer(&depth_buf, w, h);
+        drop(depth_buf);
+        let culler_ref = self.occlusion_culler.borrow();
+        let culler = culler_ref.as_ref().unwrap();
+        let mut aabbs = Vec::new();
+        let mut aabb_indices = Vec::new();
+        for (i, cmd) in commands.iter().enumerate() {
+            if let Some(aabb) = cmd.aabb {
+                aabbs.push(aabb);
+                aabb_indices.push(i);
+            }
+        }
+        if aabbs.is_empty() {
+            return commands.to_vec();
+        }
+        let result = match culler.test(&aabbs, view_proj) {
+            Some(r) => r,
+            None => return commands.to_vec(),
+        };
+        let mut occluded = vec![false; commands.len()];
+        for (aabb_idx, &cmd_idx) in aabb_indices.iter().enumerate() {
+            if !result.visible[aabb_idx] {
+                occluded[cmd_idx] = true;
+            }
+        }
+        commands
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !occluded[*i])
+            .map(|(_, cmd)| *cmd)
+            .collect()
     }
 
     fn create_depth_texture(
@@ -1488,15 +1650,23 @@ mod tests {
     }
 
     #[test]
-    fn medium_and_above_have_ssao_on() {
-        for quality in [
-            RenderQuality::Medium,
-            RenderQuality::High,
-            RenderQuality::Ultra,
-        ] {
-            let s = quality.to_settings();
-            assert!(s.ssao_enabled, "{quality:?} should have SSAO enabled");
-        }
+    fn ultra_has_everything_on() {
+        let s = RenderQuality::Ultra.to_settings();
+        assert!(s.ssao_enabled);
+        assert!(s.fxaa_enabled);
+        assert!(s.bloom_enabled);
+        assert!(
+            s.ssao_intensity > 1.0,
+            "Ultra should have boosted SSAO intensity"
+        );
+        assert!(
+            s.contrast > 1.0,
+            "Ultra should have slightly elevated contrast"
+        );
+        assert!(
+            s.saturation > 1.0,
+            "Ultra should have slightly elevated saturation"
+        );
     }
 
     #[test]

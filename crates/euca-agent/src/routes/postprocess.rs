@@ -2,7 +2,7 @@ use axum::Json;
 use axum::extract::State;
 use serde::Deserialize;
 
-use euca_render::PostProcessSettings;
+use euca_render::{PostProcessSettings, RenderQuality};
 
 use crate::state::SharedWorld;
 
@@ -112,6 +112,52 @@ pub async fn postprocess_set(
         Json(serde_json::json!({
             "ok": false,
             "error": "Failed to update PostProcessSettings",
+        }))
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PresetRequest {
+    pub quality: String,
+}
+
+/// POST /postprocess/preset — apply a named quality preset
+pub async fn postprocess_preset(
+    State(world): State<SharedWorld>,
+    Json(req): Json<PresetRequest>,
+) -> Json<serde_json::Value> {
+    let quality = match RenderQuality::from_name(&req.quality) {
+        Some(q) => q,
+        None => {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": format!(
+                    "Unknown quality preset '{}'. Use low, medium, high, or ultra.",
+                    req.quality
+                ),
+            }));
+        }
+    };
+
+    let settings = quality.to_settings();
+
+    let ok = world.with(|w, _| {
+        if w.resource::<PostProcessSettings>().is_none() {
+            w.insert_resource(settings.clone());
+        } else if let Some(existing) = w.resource_mut::<PostProcessSettings>() {
+            *existing = settings.clone();
+        } else {
+            return false;
+        }
+        true
+    });
+
+    if ok {
+        postprocess_get(State(world)).await
+    } else {
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "Failed to apply quality preset",
         }))
     }
 }

@@ -171,6 +171,7 @@ impl ClientApp {
                 mesh: cube_mesh,
                 material: mat,
                 model_matrix: euca_math::Mat4::from_translation(Vec3::new(pos[0], pos[1], pos[2])),
+                aabb: None,
             });
         }
 

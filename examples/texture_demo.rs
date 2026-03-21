@@ -164,6 +164,7 @@ impl TextureDemoApp {
                     mesh: mr.mesh,
                     material: mat.handle,
                     model_matrix: gt.0.to_matrix(),
+                    aabb: None,
                 })
                 .collect()
         };
