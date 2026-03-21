@@ -9,6 +9,86 @@ use crate::texture::{TextureHandle, TextureStore};
 use crate::vertex::Vertex;
 use euca_math::Mat4;
 
+/// Preset quality tiers that map to sensible [`PostProcessSettings`] defaults.
+///
+/// Use [`RenderQuality::to_settings`] to obtain the corresponding settings,
+/// then apply them via [`Renderer::set_post_process_settings`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RenderQuality {
+    /// Minimal overhead: SSAO off, FXAA on, bloom on.
+    Low,
+    /// Balanced: SSAO on at reduced radius, FXAA on, bloom on.
+    Medium,
+    /// Full quality: SSAO on, all color grading at neutral, everything enabled.
+    High,
+    /// Maximum fidelity: boosted SSAO, slightly elevated contrast/saturation.
+    Ultra,
+}
+
+impl RenderQuality {
+    /// Convert this quality tier into concrete post-process settings.
+    pub fn to_settings(self) -> PostProcessSettings {
+        match self {
+            RenderQuality::Low => PostProcessSettings {
+                ssao_enabled: false,
+                fxaa_enabled: true,
+                bloom_enabled: true,
+                ..PostProcessSettings::default()
+            },
+            RenderQuality::Medium => PostProcessSettings {
+                ssao_enabled: true,
+                ssao_radius: 0.3,
+                fxaa_enabled: true,
+                bloom_enabled: true,
+                ..PostProcessSettings::default()
+            },
+            RenderQuality::High => PostProcessSettings {
+                ssao_enabled: true,
+                ssao_radius: 0.5,
+                ssao_intensity: 1.0,
+                fxaa_enabled: true,
+                bloom_enabled: true,
+                exposure: 1.0,
+                contrast: 1.0,
+                saturation: 1.0,
+                ..PostProcessSettings::default()
+            },
+            RenderQuality::Ultra => PostProcessSettings {
+                ssao_enabled: true,
+                ssao_radius: 0.5,
+                ssao_intensity: 1.2,
+                fxaa_enabled: true,
+                bloom_enabled: true,
+                exposure: 1.0,
+                contrast: 1.05,
+                saturation: 1.05,
+                ..PostProcessSettings::default()
+            },
+        }
+    }
+
+    /// Parse a quality tier from a case-insensitive string.
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "low" => Some(Self::Low),
+            "medium" | "med" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "ultra" => Some(Self::Ultra),
+            _ => None,
+        }
+    }
+
+    /// Return the name of this quality tier as a lowercase string.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Ultra => "ultra",
+        }
+    }
+}
+
 struct GpuMesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -1384,3 +1464,81 @@ const PBR_SHADER: &str = include_str!("../shaders/pbr.wgsl");
 const SKY_SHADER: &str = include_str!("../shaders/sky.wgsl");
 
 const POSTPROCESS_SHADER: &str = include_str!("../shaders/postprocess.wgsl");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_preset_produces_valid_settings() {
+        for quality in [
+            RenderQuality::Low,
+            RenderQuality::Medium,
+            RenderQuality::High,
+            RenderQuality::Ultra,
+        ] {
+            let s = quality.to_settings();
+            assert!(s.fxaa_enabled, "{quality:?} should have FXAA enabled");
+            assert!(s.bloom_enabled, "{quality:?} should have bloom enabled");
+            assert!(s.ssao_radius >= 0.0, "{quality:?} ssao_radius must be >= 0");
+            assert!(
+                s.ssao_intensity >= 0.0,
+                "{quality:?} ssao_intensity must be >= 0"
+            );
+        }
+    }
+
+    #[test]
+    fn low_has_ssao_off() {
+        let s = RenderQuality::Low.to_settings();
+        assert!(!s.ssao_enabled);
+    }
+
+    #[test]
+    fn ultra_has_everything_on() {
+        let s = RenderQuality::Ultra.to_settings();
+        assert!(s.ssao_enabled);
+        assert!(s.fxaa_enabled);
+        assert!(s.bloom_enabled);
+        assert!(
+            s.ssao_intensity > 1.0,
+            "Ultra should have boosted SSAO intensity"
+        );
+        assert!(
+            s.contrast > 1.0,
+            "Ultra should have slightly elevated contrast"
+        );
+        assert!(
+            s.saturation > 1.0,
+            "Ultra should have slightly elevated saturation"
+        );
+    }
+
+    #[test]
+    fn from_name_case_insensitive() {
+        assert_eq!(RenderQuality::from_name("low"), Some(RenderQuality::Low));
+        assert_eq!(RenderQuality::from_name("HIGH"), Some(RenderQuality::High));
+        assert_eq!(
+            RenderQuality::from_name("Ultra"),
+            Some(RenderQuality::Ultra)
+        );
+        assert_eq!(RenderQuality::from_name("med"), Some(RenderQuality::Medium));
+        assert_eq!(RenderQuality::from_name("invalid"), None);
+    }
+
+    #[test]
+    fn name_roundtrip() {
+        for quality in [
+            RenderQuality::Low,
+            RenderQuality::Medium,
+            RenderQuality::High,
+            RenderQuality::Ultra,
+        ] {
+            assert_eq!(
+                RenderQuality::from_name(quality.name()),
+                Some(quality),
+                "{quality:?} should roundtrip through name()"
+            );
+        }
+    }
+}
