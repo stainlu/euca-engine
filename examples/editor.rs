@@ -50,7 +50,8 @@ fn setup_default_resources(world: &mut World) {
     world.insert_resource(HudCanvas::new());
     world.insert_resource(euca_agent::routes::TemplateRegistry::new());
     world.insert_resource(euca_asset::AnimationLibrary::default());
-    world.insert_resource(euca_input::ActionMap::new());
+    world.insert_resource(euca_input::InputState::new());
+    world.insert_resource(setup_moba_action_map());
     world.insert_resource(euca_input::InputContextStack::new());
     world.insert_resource(euca_scene::SpatialIndex::new(2.0));
     world.insert_resource(euca_scene::PrefabRegistry::default());
@@ -62,6 +63,57 @@ fn setup_default_resources(world: &mut World) {
         Ok(engine) => world.insert_resource(engine),
         Err(e) => log::warn!("Audio init failed (non-fatal): {e}"),
     }
+}
+
+/// Convert a winit `Key` to the string name used by `InputKey::Key`.
+///
+/// Character keys are uppercased (e.g. "q" -> "Q").  Named keys use their
+/// standard name (e.g. "Space", "Escape", "Tab").  Returns `None` for keys
+/// we don't map.
+fn winit_key_to_string(key: &Key) -> Option<String> {
+    match key {
+        Key::Character(ch) => Some(ch.to_uppercase()),
+        Key::Named(named) => {
+            let s = match named {
+                NamedKey::Space => "Space",
+                NamedKey::Escape => "Escape",
+                NamedKey::Enter => "Enter",
+                NamedKey::Tab => "Tab",
+                NamedKey::Delete => "Delete",
+                NamedKey::Backspace => "Backspace",
+                NamedKey::Shift => "Shift",
+                NamedKey::Control => "Control",
+                NamedKey::Alt => "Alt",
+                NamedKey::ArrowUp => "ArrowUp",
+                NamedKey::ArrowDown => "ArrowDown",
+                NamedKey::ArrowLeft => "ArrowLeft",
+                NamedKey::ArrowRight => "ArrowRight",
+                NamedKey::F1 => "F1",
+                NamedKey::F2 => "F2",
+                NamedKey::F3 => "F3",
+                NamedKey::F4 => "F4",
+                NamedKey::F5 => "F5",
+                _ => return None,
+            };
+            Some(s.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Create the default MOBA action map with standard keybindings.
+fn setup_moba_action_map() -> euca_input::ActionMap {
+    use euca_input::InputKey;
+    let mut map = euca_input::ActionMap::new();
+    map.bind(InputKey::MouseRight, "move_or_attack");
+    map.bind(InputKey::Key("Q".into()), "ability_q");
+    map.bind(InputKey::Key("W".into()), "ability_w");
+    map.bind(InputKey::Key("E".into()), "ability_e");
+    map.bind(InputKey::Key("R".into()), "ability_r");
+    map.bind(InputKey::Key("S".into()), "stop");
+    map.bind(InputKey::Key("A".into()), "attack_move");
+    map.bind(InputKey::Key("Space".into()), "center_camera");
+    map
 }
 
 /// Run all gameplay systems for a single simulation tick.
@@ -587,6 +639,9 @@ impl EditorApp {
         }
 
         if self.editor_state.should_tick() {
+            if let Some(input) = world.resource_mut::<euca_input::InputState>() {
+                input.begin_frame();
+            }
             let dt = world
                 .resource::<Time>()
                 .map(|t| t.delta as f32)
@@ -911,6 +966,12 @@ impl ApplicationHandler for EditorApp {
                 return;
             }
         }
+
+        // Forward input events to InputState when the simulation is playing.
+        if self.editor_state.playing {
+            self.forward_input_event(&event);
+        }
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput {
@@ -1061,6 +1122,58 @@ impl ApplicationHandler for EditorApp {
 }
 
 impl EditorApp {
+    /// Forward a winit event to the gameplay `InputState` resource.
+    ///
+    /// Called only when the simulation is playing so editor-only mode is not
+    /// affected.
+    fn forward_input_event(&mut self, event: &WindowEvent) {
+        use euca_input::InputKey;
+
+        let mut pool = self.shared.lock();
+        let world = pool.world();
+        let Some(input) = world.resource_mut::<euca_input::InputState>() else {
+            return;
+        };
+
+        match event {
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
+                if let Some(key_name) = winit_key_to_string(&key_event.logical_key) {
+                    match key_event.state {
+                        ElementState::Pressed => input.press(InputKey::Key(key_name)),
+                        ElementState::Released => input.release(InputKey::Key(key_name)),
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let input_key = match button {
+                    winit::event::MouseButton::Left => Some(InputKey::MouseLeft),
+                    winit::event::MouseButton::Right => Some(InputKey::MouseRight),
+                    winit::event::MouseButton::Middle => Some(InputKey::MouseMiddle),
+                    _ => None,
+                };
+                if let Some(key) = input_key {
+                    match state {
+                        ElementState::Pressed => input.press(key),
+                        ElementState::Released => input.release(key),
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                input.set_mouse_position(position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => *y,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.1,
+                };
+                input.set_scroll(scroll);
+            }
+            _ => {}
+        }
+    }
+
     fn pick_entity_at_cursor(&mut self) {
         let gpu = match &self.gpu {
             Some(g) => g,
