@@ -717,14 +717,17 @@ impl EditorApp {
         self.was_playing_last_frame = self.editor_state.playing;
 
         if self.editor_state.should_tick() {
-            if let Some(input) = world.resource_mut::<euca_input::InputState>() {
-                input.begin_frame();
-            }
             let dt = world
                 .resource::<Time>()
                 .map(|t| t.delta as f32)
                 .unwrap_or(0.016);
             run_gameplay_systems(world, dt);
+            // Clear per-frame input AFTER gameplay systems have consumed it.
+            // Must come after run_gameplay_systems so player_input_system can
+            // read just_pressed events from the current frame.
+            if let Some(input) = world.resource_mut::<euca_input::InputState>() {
+                input.begin_frame();
+            }
         }
         euca_scene::transform_propagation_system(world);
         euca_scene::spatial_index_update_system(world);
@@ -1163,6 +1166,14 @@ impl ApplicationHandler for EditorApp {
                     if let Some(r) = &mut self.renderer {
                         r.resize(gpu);
                     }
+                }
+                // Keep ViewportSize in sync so player input ray calculations stay correct.
+                let mut pool = self.shared.lock();
+                let world = pool.world();
+                if let Some(vp) = world.resource_mut::<euca_gameplay::player_input::ViewportSize>()
+                {
+                    vp.width = size.width as f32;
+                    vp.height = size.height as f32;
                 }
             }
             WindowEvent::RedrawRequested => {
