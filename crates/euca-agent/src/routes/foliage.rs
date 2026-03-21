@@ -27,13 +27,27 @@ pub struct FoliageScatterRequest {
     pub max_distance: f32,
 }
 
-fn default_mesh() -> String { "cube".to_string() }
-fn default_density() -> f32 { 0.5 }
-fn default_area_min() -> [f32; 3] { [-20.0, 0.0, -20.0] }
-fn default_area_max() -> [f32; 3] { [20.0, 0.0, 20.0] }
-fn default_min_scale() -> f32 { 0.8 }
-fn default_max_scale() -> f32 { 1.2 }
-fn default_max_distance() -> f32 { 100.0 }
+fn default_mesh() -> String {
+    "cube".to_string()
+}
+fn default_density() -> f32 {
+    0.5
+}
+fn default_area_min() -> [f32; 3] {
+    [-20.0, 0.0, -20.0]
+}
+fn default_area_max() -> [f32; 3] {
+    [20.0, 0.0, 20.0]
+}
+fn default_min_scale() -> f32 {
+    0.8
+}
+fn default_max_scale() -> f32 {
+    1.2
+}
+fn default_max_distance() -> f32 {
+    100.0
+}
 
 /// POST /foliage/scatter
 pub async fn foliage_scatter(
@@ -51,7 +65,8 @@ pub async fn foliage_scatter(
         };
         let material = assets.material("green").unwrap_or(assets.default_material);
         let mut layer = FoliageLayer {
-            mesh, material,
+            mesh,
+            material,
             density: req.density,
             min_scale: req.min_scale,
             max_scale: req.max_scale,
@@ -65,12 +80,16 @@ pub async fn foliage_scatter(
         if let Some(layers) = w.resource_mut::<FoliageLayers>() {
             layers.layers.push(layer);
         } else {
-            w.insert_resource(FoliageLayers { layers: vec![layer] });
+            w.insert_resource(FoliageLayers {
+                layers: vec![layer],
+            });
         }
         Ok(instance_count)
     });
     match result {
-        Ok(count) => Json(serde_json::json!({"ok": true, "instance_count": count, "mesh": req.mesh_name, "density": req.density})),
+        Ok(count) => Json(
+            serde_json::json!({"ok": true, "instance_count": count, "mesh": req.mesh_name, "density": req.density}),
+        ),
         Err(msg) => Json(serde_json::json!({"ok": false, "error": msg})),
     }
 }

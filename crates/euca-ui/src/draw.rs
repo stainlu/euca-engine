@@ -17,10 +17,7 @@ pub enum UiDrawKind {
         uv: [f32; 4],
     },
     /// Text rendering.
-    Text {
-        text: String,
-        font_size: f32,
-    },
+    Text { text: String, font_size: f32 },
 }
 
 /// A single draw command for the renderer.

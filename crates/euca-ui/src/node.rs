@@ -34,7 +34,6 @@ impl Anchor {
             Anchor::Stretch => (0.0, 0.0),
         }
     }
-
 }
 
 /// A dimensional value for UI sizing.

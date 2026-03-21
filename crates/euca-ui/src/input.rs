@@ -131,7 +131,10 @@ mod tests {
         let (mut world, e) = setup_world_with_button();
 
         // Mouse inside button.
-        world.resource_mut::<InputState>().unwrap().set_mouse_position(200.0, 125.0);
+        world
+            .resource_mut::<InputState>()
+            .unwrap()
+            .set_mouse_position(200.0, 125.0);
 
         ui_input_system(&mut world);
 
@@ -149,7 +152,10 @@ mod tests {
         let (mut world, e) = setup_world_with_button();
 
         // Mouse outside button.
-        world.resource_mut::<InputState>().unwrap().set_mouse_position(50.0, 50.0);
+        world
+            .resource_mut::<InputState>()
+            .unwrap()
+            .set_mouse_position(50.0, 50.0);
 
         ui_input_system(&mut world);
 
@@ -237,7 +243,10 @@ mod tests {
 
         crate::layout::ui_layout_system(&mut world);
 
-        world.resource_mut::<InputState>().unwrap().set_mouse_position(100.0, 100.0);
+        world
+            .resource_mut::<InputState>()
+            .unwrap()
+            .set_mouse_position(100.0, 100.0);
 
         ui_input_system(&mut world);
 
