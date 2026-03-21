@@ -135,7 +135,7 @@ impl GltfViewerApp {
         let camera = self.world.resource::<Camera>().unwrap().clone();
 
         let gpu = self.gpu.as_ref().unwrap();
-        let renderer = self.renderer.as_ref().unwrap();
+        let renderer = self.renderer.as_mut().unwrap();
         renderer.draw(gpu, &camera, &light, &ambient, &draw_commands);
     }
 }
