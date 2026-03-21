@@ -7,6 +7,7 @@ use crate::mesh::{Mesh, MeshHandle};
 use crate::post_process::{PostProcessSettings, PostProcessStack};
 use crate::texture::{TextureHandle, TextureStore};
 use crate::vertex::Vertex;
+use crate::volumetric::{FrameParams, VolumetricFogPass, VolumetricFogSettings};
 use euca_math::Mat4;
 
 struct GpuMesh {
@@ -140,6 +141,10 @@ pub struct Renderer {
     post_process_stack: Option<PostProcessStack>,
     /// Settings controlling the advanced post-process stack.
     post_process_settings: PostProcessSettings,
+    /// Optional volumetric fog pass. Created lazily via `enable_volumetric_fog`.
+    volumetric_fog_pass: Option<VolumetricFogPass>,
+    /// Settings for volumetric fog (density, scattering, etc.).
+    volumetric_fog_settings: VolumetricFogSettings,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -666,6 +671,8 @@ impl Renderer {
             surface_format: gpu.surface_config.format,
             post_process_stack: None,
             post_process_settings: PostProcessSettings::default(),
+            volumetric_fog_pass: None,
+            volumetric_fog_settings: VolumetricFogSettings::default(),
         }
     }
 
@@ -824,6 +831,13 @@ impl Renderer {
                 gpu.surface_config.height,
             );
         }
+        if let Some(ref mut fog_pass) = self.volumetric_fog_pass {
+            fog_pass.resize(
+                &gpu.device,
+                gpu.surface_config.width,
+                gpu.surface_config.height,
+            );
+        }
     }
 
     /// Initialize the advanced post-process stack (SSAO, FXAA, color grading, bloom).
@@ -849,6 +863,17 @@ impl Renderer {
     /// Read-only access to the current post-process settings.
     pub fn post_process_settings(&self) -> &PostProcessSettings {
         &self.post_process_settings
+    }
+
+    /// Enable screen-space reflections in the post-process pipeline.
+    ///
+    /// Automatically enables the advanced post-process stack if not already active.
+    /// SSR settings can be further tuned via `set_post_process_settings`.
+    pub fn enable_ssr(&mut self, gpu: &GpuContext) {
+        if self.post_process_stack.is_none() {
+            self.enable_post_process_stack(gpu);
+        }
+        self.post_process_settings.ssr_enabled = true;
     }
 
     fn light_vp_for_cascade(light: &DirectionalLight, ortho_size: f32) -> Mat4 {
@@ -1255,13 +1280,30 @@ impl Renderer {
             }
         }
 
+        // Volumetric fog: compute ray-march and composite over HDR buffer.
+        if let Some(ref fog_pass) = self.volumetric_fog_pass
+            && self.volumetric_fog_settings.enabled
+        {
+            let dir = light.direction;
+            let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
+                .sqrt()
+                .max(0.001);
+            let frame = FrameParams {
+                camera_pos: [camera.eye.x, camera.eye.y, camera.eye.z],
+                inv_vp: vp.inverse().to_cols_array_2d(),
+                light_direction: [dir[0] / len, dir[1] / len, dir[2] / len],
+                light_color: [light.color[0], light.color[1], light.color[2]],
+                settings: &self.volumetric_fog_settings,
+            };
+            fog_pass.execute(&gpu.device, encoder, resolve_target, &gpu.queue, &frame);
+        }
+
         // Post-processing: delegate to the advanced stack if available,
         // otherwise use the inline tonemapping pass.
         if let Some(ref stack) = self.post_process_stack {
-            let inv_projection = camera
-                .projection_matrix(gpu.aspect_ratio())
-                .inverse()
-                .to_cols_array_2d();
+            let proj = camera.projection_matrix(gpu.aspect_ratio());
+            let inv_projection = proj.inverse().to_cols_array_2d();
+            let projection = proj.to_cols_array_2d();
             stack.execute(
                 &gpu.device,
                 &gpu.queue,
@@ -1269,6 +1311,7 @@ impl Renderer {
                 color_view,
                 &self.post_process_settings,
                 &inv_projection,
+                &projection,
             );
         } else {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

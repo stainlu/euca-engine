@@ -134,6 +134,11 @@ enum Commands {
         #[command(subcommand)]
         command: PostprocessCommands,
     },
+    /// Volumetric fog: density, scattering, god rays
+    Fog {
+        #[command(subcommand)]
+        command: FogCommands,
+    },
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -848,6 +853,36 @@ enum PostprocessCommands {
         contrast: Option<f32>,
         #[arg(long)]
         saturation: Option<f32>,
+    },
+}
+
+#[derive(Subcommand)]
+enum FogCommands {
+    /// Get current fog settings
+    Get,
+    /// Set fog parameters
+    Set {
+        /// Base fog density (higher = thicker fog)
+        #[arg(long)]
+        density: Option<f32>,
+        /// Scattering coefficient (light redirected toward camera)
+        #[arg(long)]
+        scattering: Option<f32>,
+        /// Absorption coefficient (light absorbed by fog)
+        #[arg(long)]
+        absorption: Option<f32>,
+        /// Rate of density decrease with height
+        #[arg(long)]
+        height_falloff: Option<f32>,
+        /// Maximum ray-march distance
+        #[arg(long)]
+        max_distance: Option<f32>,
+        /// God-ray strength (scales light contribution)
+        #[arg(long)]
+        light_contribution: Option<f32>,
+        /// Enable or disable fog
+        #[arg(long)]
+        enabled: Option<bool>,
     },
 }
 
@@ -1758,6 +1793,51 @@ fn main() {
                 }
                 let resp = client
                     .post(format!("{server}/postprocess/settings"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Volumetric Fog ──
+        Commands::Fog { command } => match command {
+            FogCommands::Get => {
+                let resp = client.get(format!("{server}/fog/settings")).send();
+                handle_response(resp)
+            }
+            FogCommands::Set {
+                density,
+                scattering,
+                absorption,
+                height_falloff,
+                max_distance,
+                light_contribution,
+                enabled,
+            } => {
+                let mut body = serde_json::json!({});
+                if let Some(v) = density {
+                    body["density"] = serde_json::json!(v);
+                }
+                if let Some(v) = scattering {
+                    body["scattering"] = serde_json::json!(v);
+                }
+                if let Some(v) = absorption {
+                    body["absorption"] = serde_json::json!(v);
+                }
+                if let Some(v) = height_falloff {
+                    body["height_falloff"] = serde_json::json!(v);
+                }
+                if let Some(v) = max_distance {
+                    body["max_distance"] = serde_json::json!(v);
+                }
+                if let Some(v) = light_contribution {
+                    body["light_contribution"] = serde_json::json!(v);
+                }
+                if let Some(v) = enabled {
+                    body["enabled"] = serde_json::json!(v);
+                }
+                let resp = client
+                    .post(format!("{server}/fog/settings"))
                     .json(&body)
                     .send();
                 handle_response(resp)
