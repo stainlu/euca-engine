@@ -48,10 +48,10 @@ pub struct PostProcessSettings {
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
-            ssao_enabled: false,
+            ssao_enabled: true,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
-            fxaa_enabled: false,
+            fxaa_enabled: true,
             bloom_enabled: true,
             bloom_threshold: 0.8,
             exposure: 0.0,

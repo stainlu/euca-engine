@@ -892,7 +892,8 @@ impl ApplicationHandler for EditorApp {
         if self.window.is_none() {
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
             let gpu = GpuContext::new(window, &self.survey, &self.wgpu_instance);
-            let renderer = Renderer::new(&gpu);
+            let mut renderer = Renderer::new(&gpu);
+            renderer.enable_post_process_stack(&gpu);
 
             let egui_winit = egui_winit::State::new(
                 self.egui_ctx.clone(),
