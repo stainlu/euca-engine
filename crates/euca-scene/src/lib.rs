@@ -1,6 +1,7 @@
 mod hierarchy;
 mod prefab;
 mod spatial;
+pub mod streaming;
 mod transform;
 
 pub use hierarchy::{Children, Parent};
@@ -9,6 +10,10 @@ pub use prefab::{
 };
 pub use spatial::{SpatialIndex, spatial_index_update_system};
 pub use transform::{GlobalTransform, LocalTransform};
+pub use streaming::{
+    CameraPosition, ChunkData, ChunkEntityData, ChunkLoader, NullChunkLoader, StreamingConfig,
+    StreamingState, WorldChunk, chunks_in_radius, streaming_update_system, world_to_chunk,
+};
 
 use std::collections::VecDeque;
 
