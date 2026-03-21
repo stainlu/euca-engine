@@ -66,8 +66,14 @@ pub fn smooth_terrain(
     radius: f32,
     strength: f32,
 ) {
-    let (col_min, col_max, row_min, row_max) =
-        brush_bounds(center_x, center_z, radius, heightmap.cell_size, heightmap.width, heightmap.height);
+    let (col_min, col_max, row_min, row_max) = brush_bounds(
+        center_x,
+        center_z,
+        radius,
+        heightmap.cell_size,
+        heightmap.width,
+        heightmap.height,
+    );
 
     // Collect edits so we read from the original data (two-pass to avoid
     // read-after-write within the same brush stroke).
@@ -75,7 +81,9 @@ pub fn smooth_terrain(
 
     for row in row_min..=row_max {
         for col in col_min..=col_max {
-            let Some(falloff) = brush_falloff(col, row, center_x, center_z, radius, heightmap.cell_size) else {
+            let Some(falloff) =
+                brush_falloff(col, row, center_x, center_z, radius, heightmap.cell_size)
+            else {
                 continue;
             };
 
@@ -87,7 +95,11 @@ pub fn smooth_terrain(
             for (dc, dr) in [(-1i32, 0), (1, 0), (0, -1i32), (0, 1)] {
                 let nc = col as i32 + dc;
                 let nr = row as i32 + dr;
-                if nc >= 0 && (nc as u32) < heightmap.width && nr >= 0 && (nr as u32) < heightmap.height {
+                if nc >= 0
+                    && (nc as u32) < heightmap.width
+                    && nr >= 0
+                    && (nr as u32) < heightmap.height
+                {
                     sum += heightmap.raw_at(nc as u32, nr as u32);
                     count += 1;
                 }
@@ -124,12 +136,19 @@ pub fn paint_splat(
         return;
     }
 
-    let (col_min, col_max, row_min, row_max) =
-        brush_bounds(center_x, center_z, radius, cell_size, splat_map.width, splat_map.height);
+    let (col_min, col_max, row_min, row_max) = brush_bounds(
+        center_x,
+        center_z,
+        radius,
+        cell_size,
+        splat_map.width,
+        splat_map.height,
+    );
 
     for row in row_min..=row_max {
         for col in col_min..=col_max {
-            let Some(falloff) = brush_falloff(col, row, center_x, center_z, radius, cell_size) else {
+            let Some(falloff) = brush_falloff(col, row, center_x, center_z, radius, cell_size)
+            else {
                 continue;
             };
 
@@ -165,9 +184,11 @@ fn brush_bounds(
     grid_height: u32,
 ) -> (u32, u32, u32, u32) {
     let col_min = ((center_x - radius) / cell_size).floor().max(0.0) as u32;
-    let col_max = (((center_x + radius) / cell_size).ceil() as u32).min(grid_width.saturating_sub(1));
+    let col_max =
+        (((center_x + radius) / cell_size).ceil() as u32).min(grid_width.saturating_sub(1));
     let row_min = ((center_z - radius) / cell_size).floor().max(0.0) as u32;
-    let row_max = (((center_z + radius) / cell_size).ceil() as u32).min(grid_height.saturating_sub(1));
+    let row_max =
+        (((center_z + radius) / cell_size).ceil() as u32).min(grid_height.saturating_sub(1));
     (col_min, col_max, row_min, row_max)
 }
 
@@ -201,12 +222,20 @@ fn apply_brush(
     radius: f32,
     f: impl Fn(f32, f32) -> f32,
 ) {
-    let (col_min, col_max, row_min, row_max) =
-        brush_bounds(center_x, center_z, radius, heightmap.cell_size, heightmap.width, heightmap.height);
+    let (col_min, col_max, row_min, row_max) = brush_bounds(
+        center_x,
+        center_z,
+        radius,
+        heightmap.cell_size,
+        heightmap.width,
+        heightmap.height,
+    );
 
     for row in row_min..=row_max {
         for col in col_min..=col_max {
-            let Some(falloff) = brush_falloff(col, row, center_x, center_z, radius, heightmap.cell_size) else {
+            let Some(falloff) =
+                brush_falloff(col, row, center_x, center_z, radius, heightmap.cell_size)
+            else {
                 continue;
             };
             let current = heightmap.raw_at(col, row);
@@ -222,16 +251,23 @@ mod tests {
 
     #[test]
     fn raise_terrain_increases_center() {
-        let mut hm = Heightmap::flat(8, 8).with_cell_size(1.0).with_max_height(10.0);
+        let mut hm = Heightmap::flat(8, 8)
+            .with_cell_size(1.0)
+            .with_max_height(10.0);
         let before = hm.sample(3.0, 3.0);
         raise_terrain(&mut hm, 3.0, 3.0, 2.0, 0.5);
         let after = hm.sample(3.0, 3.0);
-        assert!(after > before, "Center should be raised: before={before}, after={after}");
+        assert!(
+            after > before,
+            "Center should be raised: before={before}, after={after}"
+        );
     }
 
     #[test]
     fn raise_terrain_falls_off_with_distance() {
-        let mut hm = Heightmap::flat(16, 16).with_cell_size(1.0).with_max_height(1.0);
+        let mut hm = Heightmap::flat(16, 16)
+            .with_cell_size(1.0)
+            .with_max_height(1.0);
         raise_terrain(&mut hm, 8.0, 8.0, 4.0, 1.0);
 
         let h_center = hm.sample(8.0, 8.0);
@@ -239,7 +275,10 @@ mod tests {
         let h_outside = hm.sample(13.0, 8.0); // 5 units away, outside
 
         assert!(h_center > h_edge, "Center should be higher than edge");
-        assert!((h_outside).abs() < 1e-4, "Outside brush should be unaffected");
+        assert!(
+            (h_outside).abs() < 1e-4,
+            "Outside brush should be unaffected"
+        );
     }
 
     #[test]
@@ -267,7 +306,10 @@ mod tests {
         smooth_terrain(&mut hm, 2.0, 2.0, 3.0, 1.0);
         let after = hm.raw_at(2, 2);
 
-        assert!(after < before, "Spike should be reduced: before={before}, after={after}");
+        assert!(
+            after < before,
+            "Spike should be reduced: before={before}, after={after}"
+        );
     }
 
     #[test]
@@ -278,6 +320,9 @@ mod tests {
         let w = sm.get(4, 4);
         assert!(w.z > 0.1, "Layer 2 should have weight, got {}", w.z);
         let sum = w.x + w.y + w.z + w.w;
-        assert!((sum - 1.0).abs() < 1e-4, "Weights should sum to 1, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-4,
+            "Weights should sum to 1, got {sum}"
+        );
     }
 }

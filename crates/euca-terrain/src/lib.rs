@@ -36,7 +36,7 @@ pub mod splat;
 
 // Re-export the most commonly used items at crate root.
 pub use chunk::{TerrainChunk, aabb_in_frustum, build_chunks, generate_chunk_mesh};
-pub use component::{TerrainComponent, TerrainLayer, TextureHandle, MAX_TERRAIN_LAYERS};
+pub use component::{MAX_TERRAIN_LAYERS, TerrainComponent, TerrainLayer, TextureHandle};
 pub use editing::{flatten_terrain, lower_terrain, paint_splat, raise_terrain, smooth_terrain};
 pub use heightmap::Heightmap;
 pub use lod::{ChunkLod, LodConfig, select_all_lods, select_chunk_lod};

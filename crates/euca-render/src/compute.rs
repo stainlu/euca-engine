@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::metal_hints::{ComputeOptimizer, MetalRenderHints};
+
 // ---------------------------------------------------------------------------
 // ComputePipeline
 // ---------------------------------------------------------------------------
@@ -166,7 +168,37 @@ pub fn dispatch_compute(
     pipeline: &ComputePipeline,
     bind_groups: &[&wgpu::BindGroup],
     workgroups: [u32; 3],
+    hints: Option<&MetalRenderHints>,
 ) {
+    let resolved = match hints {
+        Some(h) => {
+            let optimizer = ComputeOptimizer::new(h);
+            let dispatch = optimizer.optimal_dispatch(workgroups[0]);
+            [dispatch[0], workgroups[1], workgroups[2]]
+        }
+        None => workgroups,
+    };
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(pipeline.raw());
+    for (i, bg) in bind_groups.iter().enumerate() {
+        pass.set_bind_group(i as u32, Some(*bg), &[]);
+    }
+    pass.dispatch_workgroups(resolved[0], resolved[1], resolved[2]);
+}
+
+/// Optimized compute dispatch that auto-computes workgroup counts.
+pub fn dispatch_compute_optimized(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &ComputePipeline,
+    bind_groups: &[&wgpu::BindGroup],
+    total_items: u32,
+    hints: &MetalRenderHints,
+) {
+    let optimizer = ComputeOptimizer::new(hints);
+    let workgroups = optimizer.optimal_dispatch(total_items);
     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: None,
         timestamp_writes: None,
@@ -380,13 +412,27 @@ pub fn dispatch_frustum_culling(
     manager: &ComputeManager,
     bind_group: &wgpu::BindGroup,
     entity_count: u32,
+    hints: Option<&MetalRenderHints>,
 ) {
     let pipeline = manager
         .pipeline("frustum_cull")
         .expect("frustum_cull pipeline not set up");
 
-    let workgroup_count = entity_count.div_ceil(64);
-    dispatch_compute(encoder, pipeline, &[bind_group], [workgroup_count, 1, 1]);
+    match hints {
+        Some(h) => {
+            dispatch_compute_optimized(encoder, pipeline, &[bind_group], entity_count, h);
+        }
+        None => {
+            let workgroup_count = entity_count.div_ceil(64);
+            dispatch_compute(
+                encoder,
+                pipeline,
+                &[bind_group],
+                [workgroup_count, 1, 1],
+                None,
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -457,5 +503,55 @@ mod tests {
         assert_eq!(65_u32.div_ceil(64), 2);
         assert_eq!(128_u32.div_ceil(64), 2);
         assert_eq!(129_u32.div_ceil(64), 3);
+    }
+
+    #[test]
+    fn dispatch_compute_resolves_hints_apple() {
+        let hints = MetalRenderHints {
+            is_apple_gpu: true,
+            prefer_single_pass: true,
+            optimal_threadgroup_size: 32,
+            supports_memoryless: true,
+        };
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert_eq!(optimizer.optimal_dispatch(100), [4, 1, 1]);
+    }
+
+    #[test]
+    fn dispatch_compute_resolves_hints_discrete() {
+        let hints = MetalRenderHints {
+            is_apple_gpu: false,
+            prefer_single_pass: false,
+            optimal_threadgroup_size: 64,
+            supports_memoryless: false,
+        };
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert_eq!(optimizer.optimal_dispatch(100), [2, 1, 1]);
+    }
+
+    #[test]
+    fn dispatch_compute_no_hints_passthrough() {
+        let workgroups = [4_u32, 1, 1];
+        assert_eq!(workgroups, [4, 1, 1]);
+    }
+
+    #[test]
+    fn frustum_cull_dispatch_with_apple_hints() {
+        let hints = MetalRenderHints {
+            is_apple_gpu: true,
+            prefer_single_pass: true,
+            optimal_threadgroup_size: 32,
+            supports_memoryless: true,
+        };
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert_eq!(optimizer.optimal_dispatch(1000), [32, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(64), [2, 1, 1]);
+    }
+
+    #[test]
+    fn frustum_cull_dispatch_without_hints_uses_64() {
+        assert_eq!(1000_u32.div_ceil(64), 16);
+        assert_eq!(64_u32.div_ceil(64), 1);
+        assert_eq!(65_u32.div_ceil(64), 2);
     }
 }
