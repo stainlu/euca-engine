@@ -52,12 +52,12 @@ pub struct PostProcessSettings {
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
-            ssao_enabled: true,
+            ssao_enabled: false, // disabled until depth texture filtering is fixed
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
             ssr_enabled: false,
             ssr: crate::ssr::SsrSettings::default(),
-            fxaa_enabled: true,
+            fxaa_enabled: false, // disabled until SSAO/depth pipeline is stable
             bloom_enabled: true,
             bloom_threshold: 0.8,
             exposure: 0.0,
@@ -1414,10 +1414,10 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_have_ssao_and_fxaa_enabled() {
+    fn default_settings_have_bloom_enabled() {
         let settings = PostProcessSettings::default();
-        assert!(settings.ssao_enabled);
-        assert!(settings.fxaa_enabled);
+        assert!(!settings.ssao_enabled); // disabled until depth filtering fixed
+        assert!(!settings.fxaa_enabled);
         assert!(settings.bloom_enabled);
     }
 
