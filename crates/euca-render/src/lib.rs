@@ -5,6 +5,7 @@ pub mod decal;
 pub mod deferred;
 pub mod foliage;
 mod gpu;
+pub mod gpu_driven;
 mod hardware;
 mod hlod;
 mod light;
@@ -37,6 +38,10 @@ pub use foliage::{
     FoliageDrawData, FoliageInstance, FoliageLayer, FoliageRenderer, scatter_foliage,
 };
 pub use gpu::GpuContext;
+pub use gpu_driven::{
+    DrawCommandGpu, DrawIndexedIndirectArgs, GpuCullParams, GpuDrivenPipeline, GpuFrustumData,
+    IndirectDrawBuffer,
+};
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
 pub use hlod::{
     HlodCluster, HlodClusterId, HlodRegistry, HlodVisibility, generate_hlod_cluster,
