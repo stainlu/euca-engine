@@ -15,6 +15,7 @@ pub mod occlusion;
 mod plugin;
 pub mod post_process;
 mod renderer;
+pub mod ssr;
 mod texture;
 mod vertex;
 pub mod volumetric;
@@ -49,6 +50,9 @@ pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::{PostProcessSettings, PostProcessStack};
 pub use renderer::{DrawCommand, Renderer};
+pub use ssr::{
+    SsrExecuteParams, SsrPass, SsrSettings, compute_step_count, passes_roughness_filter,
+};
 pub use texture::{TextureHandle, TextureStore};
 pub use vertex::Vertex;
 pub use volumetric::{VolumetricFogPass, VolumetricFogSettings};
