@@ -121,113 +121,314 @@ fn setup_moba_action_map() -> euca_input::ActionMap {
     map
 }
 
-/// Run all gameplay systems for a single simulation tick.
+/// Helper: read delta time from the `Time` resource in the world.
+fn world_dt(world: &World) -> f32 {
+    world
+        .resource::<Time>()
+        .map(|t| t.delta as f32)
+        .unwrap_or(0.016)
+}
+
+/// Build the parallel gameplay schedule.
 ///
-/// Called once per frame when the editor is in play mode (or stepping).
-/// Order: physics, gameplay, combat, rules, economy, audio/animation.
-fn run_gameplay_systems(world: &mut World, dt: f32) {
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_begin(p, "physics");
-    }
-    physics_step_system(world);
-    euca_physics::character_controller_system(world, dt);
-    euca_physics::vehicle_physics_system(world, dt);
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_end(p);
+/// Systems are grouped into stages with `after()` dependencies. Within each
+/// stage, the scheduler automatically batches non-conflicting systems for
+/// parallel execution via `std::thread::scope`.
+fn build_gameplay_schedule() -> euca_ecs::ParallelSchedule {
+    use euca_ecs::{ParallelSchedule, ParallelSystemAccess};
+
+    let mut sched = ParallelSchedule::new();
+
+    // ── Stage 1: Physics ─────────────────────────────────────────────────
+    sched.add_system(
+        "physics_step",
+        |w: &mut World| physics_step_system(w),
+        ParallelSystemAccess::new()
+            .write::<euca_physics::Velocity>()
+            .write::<LocalTransform>(),
+    );
+    sched
+        .add_system(
+            "character_controller",
+            |w: &mut World| euca_physics::character_controller_system(w, world_dt(w)),
+            ParallelSystemAccess::new()
+                .write::<LocalTransform>()
+                .write::<euca_physics::Velocity>(),
+        )
+        .after("physics_step");
+    sched
+        .add_system(
+            "vehicle_physics",
+            |w: &mut World| euca_physics::vehicle_physics_system(w, world_dt(w)),
+            ParallelSystemAccess::new()
+                .write::<LocalTransform>()
+                .write::<euca_physics::Velocity>(),
+        )
+        .after("physics_step");
+
+    // ── Stage 2: Gameplay (after physics) ────────────────────────────────
+    sched
+        .add_system(
+            "apply_damage",
+            euca_gameplay::apply_damage_system,
+            ParallelSystemAccess::new().write::<euca_gameplay::Health>(),
+        )
+        .after("character_controller");
+    sched
+        .add_system(
+            "death_check",
+            euca_gameplay::death_check_system,
+            ParallelSystemAccess::new().write::<euca_gameplay::Health>(),
+        )
+        .after("apply_damage");
+    sched
+        .add_system(
+            "projectiles",
+            |w: &mut World| euca_gameplay::projectile_system(w, world_dt(w)),
+            ParallelSystemAccess::new()
+                .write::<LocalTransform>()
+                .write::<euca_gameplay::Health>(),
+        )
+        .after("character_controller");
+    sched
+        .add_system(
+            "triggers",
+            euca_gameplay::trigger_system,
+            ParallelSystemAccess::new()
+                .read::<LocalTransform>()
+                .write::<euca_gameplay::Health>(),
+        )
+        .after("character_controller");
+    sched
+        .add_system(
+            "ai",
+            |w: &mut World| euca_gameplay::ai_system(w, world_dt(w)),
+            ParallelSystemAccess::new()
+                .read::<LocalTransform>()
+                .write::<euca_physics::Velocity>(),
+        )
+        .after("character_controller");
+
+    // ── Stage 3: Player control (after gameplay) ─────────────────────────
+    sched
+        .add_system(
+            "player_input",
+            euca_gameplay::player_input::player_input_system,
+            ParallelSystemAccess::new()
+                .write::<euca_gameplay::PlayerCommandQueue>()
+                .resource_read::<euca_input::InputState>(),
+        )
+        .after("death_check");
+    sched
+        .add_system(
+            "player_commands",
+            |w: &mut World| euca_gameplay::player::player_command_system(w, world_dt(w)),
+            ParallelSystemAccess::new()
+                .write::<euca_gameplay::PlayerCommandQueue>()
+                .write::<euca_physics::Velocity>()
+                .write::<LocalTransform>(),
+        )
+        .after("player_input");
+
+    // ── Stage 4: Combat (after player) ───────────────────────────────────
+    sched
+        .add_system(
+            "auto_combat",
+            |w: &mut World| euca_gameplay::auto_combat_system(w, world_dt(w)),
+            ParallelSystemAccess::new()
+                .read::<euca_gameplay::Health>()
+                .write::<euca_physics::Velocity>(),
+        )
+        .after("player_commands");
+    sched
+        .add_system(
+            "game_state",
+            |w: &mut World| euca_gameplay::game_state_system(w, world_dt(w)),
+            ParallelSystemAccess::new().resource_write::<euca_gameplay::GameState>(),
+        )
+        .after("player_commands");
+
+    // ── Stage 5: Rules (after combat) ────────────────────────────────────
+    // Rule systems are mostly independent — scheduler can parallelize them.
+    sched
+        .add_system(
+            "on_death_rules",
+            euca_gameplay::on_death_rule_system,
+            ParallelSystemAccess::new().read::<euca_gameplay::Health>(),
+        )
+        .after("auto_combat");
+    sched
+        .add_system(
+            "timer_rules",
+            |w: &mut World| euca_gameplay::timer_rule_system(w, world_dt(w)),
+            ParallelSystemAccess::new(),
+        )
+        .after("auto_combat");
+    sched
+        .add_system(
+            "health_below_rules",
+            euca_gameplay::health_below_rule_system,
+            ParallelSystemAccess::new().read::<euca_gameplay::Health>(),
+        )
+        .after("auto_combat");
+    sched
+        .add_system(
+            "on_score_rules",
+            euca_gameplay::on_score_rule_system,
+            ParallelSystemAccess::new().resource_read::<euca_gameplay::GameState>(),
+        )
+        .after("auto_combat");
+    sched
+        .add_system(
+            "on_phase_rules",
+            euca_gameplay::on_phase_rule_system,
+            ParallelSystemAccess::new().resource_read::<euca_gameplay::GameState>(),
+        )
+        .after("auto_combat");
+
+    // ── Stage 6: Respawn & cleanup (after rules) ─────────────────────────
+    sched
+        .add_system(
+            "respawn",
+            |w: &mut World| {
+                let delay = w
+                    .resource::<euca_gameplay::GameState>()
+                    .map(|s| s.config.respawn_delay);
+                let dt = world_dt(w);
+                if delay.is_some() {
+                    euca_gameplay::respawn_system(w, dt);
+                }
+            },
+            ParallelSystemAccess::new().write::<LocalTransform>(),
+        )
+        .after("on_death_rules");
+    sched
+        .add_system(
+            "start_respawn",
+            |w: &mut World| {
+                let delay = w
+                    .resource::<euca_gameplay::GameState>()
+                    .map(|s| s.config.respawn_delay);
+                if let Some(d) = delay {
+                    euca_gameplay::start_respawn_on_death(w, d);
+                }
+            },
+            ParallelSystemAccess::new().write::<euca_gameplay::RespawnTimer>(),
+        )
+        .after("on_death_rules");
+    sched
+        .add_system(
+            "corpse_cleanup",
+            |w: &mut World| euca_gameplay::corpse_cleanup_system(w, world_dt(w)),
+            ParallelSystemAccess::new(),
+        )
+        .after("on_death_rules");
+
+    // ── Stage 7: Economy & abilities ─────────────────────────────────────
+    sched
+        .add_system(
+            "gold_on_kill",
+            euca_gameplay::gold_on_kill_system,
+            ParallelSystemAccess::new().write::<euca_gameplay::Gold>(),
+        )
+        .after("respawn");
+    sched
+        .add_system(
+            "xp_on_kill",
+            euca_gameplay::xp_on_kill_system,
+            ParallelSystemAccess::new().write::<euca_gameplay::Level>(),
+        )
+        .after("respawn");
+    sched
+        .add_system(
+            "ability_tick",
+            |w: &mut World| euca_gameplay::ability_tick_system(w, world_dt(w)),
+            ParallelSystemAccess::new(),
+        )
+        .after("respawn");
+    sched
+        .add_system(
+            "use_ability",
+            euca_gameplay::use_ability_system,
+            ParallelSystemAccess::new(),
+        )
+        .after("ability_tick");
+
+    // ── Stage 8: Audio, animation, particles, nav ────────────────────────
+    // These are independent subsystems — can run in parallel.
+    sched
+        .add_system(
+            "audio",
+            |w: &mut World| euca_audio::audio_update_system_mut(w, world_dt(w)),
+            ParallelSystemAccess::new(),
+        )
+        .after("use_ability");
+    sched
+        .add_system(
+            "skeletal_animation",
+            |w: &mut World| euca_asset::skeletal_animation_system(w, world_dt(w)),
+            ParallelSystemAccess::new(),
+        )
+        .after("use_ability");
+    sched
+        .add_system(
+            "particle_emit",
+            |w: &mut World| euca_particle::emit_particles_system(w, world_dt(w)),
+            ParallelSystemAccess::new(),
+        )
+        .after("use_ability");
+    sched
+        .add_system(
+            "particle_update",
+            |w: &mut World| euca_particle::particle_update_system(w, world_dt(w)),
+            ParallelSystemAccess::new(),
+        )
+        .after("particle_emit");
+    sched
+        .add_system(
+            "pathfinding",
+            euca_nav::pathfinding_system,
+            ParallelSystemAccess::new(),
+        )
+        .after("use_ability");
+    sched
+        .add_system(
+            "steering",
+            |w: &mut World| euca_nav::steering_system(w, world_dt(w)),
+            ParallelSystemAccess::new().write::<euca_physics::Velocity>(),
+        )
+        .after("pathfinding");
+
+    // ── Finalize: event flush + tick advance ─────────────────────────────
+    sched
+        .add_system(
+            "event_flush",
+            |w: &mut World| {
+                if let Some(events) = w.resource_mut::<Events>() {
+                    events.update();
+                }
+                w.tick();
+            },
+            ParallelSystemAccess::new(), // exclusive — no other system in this batch
+        )
+        .after("audio")
+        .after("skeletal_animation")
+        .after("particle_update")
+        .after("steering");
+
+    sched.build();
+
+    let batches = sched.batches();
+    log::info!(
+        "Parallel schedule: {} systems in {} batches",
+        sched.len(),
+        batches.len(),
+    );
+    for (i, batch) in batches.iter().enumerate() {
+        log::info!("  Batch {i}: {} systems (parallel)", batch.len());
     }
 
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_begin(p, "gameplay");
-    }
-    euca_gameplay::apply_damage_system(world);
-    euca_gameplay::death_check_system(world);
-    euca_gameplay::projectile_system(world, dt);
-    euca_gameplay::trigger_system(world);
-    euca_gameplay::ai_system(world, dt);
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_end(p);
-    }
-
-    // Player control: process input → commands → movement (before AutoCombat)
-    euca_gameplay::player_input::player_input_system(world);
-    euca_gameplay::player::player_command_system(world, dt);
-
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_begin(p, "combat");
-    }
-    euca_gameplay::auto_combat_system(world, dt);
-    euca_gameplay::game_state_system(world, dt);
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_end(p);
-    }
-
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_begin(p, "rules");
-    }
-    euca_gameplay::on_death_rule_system(world);
-    euca_gameplay::timer_rule_system(world, dt);
-    euca_gameplay::health_below_rule_system(world);
-    euca_gameplay::on_score_rule_system(world);
-    euca_gameplay::on_phase_rule_system(world);
-
-    let respawn_delay = world
-        .resource::<euca_gameplay::GameState>()
-        .map(|s| s.config.respawn_delay);
-    if let Some(delay) = respawn_delay {
-        euca_gameplay::respawn_system(world, dt);
-        euca_gameplay::start_respawn_on_death(world, delay);
-    }
-    euca_gameplay::corpse_cleanup_system(world, dt);
-
-    // Attach visuals to rule-spawned entities
-    let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = world
-        .resource::<Events>()
-        .map(|e| e.read::<euca_gameplay::RuleSpawnEvent>().cloned().collect())
-        .unwrap_or_default();
-    if let Some(assets) = world
-        .resource::<euca_agent::routes::DefaultAssets>()
-        .cloned()
-    {
-        for ev in spawn_events {
-            if let Some(mesh_handle) = assets.mesh(&ev.mesh) {
-                world.insert(ev.entity, euca_render::MeshRenderer { mesh: mesh_handle });
-                let mat = ev
-                    .color
-                    .as_deref()
-                    .and_then(|c| assets.material(c))
-                    .unwrap_or(assets.default_material);
-                world.insert(ev.entity, euca_render::MaterialRef { handle: mat });
-            }
-        }
-    }
-
-    euca_gameplay::gold_on_kill_system(world);
-    euca_gameplay::xp_on_kill_system(world);
-    euca_gameplay::ability_tick_system(world, dt);
-    euca_gameplay::use_ability_system(world);
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_end(p);
-    }
-
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_begin(p, "audio");
-    }
-    euca_audio::audio_update_system_mut(world, dt);
-    euca_asset::skeletal_animation_system(world, dt);
-    euca_particle::emit_particles_system(world, dt);
-    euca_particle::particle_update_system(world, dt);
-    euca_nav::pathfinding_system(world);
-    euca_nav::steering_system(world, dt);
-    if let Some(p) = world.resource_mut::<Profiler>() {
-        profiler_end(p);
-    }
-
-    if let Some(events) = world.resource_mut::<Events>() {
-        events.update();
-    }
-
-    // Advance tick counter — required for change detection
-    world.tick();
+    sched
 }
 
 /// Collect base draw commands for all alive renderable entities.
@@ -508,6 +709,8 @@ struct EditorApp {
     was_playing_last_frame: bool,
     /// Ground plane mesh handle — outlines are skipped for this mesh.
     plane_mesh: Option<MeshHandle>,
+    /// Parallel gameplay system schedule (built once, run each tick).
+    gameplay_schedule: euca_ecs::ParallelSchedule,
 }
 
 impl EditorApp {
@@ -549,6 +752,7 @@ impl EditorApp {
             level_path: Self::detect_level_file(),
             was_playing_last_frame: false,
             plane_mesh: None,
+            gameplay_schedule: build_gameplay_schedule(),
         }
     }
 
@@ -717,14 +921,31 @@ impl EditorApp {
         self.was_playing_last_frame = self.editor_state.playing;
 
         if self.editor_state.should_tick() {
-            let dt = world
-                .resource::<Time>()
-                .map(|t| t.delta as f32)
-                .unwrap_or(0.016);
-            run_gameplay_systems(world, dt);
+            // Attach visuals to rule-spawned entities (must run before schedule
+            // clears events, and needs access to DefaultAssets which isn't in ECS).
+            let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = world
+                .resource::<Events>()
+                .map(|e| e.read::<euca_gameplay::RuleSpawnEvent>().cloned().collect())
+                .unwrap_or_default();
+            if let Some(assets) = world
+                .resource::<euca_agent::routes::DefaultAssets>()
+                .cloned()
+            {
+                for ev in spawn_events {
+                    if let Some(mesh_handle) = assets.mesh(&ev.mesh) {
+                        world.insert(ev.entity, euca_render::MeshRenderer { mesh: mesh_handle });
+                        let mat = ev
+                            .color
+                            .as_deref()
+                            .and_then(|c| assets.material(c))
+                            .unwrap_or(assets.default_material);
+                        world.insert(ev.entity, euca_render::MaterialRef { handle: mat });
+                    }
+                }
+            }
+
+            self.gameplay_schedule.run(world);
             // Clear per-frame input AFTER gameplay systems have consumed it.
-            // Must come after run_gameplay_systems so player_input_system can
-            // read just_pressed events from the current frame.
             if let Some(input) = world.resource_mut::<euca_input::InputState>() {
                 input.begin_frame();
             }
