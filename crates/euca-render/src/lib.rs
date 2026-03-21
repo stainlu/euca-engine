@@ -10,7 +10,7 @@ mod light;
 mod lod;
 mod material;
 mod mesh;
-pub mod metal_hints;
+pub mod occlusion;
 mod plugin;
 pub mod post_process;
 mod renderer;
@@ -39,9 +39,7 @@ pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
 pub use lod::{LodSettings, lod_select_system};
 pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
 pub use mesh::{Mesh, MeshHandle, MeshRenderer};
-pub use metal_hints::{
-    AttachmentOps, DepthAttachmentOps, MetalRenderHints, RenderPassLayout, RenderPassOptimizer,
-};
+pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::{PostProcessSettings, PostProcessStack};
 pub use renderer::{DrawCommand, Renderer};
