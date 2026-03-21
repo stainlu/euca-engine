@@ -1,3 +1,4 @@
+use crate::buffer::{BufferKind, SmartBuffer};
 use crate::camera::Camera;
 use crate::gpu::GpuContext;
 use crate::light::{AmbientLight, DirectionalLight};
@@ -102,10 +103,10 @@ const CASCADE_ORTHO_SIZES: [f32; 3] = [8.0, 20.0, 50.0];
 pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     transparent_pipeline: wgpu::RenderPipeline,
-    instance_buffer: wgpu::Buffer,
+    instance_buffer: SmartBuffer,
     instance_bind_group: wgpu::BindGroup,
     instance_bgl: wgpu::BindGroupLayout,
-    scene_buffer: wgpu::Buffer,
+    scene_buffer: SmartBuffer,
     scene_bgl: wgpu::BindGroupLayout,
     scene_bind_group: wgpu::BindGroup,
     material_bgl: wgpu::BindGroupLayout,
@@ -118,7 +119,7 @@ pub struct Renderer {
     shadow_map_view: wgpu::TextureView,
     shadow_cascade_views: Vec<wgpu::TextureView>,
     shadow_sampler: wgpu::Sampler,
-    shadow_instance_buffer: wgpu::Buffer,
+    shadow_instance_buffer: SmartBuffer,
     shadow_instance_bind_group: wgpu::BindGroup,
     postprocess_pipeline: wgpu::RenderPipeline,
     postprocess_bgl: wgpu::BindGroupLayout,
@@ -146,24 +147,28 @@ const MSAA_SAMPLE_COUNT: u32 = 4;
 impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
         let instance_buf_size = (MAX_INSTANCES * std::mem::size_of::<InstanceData>()) as u64;
-        let instance_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Instance SSBO"),
-            size: instance_buf_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let scene_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Scene UBO"),
-            size: std::mem::size_of::<SceneUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let shadow_instance_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Shadow Instance SSBO"),
-            size: instance_buf_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let unified = gpu.unified_memory;
+        let instance_buffer = SmartBuffer::new(
+            &gpu.device,
+            instance_buf_size,
+            BufferKind::Storage,
+            unified,
+            "Instance SSBO",
+        );
+        let scene_buffer = SmartBuffer::new(
+            &gpu.device,
+            std::mem::size_of::<SceneUniforms>() as u64,
+            BufferKind::Uniform,
+            unified,
+            "Scene UBO",
+        );
+        let shadow_instance_buffer = SmartBuffer::new(
+            &gpu.device,
+            instance_buf_size,
+            BufferKind::Storage,
+            unified,
+            "Shadow Instance SSBO",
+        );
         let textures = TextureStore::new(&gpu.device, &gpu.queue);
         let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Material Sampler"),
@@ -309,7 +314,7 @@ impl Renderer {
             layout: &instance_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: instance_buffer.as_entire_binding(),
+                resource: instance_buffer.raw().as_entire_binding(),
             }],
         });
         let shadow_instance_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -317,7 +322,7 @@ impl Renderer {
             layout: &instance_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: shadow_instance_buffer.as_entire_binding(),
+                resource: shadow_instance_buffer.raw().as_entire_binding(),
             }],
         });
         let scene_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -326,7 +331,7 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: scene_buffer.as_entire_binding(),
+                    resource: scene_buffer.raw().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -1063,11 +1068,7 @@ impl Renderer {
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
         let (opaque_instances, opaque_batches) = Self::build_batches_from_refs(&opaque_cmds);
         if !opaque_instances.is_empty() {
-            gpu.queue.write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(&opaque_instances),
-            );
+            self.instance_buffer.write(&gpu.queue, &opaque_instances);
         }
         for (cascade_idx, &cascade_ortho) in CASCADE_ORTHO_SIZES.iter().enumerate() {
             let cascade_vp = Self::light_vp_for_cascade(light, cascade_ortho);
@@ -1083,11 +1084,8 @@ impl Renderer {
                 })
                 .collect();
             if !shadow_instances.is_empty() {
-                gpu.queue.write_buffer(
-                    &self.shadow_instance_buffer,
-                    0,
-                    bytemuck::cast_slice(&shadow_instances),
-                );
+                self.shadow_instance_buffer
+                    .write(&gpu.queue, &shadow_instances);
             }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Shadow Pass"),
@@ -1178,17 +1176,8 @@ impl Renderer {
             ],
             num_spot_lights: [spot_lights.len().min(MAX_SPOT_LIGHTS) as f32, 0.0, 0.0, 0.0],
         };
-        gpu.queue
-            .write_buffer(&self.scene_buffer, 0, bytemuck::bytes_of(&scene));
-
-        // Choose the MSAA resolve target: when the advanced post-process stack
-        // is active, resolve into its ping buffer so the stack can read from it.
-        // Otherwise resolve into the renderer's own HDR texture.
-        let resolve_target = match self.post_process_stack {
-            Some(ref stack) => stack.ping_view(),
-            None => &self.hdr_view,
-        };
-
+        self.scene_buffer
+            .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("PBR Pass (MSAA)"),
@@ -1238,11 +1227,7 @@ impl Renderer {
                 let (trans_instances, trans_batches) =
                     Self::build_batches_from_refs(&transparent_cmds);
                 if !trans_instances.is_empty() {
-                    gpu.queue.write_buffer(
-                        &self.instance_buffer,
-                        0,
-                        bytemuck::cast_slice(&trans_instances),
-                    );
+                    self.instance_buffer.write(&gpu.queue, &trans_instances);
                 }
                 pass.set_pipeline(&self.transparent_pipeline);
                 pass.set_bind_group(0, &self.instance_bind_group, &[]);

@@ -14,6 +14,8 @@ pub struct GpuContext {
     pub adapter_info: AdapterInfo,
     /// Rendering backend chosen by the hardware survey.
     pub render_backend: RenderBackend,
+    /// Whether the GPU has unified memory (Apple Silicon).
+    pub unified_memory: bool,
 }
 
 impl GpuContext {
@@ -83,6 +85,7 @@ impl GpuContext {
             window,
             adapter_info,
             render_backend: survey.render_backend,
+            unified_memory: survey.supports_unified_memory(),
         }
     }
 

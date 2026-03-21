@@ -188,6 +188,16 @@ impl HardwareSurvey {
         RenderBackend::Wgpu
     }
 
+    /// Whether the selected adapter has unified memory (CPU+GPU share RAM).
+    ///
+    /// On Apple Silicon, CPU and GPU share the same physical memory, so buffer
+    /// copies via `queue.write_buffer()` are redundant. We can hint wgpu by
+    /// adding `MAP_WRITE` to buffer usage flags, and the Metal backend will
+    /// optimize away the internal staging copy.
+    pub fn supports_unified_memory(&self) -> bool {
+        self.selected().vendor == GpuVendor::Apple
+    }
+
     /// Get the selected adapter info.
     pub fn selected(&self) -> &AdapterInfo {
         &self.adapters[self.selected_adapter]
@@ -359,5 +369,53 @@ mod tests {
         assert!(!info.os.is_empty());
         assert!(!info.arch.is_empty());
         assert!(info.cpu_cores >= 1);
+    }
+
+    /// Helper to build a survey with a single adapter of the given vendor.
+    fn make_survey_for(vendor: GpuVendor) -> HardwareSurvey {
+        HardwareSurvey {
+            system: SystemInfo {
+                os: "macos",
+                arch: "aarch64",
+                cpu_cores: 10,
+            },
+            adapters: vec![AdapterInfo {
+                name: "Test GPU".into(),
+                vendor,
+                vendor_id: 0,
+                device_type: wgpu::DeviceType::IntegratedGpu,
+                wgpu_backend: wgpu::Backend::Metal,
+                driver: String::new(),
+                driver_info: String::new(),
+                features: wgpu::Features::empty(),
+                limits: wgpu::Limits::default(),
+            }],
+            selected_adapter: 0,
+            render_backend: RenderBackend::Wgpu,
+        }
+    }
+
+    #[test]
+    fn apple_detected_as_unified_memory() {
+        let survey = make_survey_for(GpuVendor::Apple);
+        assert!(survey.supports_unified_memory());
+    }
+
+    #[test]
+    fn non_apple_not_unified_memory() {
+        for vendor in [
+            GpuVendor::Nvidia,
+            GpuVendor::Amd,
+            GpuVendor::Intel,
+            GpuVendor::Qualcomm,
+            GpuVendor::Unknown(0xFFFF),
+        ] {
+            let survey = make_survey_for(vendor);
+            assert!(
+                !survey.supports_unified_memory(),
+                "{:?} should not be detected as unified memory",
+                vendor
+            );
+        }
     }
 }
