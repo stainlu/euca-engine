@@ -96,6 +96,7 @@ impl AgentServer {
             .route("/fog/settings", post(routes::fog_set))
             .route("/diagnose", get(routes::diagnose))
             .route("/events", get(routes::events_list))
+            .route("/profile", get(routes::profile))
             .route("/ability/use", post(routes::ability_use))
             .route("/ability/list/{id}", get(routes::ability_list))
             .route("/particle/create", post(routes::particle_create))

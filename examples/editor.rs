@@ -3,7 +3,7 @@ use euca_agent::{
     auth::AuthStore,
     hud::{HudCanvas, HudElement, parse_color},
 };
-use euca_core::Time;
+use euca_core::{Profiler, Time, profiler_begin, profiler_end};
 use euca_ecs::Events;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
@@ -87,6 +87,7 @@ impl EditorApp {
         world.insert_resource(euca_scene::PrefabRegistry::default());
         world.insert_resource(LodSettings::default());
         world.insert_resource(PostProcessSettings::default());
+        world.insert_resource(Profiler::default());
         // AudioEngine init may fail on headless systems — log and continue
         match euca_audio::AudioEngine::new() {
             Ok(engine) => world.insert_resource(engine),
@@ -311,20 +312,43 @@ impl EditorApp {
                 .unwrap_or(0.016);
 
             // Physics
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_begin(p, "physics");
+            }
             physics_step_system(world);
             euca_physics::character_controller_system(world, dt);
             euca_physics::vehicle_physics_system(world, dt);
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_end(p);
+            }
 
-            // Gameplay systems (order matters: damage → death → respawn → projectiles → triggers → AI → game state)
+            // Gameplay systems
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_begin(p, "gameplay");
+            }
             euca_gameplay::apply_damage_system(world);
             euca_gameplay::death_check_system(world);
             euca_gameplay::projectile_system(world, dt);
             euca_gameplay::trigger_system(world);
             euca_gameplay::ai_system(world, dt);
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_end(p);
+            }
+
+            // Combat
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_begin(p, "combat");
+            }
             euca_gameplay::auto_combat_system(world, dt);
             euca_gameplay::game_state_system(world, dt);
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_end(p);
+            }
 
-            // Data-driven rules (evaluate conditions → execute actions)
+            // Data-driven rules
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_begin(p, "rules");
+            }
             euca_gameplay::on_death_rule_system(world);
             euca_gameplay::timer_rule_system(world, dt);
             euca_gameplay::health_below_rule_system(world);
@@ -369,14 +393,23 @@ impl EditorApp {
             euca_gameplay::xp_on_kill_system(world);
             euca_gameplay::ability_tick_system(world, dt);
             euca_gameplay::use_ability_system(world);
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_end(p);
+            }
 
             // Audio, animation, particles, navigation
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_begin(p, "audio");
+            }
             euca_audio::audio_update_system_mut(world, dt);
             euca_asset::skeletal_animation_system(world, dt);
             euca_particle::emit_particles_system(world, dt);
             euca_particle::particle_update_system(world, dt);
             euca_nav::pathfinding_system(world);
             euca_nav::steering_system(world, dt);
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_end(p);
+            }
 
             // Swap event buffers (events persist 2 frames)
             if let Some(events) = world.resource_mut::<Events>() {
@@ -443,6 +476,9 @@ impl EditorApp {
             });
 
         // === 1. Render 3D scene ===
+        if let Some(p) = world.resource_mut::<Profiler>() {
+            profiler_begin(p, "render_collect");
+        }
         {
             let mut draw_commands: Vec<DrawCommand> = {
                 let query = Query::<(
@@ -546,6 +582,13 @@ impl EditorApp {
                 .unwrap_or_default();
             let camera = world.resource::<Camera>().unwrap().clone();
 
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_end(p);
+            }
+
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_begin(p, "render_draw");
+            }
             let renderer = self.renderer.as_ref().unwrap();
             renderer.render_to_view(
                 gpu,
@@ -556,6 +599,9 @@ impl EditorApp {
                 &view,
                 &mut encoder,
             );
+            if let Some(p) = world.resource_mut::<Profiler>() {
+                profiler_end(p);
+            }
         }
 
         // Check for pending screenshot request (will be fulfilled after submit)
@@ -823,6 +869,11 @@ impl EditorApp {
                 .push(euca_editor::undo::UndoAction::SpawnEntity {
                     entity_index: e.index(),
                 });
+        }
+
+        // Finish profiler frame
+        if let Some(p) = world.resource_mut::<Profiler>() {
+            p.end_frame();
         }
 
         // Release the world lock before GPU submission
