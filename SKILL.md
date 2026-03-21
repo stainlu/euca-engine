@@ -80,7 +80,7 @@ euca sim reset                   # Reset to initial scene
 ```
 
 When simulation is playing, these systems run each tick:
-physics → damage → death → projectiles → triggers → AI → auto_combat → game state → respawn
+physics -> damage -> death -> projectiles -> triggers -> AI -> auto_combat -> game state -> respawn
 
 ### Game Match
 
@@ -89,7 +89,7 @@ euca game create --mode deathmatch --score-limit 10
 euca game state                  # Phase, scores, elapsed time
 ```
 
-Game phases: lobby → playing → post_match (when score limit reached)
+Game phases: lobby -> playing -> post_match (when score limit reached)
 
 ### Camera
 
@@ -155,7 +155,9 @@ euca entity create --mesh sphere --position 3,1,0 --health 80 --team 2 --color b
 1. Detect nearest alive entity on a different team within detect_range
 2. If in attack range (1.5): deal damage (DamageEvent), wait cooldown
 3. If out of range: chase (set Velocity toward target)
-4. If no enemy found: stand still
+4. If no enemy found: march in the entity's MarchDirection (or stand still if none)
+
+**March Direction:** Combat entities automatically receive a MarchDirection based on team. Team 1 marches in +X (right), team 2 marches in -X (left). When no enemy is in detect range, the entity advances toward the opposing side. Marching stops as soon as a target is found.
 
 No `ai set` command needed — `--combat` handles everything automatically.
 
@@ -257,13 +259,100 @@ euca animation stop <entity_id>
 euca animation list
 ```
 
+### Terrain
+
+```bash
+# Create a heightmap terrain grid
+euca terrain create --width 64 --height 64 --cell-size 1.0
+
+# Edit terrain: raise, lower, flatten, or smooth at a point
+euca terrain edit --op raise --x 10 --z 10 --radius 3 --amount 0.5
+euca terrain edit --op lower --x 20 --z 20 --radius 5 --amount 1.0
+euca terrain edit --op flatten --x 15 --z 15 --radius 4 --amount 0.0
+euca terrain edit --op smooth --x 10 --z 10 --radius 6 --amount 0.3
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--width` | 64 | Grid columns |
+| `--height` | 64 | Grid rows |
+| `--cell-size` | 1.0 | World-space size per cell |
+| `--op` | raise | Operation: `raise`, `lower`, `flatten`, `smooth` |
+| `--x` | required | X coordinate on the heightmap |
+| `--z` | required | Z coordinate on the heightmap |
+| `--radius` | 3 | Brush radius (cells) |
+| `--amount` | 0.5 | Brush strength |
+
+### Prefab
+
+```bash
+# Spawn a registered prefab by name
+euca prefab spawn --name watchtower --position 5,0,3
+
+# List all available prefabs
+euca prefab list
+```
+
+Prefabs are pre-configured entity bundles registered with the engine. Use `prefab list` to see what is available, then `prefab spawn` to instantiate at a position.
+
+### Material
+
+```bash
+# Set PBR material properties on an entity
+euca material set --entity <id> --metallic 1.0 --roughness 0.2
+euca material set --entity <id> --emissive 1.0,0.5,0.0
+euca material set --entity <id> --alpha-mode blend
+```
+
+| Flag | Format | Description |
+|------|--------|-------------|
+| `--entity` | u32 | Target entity ID (required) |
+| `--metallic` | 0.0-1.0 | Metallic factor |
+| `--roughness` | 0.0-1.0 | Roughness factor |
+| `--emissive` | r,g,b | Emissive color (HDR values allowed) |
+| `--alpha-mode` | opaque/blend | Transparency mode |
+
+### Post-Processing
+
+```bash
+# Get current post-processing settings
+euca postprocess get
+
+# Toggle individual effects
+euca postprocess set --ssao true             # Screen-space ambient occlusion
+euca postprocess set --fxaa true             # Fast approximate anti-aliasing
+euca postprocess set --bloom true            # Bloom glow effect
+
+# Adjust exposure and color grading
+euca postprocess set --exposure 1.2
+euca postprocess set --contrast 1.1 --saturation 0.9
+
+# Combine multiple settings in one call
+euca postprocess set --ssao true --fxaa true --bloom true --exposure 1.0 --contrast 1.0 --saturation 1.0
+```
+
+| Flag | Format | Description |
+|------|--------|-------------|
+| `--ssao` | bool | Enable/disable screen-space ambient occlusion |
+| `--fxaa` | bool | Enable/disable fast approximate anti-aliasing |
+| `--bloom` | bool | Enable/disable bloom |
+| `--exposure` | f32 | Exposure multiplier |
+| `--contrast` | f32 | Contrast adjustment |
+| `--saturation` | f32 | Saturation adjustment |
+
 ### Input
 
 ```bash
 euca input bind W move_forward
 euca input unbind W
 euca input list
+
+# Input context stack
+euca input context-push gameplay   # Push a context (gameplay, menu, editor)
+euca input context-pop             # Pop the top context
 ```
+
+Input contexts form a stack. Only bindings in the top context are active. Push `menu` to capture input for a pause screen, then pop to return to gameplay.
 
 ### Rules (Data-Driven Game Logic)
 
@@ -373,6 +462,7 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 | team | u8 | Only if --team was set |
 | dead | true | Only if health reached 0 |
 | auto_combat | damage, range, cooldown, detect_range, speed | Only if --combat was set |
+| march_direction | [f32; 3] | Auto-set on combat entities (team 1: +X, team 2: -X) |
 
 ## Flag Reference
 
@@ -380,20 +470,20 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 |------|--------|---------|
 | `--mesh` | cube/sphere/plane | entity create |
 | `--color` | name or r,g,b | entity create, entity update |
-| `--position` | x,y,z | entity create, entity update |
+| `--position` | x,y,z | entity create, entity update, prefab spawn |
 | `--scale` | x,y,z | entity create, entity update |
 | `--velocity` | x,y,z | entity update |
-| `--physics` | Dynamic/Static/Kinematic | entity create |
-| `--collider` | aabb:h,h,h / sphere:r | entity create |
+| `--physics` | Dynamic/Static/Kinematic | entity create, entity update |
+| `--collider` | aabb:h,h,h / sphere:r / capsule:r,hh | entity create, entity update |
 | `--health` | f32 | entity create |
 | `--team` | u8 | entity create |
 | `--combat` | flag | entity create, template create |
 | `--json` | JSON string | entity create, entity update |
 | `--dry-run` | flag | entity create, entity update |
-| `--amount` | f32 | entity damage, entity heal |
+| `--amount` | f32 | entity damage, entity heal, terrain edit |
 | `--behavior` | idle/chase/patrol/flee | ai set |
 | `--target` | entity ID | ai set, camera focus |
-| `--speed` | f32 | ai set, projectile spawn |
+| `--speed` | f32 | ai set, projectile spawn, nav set |
 | `--damage` | f32 | projectile spawn |
 | `--action` | damage:N / heal:N | trigger create |
 | `--fill` | 0.0-1.0 | ui bar |
@@ -403,6 +493,25 @@ Named: `red`, `blue`, `green`, `gold`, `silver`, `gray`, `white`, `black`, `yell
 | `--do-action` | action string (repeatable) | rule create |
 | `--output` | file path | screenshot |
 | `--server` | URL | global (default: http://localhost:3917) |
+| `--name` | string | prefab spawn, template create/spawn |
+| `--entity` | u32 | material set |
+| `--metallic` | 0.0-1.0 | material set |
+| `--roughness` | 0.0-1.0 | material set |
+| `--emissive` | r,g,b | material set |
+| `--alpha-mode` | opaque/blend | material set |
+| `--ssao` | bool | postprocess set |
+| `--fxaa` | bool | postprocess set |
+| `--bloom` | bool | postprocess set |
+| `--exposure` | f32 | postprocess set |
+| `--contrast` | f32 | postprocess set |
+| `--saturation` | f32 | postprocess set |
+| `--width` | u32 | terrain create |
+| `--height` | u32 | terrain create |
+| `--cell-size` | f32 | terrain create, nav generate |
+| `--op` | raise/lower/flatten/smooth | terrain edit |
+| `--x` | f32 | terrain edit |
+| `--z` | f32 | terrain edit |
+| `--radius` | f32 | terrain edit |
 
 ## Workflows
 
