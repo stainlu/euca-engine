@@ -17,3 +17,10 @@ reflect = ["dep:euca-reflect"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 euca-reflect = { path = "../euca-reflect", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "math_bench"
+harness = false
