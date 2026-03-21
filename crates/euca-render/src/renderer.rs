@@ -876,6 +876,35 @@ impl Renderer {
         self.post_process_settings.ssr_enabled = true;
     }
 
+    /// Initialize the volumetric fog pass.
+    ///
+    /// Once enabled, `render_to_view_with_lights` will execute the fog compute
+    /// shader and composite the result over the HDR buffer after the PBR pass
+    /// and before post-processing.
+    pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext) {
+        self.volumetric_fog_pass = Some(VolumetricFogPass::new(
+            &gpu.device,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
+            gpu.surface_config.format,
+        ));
+    }
+
+    /// Update the volumetric fog settings (density, scattering, etc.).
+    pub fn set_fog_settings(&mut self, settings: VolumetricFogSettings) {
+        self.volumetric_fog_settings = settings;
+    }
+
+    /// Read-only access to the current volumetric fog settings.
+    pub fn fog_settings(&self) -> &VolumetricFogSettings {
+        &self.volumetric_fog_settings
+    }
+
+    /// Whether volumetric fog is currently active (pass created and enabled).
+    pub fn is_fog_enabled(&self) -> bool {
+        self.volumetric_fog_pass.is_some() && self.volumetric_fog_settings.enabled
+    }
+
     fn light_vp_for_cascade(light: &DirectionalLight, ortho_size: f32) -> Mat4 {
         use euca_math::Vec3;
         let dir = Vec3::new(light.direction[0], light.direction[1], light.direction[2]).normalize();
