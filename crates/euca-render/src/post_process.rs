@@ -1231,10 +1231,10 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_ssao_disabled() {
+    fn default_settings_have_ssao_and_fxaa_enabled() {
         let settings = PostProcessSettings::default();
-        assert!(!settings.ssao_enabled);
-        assert!(!settings.fxaa_enabled);
+        assert!(settings.ssao_enabled);
+        assert!(settings.fxaa_enabled);
         assert!(settings.bloom_enabled);
     }
 
