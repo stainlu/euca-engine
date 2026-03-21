@@ -17,6 +17,7 @@ pub mod post_process;
 mod renderer;
 mod texture;
 mod vertex;
+pub mod volumetric;
 
 pub use wgpu;
 
@@ -50,3 +51,4 @@ pub use post_process::{PostProcessSettings, PostProcessStack};
 pub use renderer::{DrawCommand, Renderer};
 pub use texture::{TextureHandle, TextureStore};
 pub use vertex::Vertex;
+pub use volumetric::{VolumetricFogPass, VolumetricFogSettings};
