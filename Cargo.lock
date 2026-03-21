@@ -1186,6 +1186,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "euca-ai"
+version = "0.1.0"
+dependencies = [
+ "euca-ecs",
+ "euca-math",
+ "log",
+]
+
+[[package]]
 name = "euca-animation"
 version = "0.1.0"
 dependencies = [
@@ -1447,6 +1456,16 @@ dependencies = [
  "euca-ecs",
  "euca-math",
  "euca-physics",
+]
+
+[[package]]
+name = "euca-ui"
+version = "0.1.0"
+dependencies = [
+ "euca-ecs",
+ "euca-input",
+ "euca-math",
+ "euca-scene",
 ]
 
 [[package]]

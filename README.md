@@ -44,7 +44,8 @@ Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold 
 | System | Description |
 |--------|-------------|
 | **ECS** | Custom archetype storage, generational entities, parallel queries, change detection |
-| **Rendering** | Forward+ PBR, 3-cascade shadows, MSAA/FXAA, bloom, SSAO, ACES tonemapping, LOD |
+| **Rendering** | Forward+ and deferred PBR, cascaded shadows, MSAA/FXAA, SSAO, SSR, volumetric fog, LOD, HLOD |
+| **GPU Pipeline** | GPU-driven rendering (draw indirect), HZB occlusion culling, foliage instancing, compute shaders |
 | **Materials** | PBR textures (metallic/roughness/AO/emissive), alpha blend/cutout transparency |
 | **Physics** | AABB/sphere/capsule collision, collision layers/masks, mass, raycasting, CCD, scene queries |
 | **Combat** | AutoCombat (melee/stationary), targeting priority, projectiles |
@@ -60,8 +61,9 @@ Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold 
 | **Networking** | UDP transport, interest culling, bandwidth budgeting |
 | **UI** | Runtime UI framework: anchored layout, flex, widgets, input routing, world-space UI |
 | **Scripting** | Embedded Lua (mlua), hot reload, sandboxing, ECS bridge, event handlers |
-| **Compute** | wgpu compute shaders, storage buffers, GPU frustum culling |
 | **Reflection** | Runtime field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` |
+| **Performance** | Frame profiler, ECS query caching, parallel system execution, Apple Silicon Metal optimization |
+| **Scale** | World streaming/chunk loading, hierarchical LOD, unified memory (Apple Silicon) |
 | **Editor** | egui: hierarchy, inspector, play/pause, gizmos, undo/redo |
 | **Diagnostics** | `euca diagnose` health check, `euca events` real-time debugging |
 
@@ -101,6 +103,7 @@ AI Agents (Claude Code, scripts, RL agents)
 ```
 
 ## Crates (24)
+<!-- 23 library crates + 1 CLI tool -->
 
 | Crate | Purpose |
 |-------|---------|
