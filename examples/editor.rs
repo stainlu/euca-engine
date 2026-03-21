@@ -1351,6 +1351,34 @@ impl ApplicationHandler for EditorApp {
                     }
                 }
             }
+            // Gizmo mode shortcuts (Unreal convention: W=Translate, E=Rotate, R=Scale)
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(ref ch),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if !self.editor_state.playing
+                && (ch.as_str() == "w"
+                    || ch.as_str() == "W"
+                    || ch.as_str() == "e"
+                    || ch.as_str() == "E"
+                    || ch.as_str() == "r"
+                    || ch.as_str() == "R") =>
+            {
+                // Only switch mode if no active drag and not in play mode
+                if self.editor_state.gizmo.active_drag.is_none() {
+                    let mode = match ch.as_str() {
+                        "w" | "W" => euca_editor::gizmo::GizmoMode::Translate,
+                        "e" | "E" => euca_editor::gizmo::GizmoMode::Rotate,
+                        "r" | "R" => euca_editor::gizmo::GizmoMode::Scale,
+                        _ => unreachable!(),
+                    };
+                    self.editor_state.gizmo.mode = mode;
+                }
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -1563,7 +1591,9 @@ impl EditorApp {
             camera.screen_to_ray(self.mouse_pos[0], self.mouse_pos[1], screen_w, screen_h);
         let ray = Ray::new(ray_origin, ray_dir);
 
-        if let Some((axis, _t)) = euca_editor::gizmo::pick_gizmo_axis(&ray, entity_pos, camera.eye)
+        let mode = self.editor_state.gizmo.mode;
+        if let Some((axis, _t)) =
+            euca_editor::gizmo::pick_gizmo_axis(&ray, entity_pos, camera.eye, mode)
         {
             let axis_dir = axis.direction();
             let grab_t =
@@ -1575,10 +1605,14 @@ impl EditorApp {
                 .unwrap_or_default();
             drop(pool);
             self.editor_state.gizmo.active_drag = Some(euca_editor::gizmo::GizmoDrag {
+                mode,
                 axis,
                 entity_index: sel_idx,
                 start_position: entity_pos,
                 grab_point,
+                start_rotation: current_transform.rotation,
+                start_scale: current_transform.scale,
+                accumulated_angle: 0.0,
             });
             self.editor_state
                 .undo
@@ -1628,12 +1662,25 @@ impl EditorApp {
         };
         let (ray_origin, ray_dir) =
             camera.screen_to_ray(self.mouse_pos[0], self.mouse_pos[1], screen_w, screen_h);
-        let new_pos = euca_editor::gizmo::update_gizmo_drag(&drag, ray_origin, ray_dir.normalize());
+        let ray_dir_n = ray_dir.normalize();
         let mut pool = self.shared.lock();
         let world = pool.world();
         if let Some(entity) = find_alive_entity(world, drag.entity_index) {
             if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
-                lt.0.translation = new_pos;
+                match drag.mode {
+                    euca_editor::gizmo::GizmoMode::Translate => {
+                        lt.0.translation =
+                            euca_editor::gizmo::update_translate_drag(&drag, ray_origin, ray_dir_n);
+                    }
+                    euca_editor::gizmo::GizmoMode::Rotate => {
+                        lt.0.rotation =
+                            euca_editor::gizmo::update_rotate_drag(&drag, ray_origin, ray_dir_n);
+                    }
+                    euca_editor::gizmo::GizmoMode::Scale => {
+                        lt.0.scale =
+                            euca_editor::gizmo::update_scale_drag(&drag, ray_origin, ray_dir_n);
+                    }
+                }
             }
         }
     }
