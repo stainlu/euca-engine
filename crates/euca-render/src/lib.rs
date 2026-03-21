@@ -67,11 +67,7 @@ pub use metal_hints::{
 pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::{PostProcessSettings, PostProcessStack};
-pub use prepass::{
-    PREPASS_DEPTH_FORMAT, PREPASS_NORMAL_FORMAT, PrepassPipeline, PrepassSceneUniforms,
-    PrepassTextures, decode_view_normal, encode_view_normal,
-};
-pub use renderer::{DrawCommand, Renderer};
+pub use renderer::{DrawCommand, RenderQuality, Renderer};
 pub use ssr::{
     SsrExecuteParams, SsrPass, SsrSettings, compute_step_count, passes_roughness_filter,
 };

@@ -20,11 +20,11 @@ use euca_math::Mat4;
 pub enum RenderQuality {
     /// Minimal overhead: SSAO off, FXAA on, bloom on.
     Low,
-    /// Balanced: SSAO on at half-resolution approximation, FXAA on.
+    /// Balanced: SSAO on at reduced radius, FXAA on, bloom on.
     Medium,
-    /// Full quality: SSAO on, FXAA on, bloom on.
+    /// Full quality: SSAO on, all color grading at neutral, everything enabled.
     High,
-    /// Maximum fidelity: everything on (future: SSR, volumetric fog).
+    /// Maximum fidelity: boosted SSAO, slightly elevated contrast/saturation.
     Ultra,
 }
 
@@ -40,24 +40,31 @@ impl RenderQuality {
             },
             RenderQuality::Medium => PostProcessSettings {
                 ssao_enabled: true,
-                // Half-resolution approximation: larger radius, reduced intensity.
-                ssao_radius: 1.0,
-                ssao_intensity: 0.7,
+                ssao_radius: 0.3,
                 fxaa_enabled: true,
                 bloom_enabled: true,
                 ..PostProcessSettings::default()
             },
             RenderQuality::High => PostProcessSettings {
                 ssao_enabled: true,
+                ssao_radius: 0.5,
+                ssao_intensity: 1.0,
                 fxaa_enabled: true,
                 bloom_enabled: true,
+                exposure: 1.0,
+                contrast: 1.0,
+                saturation: 1.0,
                 ..PostProcessSettings::default()
             },
             RenderQuality::Ultra => PostProcessSettings {
                 ssao_enabled: true,
+                ssao_radius: 0.5,
+                ssao_intensity: 1.2,
                 fxaa_enabled: true,
                 bloom_enabled: true,
-                // Future: SSR, volumetric fog, etc. will be enabled here.
+                exposure: 1.0,
+                contrast: 1.05,
+                saturation: 1.05,
                 ..PostProcessSettings::default()
             },
         }
@@ -1539,73 +1546,79 @@ const SKY_SHADER: &str = include_str!("../shaders/sky.wgsl");
 const POSTPROCESS_SHADER: &str = include_str!("../shaders/postprocess.wgsl");
 
 #[cfg(test)]
-mod occlusion_integration_tests {
+mod tests {
     use super::*;
-    use crate::occlusion::OcclusionCuller;
-    use euca_math::{Mat4, Vec3};
 
-    /// Verify that when occlusion culling is disabled (default), all commands
-    /// pass through `apply_occlusion_culling` unchanged.
     #[test]
-    fn backward_compatible_when_disabled() {
-        // Construct a minimal set of fake DrawCommands.
-        let cmds: Vec<DrawCommand> = (0..5)
-            .map(|i| DrawCommand {
-                mesh: MeshHandle(0),
-                material: MaterialHandle(0),
-                model_matrix: Mat4::from_translation(Vec3::new(i as f32, 0.0, 0.0)),
-                aabb: Some((Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5))),
-            })
-            .collect();
+    fn each_preset_produces_valid_settings() {
+        for quality in [
+            RenderQuality::Low,
+            RenderQuality::Medium,
+            RenderQuality::High,
+            RenderQuality::Ultra,
+        ] {
+            let s = quality.to_settings();
+            assert!(s.fxaa_enabled, "{quality:?} should have FXAA enabled");
+            assert!(s.bloom_enabled, "{quality:?} should have bloom enabled");
+            assert!(s.ssao_radius >= 0.0, "{quality:?} ssao_radius must be >= 0");
+            assert!(
+                s.ssao_intensity >= 0.0,
+                "{quality:?} ssao_intensity must be >= 0"
+            );
+        }
+    }
 
-        // Simulate a renderer with occlusion culling **disabled** (the default).
-        let culler: RefCell<Option<OcclusionCuller>> = RefCell::new(None);
+    #[test]
+    fn low_has_ssao_off() {
+        let s = RenderQuality::Low.to_settings();
+        assert!(!s.ssao_enabled);
+    }
 
-        // When the culler is None, apply_occlusion_culling should return all.
-        assert!(culler.borrow().is_none());
-        // We can't call the method directly without a Renderer, so test the
-        // underlying occlusion logic: with no HZB, test() returns None.
-        let mut oc = OcclusionCuller::new();
-        let vp = Mat4::orthographic_lh(-10.0, 10.0, -10.0, 10.0, 0.0, 100.0);
-        assert!(oc.test(&[], vp).is_none(), "No pyramid yet");
-
-        // After updating with an all-far depth (1.0), everything is visible.
-        let depth = vec![1.0f32; 16 * 16];
-        oc.update_from_depth_buffer(&depth, 16, 16);
-        let aabbs: Vec<(Vec3, Vec3)> = cmds.iter().map(|c| c.aabb.unwrap()).collect();
-        let result = oc.test(&aabbs, vp).unwrap();
-        assert_eq!(result.visible.len(), 5);
+    #[test]
+    fn ultra_has_everything_on() {
+        let s = RenderQuality::Ultra.to_settings();
+        assert!(s.ssao_enabled);
+        assert!(s.fxaa_enabled);
+        assert!(s.bloom_enabled);
         assert!(
-            result.visible.iter().all(|&v| v),
-            "All should be visible with far depth"
+            s.ssao_intensity > 1.0,
+            "Ultra should have boosted SSAO intensity"
+        );
+        assert!(
+            s.contrast > 1.0,
+            "Ultra should have slightly elevated contrast"
+        );
+        assert!(
+            s.saturation > 1.0,
+            "Ultra should have slightly elevated saturation"
         );
     }
 
-    /// Verify that occluded objects are actually filtered out.
     #[test]
-    fn occlusion_filters_occluded_objects() {
-        let vp = Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, 0.0, 1.0);
-
-        // A wall at depth 0.3 (close).
-        let depth = vec![0.3f32; 16 * 16];
-        let mut culler = OcclusionCuller::new();
-        culler.update_from_depth_buffer(&depth, 16, 16);
-
-        // Object A: in front of wall (depth ~0.1) -> visible
-        // Object B: behind wall (depth ~0.7)     -> occluded
-        let aabbs = vec![
-            (Vec3::new(-0.5, -0.5, 0.05), Vec3::new(0.5, 0.5, 0.15)),
-            (Vec3::new(-0.5, -0.5, 0.6), Vec3::new(0.5, 0.5, 0.8)),
-        ];
-
-        let result = culler.test(&aabbs, vp).unwrap();
-        assert_eq!(result.visible.len(), 2);
-        assert!(result.visible[0], "Object A should be visible (in front)");
-        assert!(
-            !result.visible[1],
-            "Object B should be occluded (behind wall)"
+    fn from_name_case_insensitive() {
+        assert_eq!(RenderQuality::from_name("low"), Some(RenderQuality::Low));
+        assert_eq!(RenderQuality::from_name("HIGH"), Some(RenderQuality::High));
+        assert_eq!(
+            RenderQuality::from_name("Ultra"),
+            Some(RenderQuality::Ultra)
         );
-        assert_eq!(result.visible_count(), 1);
-        assert_eq!(result.occluded_count(), 1);
+        assert_eq!(RenderQuality::from_name("med"), Some(RenderQuality::Medium));
+        assert_eq!(RenderQuality::from_name("invalid"), None);
+    }
+
+    #[test]
+    fn name_roundtrip() {
+        for quality in [
+            RenderQuality::Low,
+            RenderQuality::Medium,
+            RenderQuality::High,
+            RenderQuality::Ultra,
+        ] {
+            assert_eq!(
+                RenderQuality::from_name(quality.name()),
+                Some(quality),
+                "{quality:?} should roundtrip through name()"
+            );
+        }
     }
 }

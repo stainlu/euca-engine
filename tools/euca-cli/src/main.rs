@@ -881,6 +881,12 @@ enum PostprocessCommands {
         #[arg(long)]
         saturation: Option<f32>,
     },
+    /// Apply a named quality preset (low, medium, high, ultra)
+    Preset {
+        /// Quality level: low, medium, high, ultra
+        #[arg(value_parser = ["low", "medium", "high", "ultra"])]
+        quality: String,
+    },
 }
 
 // ── Helpers ──
@@ -1828,6 +1834,14 @@ fn main() {
                 }
                 let resp = client
                     .post(format!("{server}/postprocess/settings"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            PostprocessCommands::Preset { quality } => {
+                let body = serde_json::json!({ "quality": quality });
+                let resp = client
+                    .post(format!("{server}/postprocess/preset"))
                     .json(&body)
                     .send();
                 handle_response(resp)

@@ -92,6 +92,7 @@ impl AgentServer {
             .route("/material/set", post(routes::material_set))
             .route("/postprocess/settings", get(routes::postprocess_get))
             .route("/postprocess/settings", post(routes::postprocess_set))
+            .route("/postprocess/preset", post(routes::postprocess_preset))
             .route("/diagnose", get(routes::diagnose))
             .route("/events", get(routes::events_list))
             .route("/ability/use", post(routes::ability_use))
