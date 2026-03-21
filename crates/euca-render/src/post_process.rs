@@ -52,7 +52,7 @@ pub struct PostProcessSettings {
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
-            ssao_enabled: true,
+            ssao_enabled: false,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
             ssr_enabled: false,
@@ -577,9 +577,6 @@ impl PostProcessStack {
     }
 
     /// Execute the full post-processing chain.
-    ///
-    /// Assumes the scene has been rendered with MSAA resolved into `self.ping_view()`,
-    /// and if SSAO is enabled, `self.depth_resolve_view` contains the resolved depth.
     #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &self,
@@ -1417,9 +1414,10 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_have_ssao_fxaa_bloom_enabled() {
+    fn default_settings_ssao_off_fxaa_bloom_on() {
         let settings = PostProcessSettings::default();
-        assert!(settings.ssao_enabled);
+        // SSAO disabled: requires depth prepass (MSAA depth can't be resolved to R32Float)
+        assert!(!settings.ssao_enabled);
         assert!(settings.fxaa_enabled);
         assert!(settings.bloom_enabled);
     }
@@ -1434,7 +1432,7 @@ mod tests {
     #[test]
     fn uniforms_encode_correctly() {
         let settings = PostProcessSettings {
-            ssao_enabled: true,
+            ssao_enabled: false,
             ssao_radius: 0.75,
             ssao_intensity: 1.5,
             fxaa_enabled: true,

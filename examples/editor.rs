@@ -677,17 +677,22 @@ impl EditorApp {
                 self.cam_target =
                     self.cam_target + up * (self.mouse_delta[1] * 0.01 * self.cam_distance * 0.1);
             }
-            let cam = world.resource_mut::<Camera>().unwrap();
-            cam.eye = Vec3::new(
-                self.cam_target.x + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
-                self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
-                self.cam_target.z + self.cam_yaw.cos() * self.cam_pitch.cos() * self.cam_distance,
-            );
-            cam.target = self.cam_target;
+            // Only apply editor camera when NOT playing (game camera takes over in play mode)
+            if !self.editor_state.playing {
+                let cam = world.resource_mut::<Camera>().unwrap();
+                cam.eye = Vec3::new(
+                    self.cam_target.x
+                        + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
+                    self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
+                    self.cam_target.z
+                        + self.cam_yaw.cos() * self.cam_pitch.cos() * self.cam_distance,
+                );
+                cam.target = self.cam_target;
+            }
         }
         self.mouse_delta = [0.0, 0.0];
 
-        // MOBA camera: follow player hero (overrides editor camera when playing)
+        // MOBA camera: follow player hero during play
         if self.editor_state.playing {
             euca_gameplay::camera::moba_camera_system(world);
         }
@@ -713,13 +718,16 @@ impl EditorApp {
             profiler_begin(p, "render_collect");
         }
         let mut draw_commands = collect_draw_commands(world);
-        append_selection_outline(
-            world,
-            self.editor_state.selected_entity,
-            self.outline_material,
-            &mut draw_commands,
-        );
-        append_gizmo_commands(world, &self.editor_state, &mut draw_commands);
+        // Only show editor overlays (gizmos, selection outline) when NOT playing
+        if !self.editor_state.playing {
+            append_selection_outline(
+                world,
+                self.editor_state.selected_entity,
+                self.outline_material,
+                &mut draw_commands,
+            );
+            append_gizmo_commands(world, &self.editor_state, &mut draw_commands);
+        }
         append_foliage_instances(world, gpu, &mut draw_commands);
 
         let light = {
@@ -764,13 +772,22 @@ impl EditorApp {
 
         let mut spawn_request = None;
         let mut toolbar_action = None;
+        let playing = self.editor_state.playing;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             let dt = world.resource::<Time>().map(|t| t.delta).unwrap_or(0.0);
+            // Always show toolbar (Play/Pause/Stop)
             toolbar_action = toolbar_panel(ctx, &mut self.editor_state, world, dt);
-            spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
-            inspector_panel(ctx, &mut self.editor_state, world);
-            draw_health_bars(ctx, world, aspect);
-            draw_hud_overlay(ctx, world);
+            if playing {
+                // Play mode: only game HUD, no editor panels
+                draw_health_bars(ctx, world, aspect);
+                draw_hud_overlay(ctx, world);
+            } else {
+                // Editor mode: full development UI
+                spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
+                inspector_panel(ctx, &mut self.editor_state, world);
+                draw_health_bars(ctx, world, aspect);
+                draw_hud_overlay(ctx, world);
+            }
         });
 
         if let Some(ctrl) = world.resource::<EngineControl>() {
