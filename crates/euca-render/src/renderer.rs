@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use crate::buffer::{BufferKind, SmartBuffer};
 use crate::camera::Camera;
 use crate::gpu::GpuContext;
@@ -231,11 +229,11 @@ pub struct Renderer {
     /// Settings for volumetric fog (density, scattering, etc.).
     volumetric_fog_settings: VolumetricFogSettings,
     /// Optional HZB occlusion culler. Uses previous frame's depth.
-    occlusion_culler: RefCell<Option<OcclusionCuller>>,
+    occlusion_culler: Option<OcclusionCuller>,
     /// Previous frame's depth buffer for occlusion culling.
-    prev_depth_buffer: RefCell<Vec<f32>>,
+    prev_depth_buffer: Vec<f32>,
     /// Dimensions of the previous depth buffer.
-    prev_depth_dims: RefCell<(u32, u32)>,
+    prev_depth_dims: (u32, u32),
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -764,9 +762,9 @@ impl Renderer {
             post_process_settings: PostProcessSettings::default(),
             volumetric_fog_pass: None,
             volumetric_fog_settings: VolumetricFogSettings::default(),
-            occlusion_culler: RefCell::new(None),
-            prev_depth_buffer: RefCell::new(Vec::new()),
-            prev_depth_dims: RefCell::new((0, 0)),
+            occlusion_culler: None,
+            prev_depth_buffer: Vec::new(),
+            prev_depth_dims: (0, 0),
         }
     }
 
@@ -950,19 +948,19 @@ impl Renderer {
 
     /// Enable CPU-side HZB occlusion culling.
     pub fn enable_occlusion_culling(&mut self) {
-        *self.occlusion_culler.borrow_mut() = Some(OcclusionCuller::new());
+        self.occlusion_culler = Some(OcclusionCuller::new());
     }
 
     /// Returns true if HZB occlusion culling is enabled.
     pub fn occlusion_culling_enabled(&self) -> bool {
-        self.occlusion_culler.borrow().is_some()
+        self.occlusion_culler.is_some()
     }
 
     /// Feed a depth buffer for the occlusion system to use next frame.
-    pub fn update_prev_depth_buffer(&self, depth: Vec<f32>, width: u32, height: u32) {
+    pub fn update_prev_depth_buffer(&mut self, depth: Vec<f32>, width: u32, height: u32) {
         debug_assert_eq!(depth.len(), (width as usize) * (height as usize));
-        *self.prev_depth_buffer.borrow_mut() = depth;
-        *self.prev_depth_dims.borrow_mut() = (width, height);
+        self.prev_depth_buffer = depth;
+        self.prev_depth_dims = (width, height);
     }
 
     /// Update the post-process settings that control SSAO, FXAA, bloom, and
@@ -1139,7 +1137,7 @@ impl Renderer {
     }
 
     pub fn draw(
-        &self,
+        &mut self,
         gpu: &GpuContext,
         camera: &Camera,
         light: &DirectionalLight,
@@ -1151,7 +1149,7 @@ impl Renderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn draw_with_lights(
-        &self,
+        &mut self,
         gpu: &GpuContext,
         camera: &Camera,
         light: &DirectionalLight,
@@ -1193,7 +1191,7 @@ impl Renderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view(
-        &self,
+        &mut self,
         gpu: &GpuContext,
         camera: &Camera,
         light: &DirectionalLight,
@@ -1217,7 +1215,7 @@ impl Renderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view_with_lights(
-        &self,
+        &mut self,
         gpu: &GpuContext,
         camera: &Camera,
         light: &DirectionalLight,
@@ -1477,26 +1475,23 @@ impl Renderer {
 
     /// Filter out occluded draw commands using the HZB from the previous frame.
     fn apply_occlusion_culling<'a>(
-        &self,
+        &mut self,
         commands: &[&'a DrawCommand],
         view_proj: Mat4,
     ) -> Vec<&'a DrawCommand> {
-        if self.occlusion_culler.borrow().is_none() {
+        if self.occlusion_culler.is_none() {
             return commands.to_vec();
         }
-        let depth_buf = self.prev_depth_buffer.borrow();
-        let (w, h) = *self.prev_depth_dims.borrow();
-        if depth_buf.is_empty() || w == 0 || h == 0 {
+        let (w, h) = self.prev_depth_dims;
+        if self.prev_depth_buffer.is_empty() || w == 0 || h == 0 {
             return commands.to_vec();
         }
         self.occlusion_culler
-            .borrow_mut()
             .as_mut()
             .expect("occlusion culler initialized in Renderer::new")
-            .update_from_depth_buffer(&depth_buf, w, h);
-        drop(depth_buf);
-        let culler_ref = self.occlusion_culler.borrow();
-        let culler = culler_ref
+            .update_from_depth_buffer(&self.prev_depth_buffer, w, h);
+        let culler = self
+            .occlusion_culler
             .as_ref()
             .expect("occlusion culler initialized in Renderer::new");
         let mut aabbs = Vec::new();

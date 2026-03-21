@@ -199,7 +199,7 @@ impl PhysicsDemoApp {
 
         // Render
         let gpu = self.gpu.as_ref().unwrap();
-        let renderer = self.renderer.as_ref().unwrap();
+        let renderer = self.renderer.as_mut().unwrap();
         renderer.draw(gpu, &camera, &light, &ambient, &draw_commands);
     }
 }

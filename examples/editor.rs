@@ -589,7 +589,7 @@ impl EditorApp {
             if let Some(p) = world.resource_mut::<Profiler>() {
                 profiler_begin(p, "render_draw");
             }
-            let renderer = self.renderer.as_ref().unwrap();
+            let renderer = self.renderer.as_mut().unwrap();
             renderer.render_to_view(
                 gpu,
                 &camera,
@@ -957,7 +957,7 @@ impl EditorApp {
             let camera = w.resource::<Camera>().unwrap().clone();
             drop(read_pool);
 
-            let renderer = self.renderer.as_ref().unwrap();
+            let renderer = self.renderer.as_mut().unwrap();
             capture_screenshot(gpu, renderer, &camera, &light, &ambient, &draw_cmds, tx);
         }
 
@@ -1356,7 +1356,7 @@ impl EditorApp {
 /// macOS/Metal surface textures don't support readback.
 fn capture_screenshot(
     gpu: &GpuContext,
-    renderer: &Renderer,
+    renderer: &mut Renderer,
     camera: &Camera,
     light: &DirectionalLight,
     ambient: &AmbientLight,

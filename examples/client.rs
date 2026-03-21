@@ -132,12 +132,12 @@ impl ClientApp {
         let _ = transport.send_packet(&header, &payload, self.server_addr);
     }
 
-    fn render(&self) {
+    fn render(&mut self) {
         let gpu = match &self.gpu {
             Some(g) => g,
             None => return,
         };
-        let renderer = match &self.renderer {
+        let renderer = match &mut self.renderer {
             Some(r) => r,
             None => return,
         };
