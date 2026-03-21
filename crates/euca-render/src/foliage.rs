@@ -255,6 +255,19 @@ pub fn scatter_foliage(layer: &mut FoliageLayer, area_min: Vec3, area_max: Vec3,
 }
 
 // ---------------------------------------------------------------------------
+// World resource wrapper
+// ---------------------------------------------------------------------------
+
+/// Collection of foliage layers stored as a world resource.
+///
+/// The editor and agent routes insert/read this resource to manage foliage.
+#[derive(Clone, Debug, Default)]
+pub struct FoliageLayers {
+    /// All active foliage layers.
+    pub layers: Vec<FoliageLayer>,
+}
+
+// ---------------------------------------------------------------------------
 // Foliage renderer
 // ---------------------------------------------------------------------------
 

@@ -119,6 +119,11 @@ enum Commands {
         #[command(subcommand)]
         command: TerrainCommands,
     },
+    /// Foliage: scatter instanced vegetation
+    Foliage {
+        #[command(subcommand)]
+        command: FoliageCommands,
+    },
     /// Prefab: spawn registered prefabs
     Prefab {
         #[command(subcommand)]
@@ -807,6 +812,33 @@ enum TerrainCommands {
         amount: f32,
     },
 }
+#[derive(Subcommand)]
+enum FoliageCommands {
+    /// Scatter foliage instances across an area
+    Scatter {
+        /// Target density (instances per square unit)
+        #[arg(long, default_value = "0.5")]
+        density: f32,
+        /// Scatter area as "min_x,min_z,max_x,max_z"
+        #[arg(long, default_value = "-20,-20,20,20")]
+        area: String,
+        /// Mesh name: cube or sphere
+        #[arg(long, default_value = "cube")]
+        mesh: String,
+        /// Minimum scale factor
+        #[arg(long, default_value = "0.8")]
+        min_scale: f32,
+        /// Maximum scale factor
+        #[arg(long, default_value = "1.2")]
+        max_scale: f32,
+        /// Maximum render distance
+        #[arg(long, default_value = "100")]
+        max_distance: f32,
+    },
+    /// List all foliage layers
+    List,
+}
+
 #[derive(Subcommand)]
 enum PrefabCommands {
     Spawn {
@@ -1672,6 +1704,44 @@ fn main() {
                 amount,
             } => {
                 let resp = client.post(format!("{server}/terrain/edit")).json(&serde_json::json!({"op": op, "x": x, "z": z, "radius": radius, "amount": amount})).send();
+                handle_response(resp)
+            }
+        },
+        Commands::Foliage { command } => match command {
+            FoliageCommands::Scatter {
+                density,
+                area,
+                mesh,
+                min_scale,
+                max_scale,
+                max_distance,
+            } => {
+                let parts: Vec<f32> = area
+                    .split(',')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect();
+                let (area_min, area_max) = if parts.len() == 4 {
+                    ([parts[0], 0.0, parts[1]], [parts[2], 0.0, parts[3]])
+                } else {
+                    ([-20.0, 0.0, -20.0], [20.0, 0.0, 20.0])
+                };
+                let body = serde_json::json!({
+                    "mesh_name": mesh,
+                    "density": density,
+                    "area_min": area_min,
+                    "area_max": area_max,
+                    "min_scale": min_scale,
+                    "max_scale": max_scale,
+                    "max_distance": max_distance,
+                });
+                let resp = client
+                    .post(format!("{server}/foliage/scatter"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            FoliageCommands::List => {
+                let resp = client.get(format!("{server}/foliage/list")).send();
                 handle_response(resp)
             }
         },
