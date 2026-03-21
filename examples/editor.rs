@@ -250,11 +250,13 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
         .collect()
 }
 
-/// Append a selection outline (1.06x scale, orange material) for the selected entity.
+/// Append a selection outline (slightly scaled, orange material) for the selected entity.
+/// Skips the outline for the ground plane mesh to avoid z-fighting on flat geometry.
 fn append_selection_outline(
     world: &World,
     selected: Option<u32>,
     outline_mat: Option<MaterialHandle>,
+    plane_mesh: Option<MeshHandle>,
     cmds: &mut Vec<DrawCommand>,
 ) {
     let (Some(sel_idx), Some(mat)) = (selected, outline_mat) else {
@@ -269,10 +271,17 @@ fn append_selection_outline(
             world.get::<GlobalTransform>(entity),
             world.get::<MeshRenderer>(entity),
         ) {
+            // Skip outline for ground plane — flat geometry causes z-fighting.
+            if let Some(pm) = plane_mesh {
+                if mr.mesh == pm {
+                    break;
+                }
+            }
             let max_scale = gt.0.scale.x.max(gt.0.scale.y).max(gt.0.scale.z);
             if max_scale < 5.0 {
                 let mut t = gt.0;
-                t.scale = t.scale * 1.06;
+                t.scale = t.scale * 1.03;
+                t.translation.y += 0.002;
                 cmds.push(DrawCommand {
                     mesh: mr.mesh,
                     material: mat,
@@ -493,6 +502,12 @@ struct EditorApp {
     ctrl_held: bool,
     shift_held: bool,
     _tokio_rt: Option<tokio::runtime::Runtime>,
+    /// Path to a level JSON file loaded when Play is pressed.
+    level_path: Option<String>,
+    /// Tracks previous frame's play state to detect play-start transitions.
+    was_playing_last_frame: bool,
+    /// Ground plane mesh handle — outlines are skipped for this mesh.
+    plane_mesh: Option<MeshHandle>,
 }
 
 impl EditorApp {
@@ -531,7 +546,28 @@ impl EditorApp {
             ctrl_held: false,
             shift_held: false,
             _tokio_rt: None,
+            level_path: Self::detect_level_file(),
+            was_playing_last_frame: false,
+            plane_mesh: None,
         }
+    }
+
+    /// Auto-detect a level file in the current directory.
+    /// Looks for `level.json` or any `*.level.json` file.
+    fn detect_level_file() -> Option<String> {
+        if std::path::Path::new("level.json").exists() {
+            return Some("level.json".to_string());
+        }
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.ends_with(".level.json") {
+                    return Some(name.to_string());
+                }
+            }
+        }
+        None
     }
 
     fn setup_scene(&mut self) {
@@ -543,6 +579,7 @@ impl EditorApp {
         let plane = renderer.upload_mesh(gpu, &Mesh::plane(20.0));
         self.cube_mesh = Some(cube);
         self.sphere_mesh = Some(sphere);
+        self.plane_mesh = Some(plane);
         self.editor_state.gizmo = euca_editor::gizmo::init_gizmo(renderer, gpu, cube);
 
         let grid_tex = renderer.checkerboard_texture(gpu, 512, 32);
@@ -647,6 +684,41 @@ impl EditorApp {
             }
         }
 
+        // Detect play-start transition: load level file and auto-follow hero.
+        if self.editor_state.playing && !self.was_playing_last_frame {
+            // Load level file if one is configured
+            if let Some(ref path) = self.level_path {
+                match std::fs::read_to_string(path) {
+                    Ok(data) => match serde_json::from_str::<serde_json::Value>(&data) {
+                        Ok(level) => {
+                            let count = euca_agent::load_level_into_world(world, &level);
+                            log::info!("Level loaded: {count} entities from {path}");
+                        }
+                        Err(e) => log::error!("Invalid level JSON in {path}: {e}"),
+                    },
+                    Err(e) => log::error!("Cannot read level file {path}: {e}"),
+                }
+            }
+            // Auto-detect PlayerHero and set camera follow
+            let hero = {
+                let q = Query::<(
+                    euca_ecs::Entity,
+                    &euca_gameplay::player::PlayerHero,
+                )>::new(world);
+                q.iter().map(|(e, _)| e).next()
+            };
+            if let Some(hero) = hero {
+                if let Some(cam) = world.resource_mut::<euca_gameplay::camera::MobaCamera>() {
+                    if cam.follow_entity.is_none() {
+                        cam.follow_entity = Some(hero);
+                    }
+                }
+            }
+            // Clear editor selection for clean play mode
+            self.editor_state.selected_entity = None;
+        }
+        self.was_playing_last_frame = self.editor_state.playing;
+
         if self.editor_state.should_tick() {
             if let Some(input) = world.resource_mut::<euca_input::InputState>() {
                 input.begin_frame();
@@ -677,22 +749,17 @@ impl EditorApp {
                 self.cam_target =
                     self.cam_target + up * (self.mouse_delta[1] * 0.01 * self.cam_distance * 0.1);
             }
-            // Only apply editor camera when NOT playing (game camera takes over in play mode)
-            if !self.editor_state.playing {
-                let cam = world.resource_mut::<Camera>().unwrap();
-                cam.eye = Vec3::new(
-                    self.cam_target.x
-                        + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
-                    self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
-                    self.cam_target.z
-                        + self.cam_yaw.cos() * self.cam_pitch.cos() * self.cam_distance,
-                );
-                cam.target = self.cam_target;
-            }
+            let cam = world.resource_mut::<Camera>().unwrap();
+            cam.eye = Vec3::new(
+                self.cam_target.x + self.cam_yaw.sin() * self.cam_pitch.cos() * self.cam_distance,
+                self.cam_target.y + self.cam_pitch.sin() * self.cam_distance,
+                self.cam_target.z + self.cam_yaw.cos() * self.cam_pitch.cos() * self.cam_distance,
+            );
+            cam.target = self.cam_target;
         }
         self.mouse_delta = [0.0, 0.0];
 
-        // MOBA camera: follow player hero during play
+        // MOBA camera: follow player hero (overrides editor camera when playing)
         if self.editor_state.playing {
             euca_gameplay::camera::moba_camera_system(world);
         }
@@ -718,12 +785,12 @@ impl EditorApp {
             profiler_begin(p, "render_collect");
         }
         let mut draw_commands = collect_draw_commands(world);
-        // Only show editor overlays (gizmos, selection outline) when NOT playing
         if !self.editor_state.playing {
             append_selection_outline(
                 world,
                 self.editor_state.selected_entity,
                 self.outline_material,
+                self.plane_mesh,
                 &mut draw_commands,
             );
             append_gizmo_commands(world, &self.editor_state, &mut draw_commands);
@@ -775,19 +842,13 @@ impl EditorApp {
         let playing = self.editor_state.playing;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             let dt = world.resource::<Time>().map(|t| t.delta).unwrap_or(0.0);
-            // Always show toolbar (Play/Pause/Stop)
             toolbar_action = toolbar_panel(ctx, &mut self.editor_state, world, dt);
-            if playing {
-                // Play mode: only game HUD, no editor panels
-                draw_health_bars(ctx, world, aspect);
-                draw_hud_overlay(ctx, world);
-            } else {
-                // Editor mode: full development UI
+            if !playing {
                 spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
                 inspector_panel(ctx, &mut self.editor_state, world);
-                draw_health_bars(ctx, world, aspect);
-                draw_hud_overlay(ctx, world);
             }
+            draw_health_bars(ctx, world, aspect);
+            draw_hud_overlay(ctx, world);
         });
 
         if let Some(ctrl) = world.resource::<EngineControl>() {
@@ -1126,27 +1187,31 @@ impl ApplicationHandler for EditorApp {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let pressed = state == ElementState::Pressed;
-                match button {
-                    winit::event::MouseButton::Left => {
-                        if pressed {
-                            if !self.try_begin_gizmo_drag() {
-                                self.pick_entity_at_cursor();
+                if !self.editor_state.playing {
+                    match button {
+                        winit::event::MouseButton::Left => {
+                            if pressed {
+                                if !self.try_begin_gizmo_drag() {
+                                    self.pick_entity_at_cursor();
+                                }
+                            } else {
+                                self.end_gizmo_drag();
                             }
-                        } else {
-                            self.end_gizmo_drag();
                         }
+                        winit::event::MouseButton::Right => self.right_mouse_down = pressed,
+                        winit::event::MouseButton::Middle => self.middle_mouse_down = pressed,
+                        _ => {}
                     }
-                    winit::event::MouseButton::Right => self.right_mouse_down = pressed,
-                    winit::event::MouseButton::Middle => self.middle_mouse_down = pressed,
-                    _ => {}
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let scroll = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.1,
-                };
-                self.cam_distance = (self.cam_distance - scroll * 0.5).clamp(1.0, 50.0);
+                if !self.editor_state.playing {
+                    let scroll = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.1,
+                    };
+                    self.cam_distance = (self.cam_distance - scroll * 0.5).clamp(1.0, 50.0);
+                }
             }
             _ => {}
         }

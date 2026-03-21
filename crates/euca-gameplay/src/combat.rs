@@ -11,8 +11,8 @@ use euca_physics::Velocity;
 use euca_scene::{LocalTransform, SpatialIndex};
 
 use crate::health::{DamageEvent, Health};
-use crate::player::PlayerHero;
 use crate::teams::Team;
+use crate::player::PlayerHero;
 
 /// Entity that moves in a direction and damages what it hits.
 #[derive(Clone, Debug)]

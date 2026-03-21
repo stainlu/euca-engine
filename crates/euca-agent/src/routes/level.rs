@@ -153,6 +153,100 @@ pub(crate) fn spawn_entity(w: &mut euca_ecs::World, req: &SpawnRequest) -> Spawn
     }
 }
 
+/// Load a level definition into the world, spawning entities, rules, and
+/// configuring camera and game state.
+///
+/// `level` should be a JSON value matching the level file format:
+/// ```json
+/// { "entities": [...], "rules": [...], "camera": {...}, "game": {...} }
+/// ```
+///
+/// Returns the number of entities created.
+pub fn load_level_into_world(w: &mut euca_ecs::World, level: &serde_json::Value) -> u32 {
+    let entity_defs: Vec<SpawnRequest> = level
+        .get("entities")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
+    let mut count = 0u32;
+    for entity_def in &entity_defs {
+        spawn_entity(w, entity_def);
+        count += 1;
+    }
+
+    if let Some(rules) = level.get("rules")
+        && let Some(rules_arr) = rules.as_array()
+    {
+        for rule_val in rules_arr {
+            create_rule_from_value(w, rule_val);
+        }
+    }
+
+    if let Some(cam) = level.get("camera")
+        && let Some(cam_res) = w.resource_mut::<euca_render::Camera>()
+    {
+        if let Some(eye) = cam.get("eye").and_then(|v| v.as_array())
+            && eye.len() == 3
+        {
+            cam_res.eye = Vec3::new(
+                eye[0].as_f64().unwrap_or(0.0) as f32,
+                eye[1].as_f64().unwrap_or(0.0) as f32,
+                eye[2].as_f64().unwrap_or(0.0) as f32,
+            );
+        }
+        if let Some(target) = cam.get("target").and_then(|v| v.as_array())
+            && target.len() == 3
+        {
+            cam_res.target = Vec3::new(
+                target[0].as_f64().unwrap_or(0.0) as f32,
+                target[1].as_f64().unwrap_or(0.0) as f32,
+                target[2].as_f64().unwrap_or(0.0) as f32,
+            );
+        }
+        if let Some(fov) = cam.get("fov_y").and_then(|v| v.as_f64()) {
+            cam_res.fov_y = fov as f32;
+        }
+    }
+
+    if let Some(game) = level.get("game") {
+        let mode = game
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("deathmatch")
+            .to_string();
+        let score_limit = game
+            .get("score_limit")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(10) as i32;
+        let time_limit = game
+            .get("time_limit")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(300.0) as f32;
+        let respawn_delay = game
+            .get("respawn_delay")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(3.0) as f32;
+
+        let config = euca_gameplay::MatchConfig {
+            mode,
+            score_limit,
+            time_limit,
+            respawn_delay,
+        };
+        let mut state = euca_gameplay::GameState::new(config);
+        if game
+            .get("auto_start")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+        {
+            state.start();
+        }
+        w.insert_resource(state);
+    }
+
+    count
+}
+
 /// POST /level/load — load a level definition from a JSON file.
 pub async fn level_load(
     State(world): State<SharedWorld>,
@@ -178,94 +272,7 @@ pub async fn level_load(
         }
     };
 
-    let entity_defs: Vec<SpawnRequest> = level
-        .get("entities")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
-
-    let rules_value = level.get("rules").cloned();
-    let camera_value = level.get("camera").cloned();
-    let game_value = level.get("game").cloned();
-
-    let entities_created = world.with(|w, _| {
-        let mut count = 0u32;
-        for entity_def in &entity_defs {
-            spawn_entity(w, entity_def);
-            count += 1;
-        }
-
-        if let Some(rules) = &rules_value
-            && let Some(rules_arr) = rules.as_array()
-        {
-            for rule_val in rules_arr {
-                create_rule_from_value(w, rule_val);
-            }
-        }
-
-        if let Some(cam) = &camera_value
-            && let Some(cam_res) = w.resource_mut::<euca_render::Camera>()
-        {
-            if let Some(eye) = cam.get("eye").and_then(|v| v.as_array())
-                && eye.len() == 3
-            {
-                cam_res.eye = Vec3::new(
-                    eye[0].as_f64().unwrap_or(0.0) as f32,
-                    eye[1].as_f64().unwrap_or(0.0) as f32,
-                    eye[2].as_f64().unwrap_or(0.0) as f32,
-                );
-            }
-            if let Some(target) = cam.get("target").and_then(|v| v.as_array())
-                && target.len() == 3
-            {
-                cam_res.target = Vec3::new(
-                    target[0].as_f64().unwrap_or(0.0) as f32,
-                    target[1].as_f64().unwrap_or(0.0) as f32,
-                    target[2].as_f64().unwrap_or(0.0) as f32,
-                );
-            }
-            if let Some(fov) = cam.get("fov_y").and_then(|v| v.as_f64()) {
-                cam_res.fov_y = fov as f32;
-            }
-        }
-
-        if let Some(game) = &game_value {
-            let mode = game
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .unwrap_or("deathmatch")
-                .to_string();
-            let score_limit = game
-                .get("score_limit")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(10) as i32;
-            let time_limit = game
-                .get("time_limit")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(300.0) as f32;
-            let respawn_delay = game
-                .get("respawn_delay")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(3.0) as f32;
-
-            let config = euca_gameplay::MatchConfig {
-                mode,
-                score_limit,
-                time_limit,
-                respawn_delay,
-            };
-            let mut state = euca_gameplay::GameState::new(config);
-            if game
-                .get("auto_start")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true)
-            {
-                state.start();
-            }
-            w.insert_resource(state);
-        }
-
-        count
-    });
+    let entities_created = world.with(|w, _| load_level_into_world(w, &level));
 
     Json(serde_json::json!({
         "ok": true,
