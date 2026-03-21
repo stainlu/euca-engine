@@ -58,6 +58,11 @@ fn setup_default_resources(world: &mut World) {
     world.insert_resource(LodSettings::default());
     world.insert_resource(PostProcessSettings::default());
     world.insert_resource(Profiler::default());
+    world.insert_resource(euca_gameplay::camera::MobaCamera::default());
+    world.insert_resource(euca_gameplay::player_input::ViewportSize {
+        width: 1280.0,
+        height: 720.0,
+    });
     // AudioEngine init may fail on headless systems — log and continue
     match euca_audio::AudioEngine::new() {
         Ok(engine) => world.insert_resource(engine),
@@ -142,6 +147,10 @@ fn run_gameplay_systems(world: &mut World, dt: f32) {
     if let Some(p) = world.resource_mut::<Profiler>() {
         profiler_end(p);
     }
+
+    // Player control: process input → commands → movement (before AutoCombat)
+    euca_gameplay::player_input::player_input_system(world);
+    euca_gameplay::player::player_command_system(world, dt);
 
     if let Some(p) = world.resource_mut::<Profiler>() {
         profiler_begin(p, "combat");
@@ -677,6 +686,12 @@ impl EditorApp {
             cam.target = self.cam_target;
         }
         self.mouse_delta = [0.0, 0.0];
+
+        // MOBA camera: follow player hero (overrides editor camera when playing)
+        if self.editor_state.playing {
+            euca_gameplay::camera::moba_camera_system(world);
+        }
+
         lod_select_system(world);
 
         let gpu = self.gpu.as_ref().unwrap();

@@ -12,6 +12,7 @@
 
 pub mod abilities;
 pub mod ai;
+pub mod camera;
 pub mod cleanup;
 pub mod combat;
 pub mod data_table;

@@ -307,6 +307,9 @@ enum EntityCommands {
         /// Spawn point for team (marks as respawn location)
         #[arg(long)]
         spawn_point: Option<u8>,
+        /// Mark as player-controlled hero
+        #[arg(long)]
+        player: bool,
         /// Full JSON body (overrides other flags)
         #[arg(long)]
         json: Option<String>,
@@ -990,6 +993,7 @@ fn build_create_body(
     xp_bounty: Option<u32>,
     role: &Option<String>,
     spawn_point: Option<u8>,
+    player: bool,
 ) -> Value {
     let mut body = serde_json::json!({});
     if let Some(m) = mesh {
@@ -1070,6 +1074,9 @@ fn build_create_body(
     }
     if let Some(sp) = spawn_point {
         body["spawn_point"] = serde_json::json!(sp);
+    }
+    if player {
+        body["player"] = serde_json::json!(true);
     }
     body
 }
@@ -1174,6 +1181,7 @@ fn main() {
                 xp_bounty,
                 role,
                 spawn_point,
+                player,
                 json,
                 dry_run,
             } => {
@@ -1201,6 +1209,7 @@ fn main() {
                         xp_bounty,
                         &role,
                         spawn_point,
+                        player,
                     )
                 };
                 if dry_run {
@@ -1465,6 +1474,7 @@ fn main() {
                     xp_bounty,
                     &role,
                     spawn_point,
+                    false,
                 );
                 body["name"] = serde_json::json!(name);
                 let resp = client
@@ -2017,7 +2027,7 @@ fn main() {
         } => {
             let body = build_create_body(
                 &None, &None, &position, &scale, &physics, &collider, None, None, false, None,
-                None, None, None, &None, &None, None, None, None, &None, None,
+                None, None, None, &None, &None, None, None, None, &None, None, false,
             );
             let resp = client.post(format!("{server}/spawn")).json(&body).send();
             handle_response(resp)

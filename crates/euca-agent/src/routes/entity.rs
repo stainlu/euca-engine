@@ -248,6 +248,17 @@ pub async fn spawn(
         if let Some(sp_team) = req.spawn_point {
             w.insert(entity, euca_gameplay::SpawnPoint { team: sp_team });
         }
+        if req.player.unwrap_or(false) {
+            w.insert(entity, euca_gameplay::player::PlayerHero);
+            w.insert(
+                entity,
+                euca_gameplay::player::PlayerCommandQueue::default(),
+            );
+            // Set camera to follow this hero
+            if let Some(cam) = w.resource_mut::<euca_gameplay::camera::MobaCamera>() {
+                cam.follow_entity = Some(entity);
+            }
+        }
 
         SpawnResponse {
             entity_id: entity.index(),

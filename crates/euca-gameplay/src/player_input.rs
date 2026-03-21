@@ -124,14 +124,17 @@ pub fn player_input_system(world: &mut World) {
     };
 
     // --- Snapshot input state ---
-    let (mouse_pos, right_click, s_pressed, q_pressed, w_pressed, e_pressed, r_pressed) = {
+    let (mouse_pos, move_click, s_pressed, q_pressed, w_pressed, e_pressed, r_pressed) = {
         let input = match world.resource::<InputState>() {
             Some(i) => i,
             None => return,
         };
+        // Support BOTH left-click (Mac trackpad) and right-click (mouse)
+        let left = input.is_just_pressed(&euca_input::InputKey::MouseLeft);
+        let right = input.is_just_pressed(&euca_input::InputKey::MouseRight);
         (
             input.mouse_position,
-            input.is_just_pressed(&euca_input::InputKey::MouseRight),
+            left || right,
             input.is_just_pressed(&euca_input::InputKey::Key("S".into())),
             input.is_just_pressed(&euca_input::InputKey::Key("Q".into())),
             input.is_just_pressed(&euca_input::InputKey::Key("W".into())),
@@ -142,8 +145,8 @@ pub fn player_input_system(world: &mut World) {
 
     let mut commands: Vec<PlayerCommand> = Vec::new();
 
-    // --- Right-click: attack-target or move-to ---
-    if right_click {
+    // --- Click: attack-target or move-to (left or right click) ---
+    if move_click {
         let ray = {
             let camera = world.resource::<Camera>();
             let viewport = world.resource::<ViewportSize>();

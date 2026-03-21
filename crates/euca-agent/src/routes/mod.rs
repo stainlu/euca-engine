@@ -373,6 +373,9 @@ pub struct SpawnRequest {
     /// Spawn point for team (marks this entity as a respawn location)
     #[serde(default)]
     pub spawn_point: Option<u8>,
+    /// Mark this entity as the player-controlled hero
+    #[serde(default)]
+    pub player: Option<bool>,
 }
 
 #[derive(Serialize)]
