@@ -190,8 +190,7 @@ mod tests {
 
     #[test]
     fn sample_clamps_out_of_bounds() {
-        let hm = Heightmap::from_raw(2, 2, vec![0.5, 0.5, 0.5, 0.5])
-            .with_max_height(2.0);
+        let hm = Heightmap::from_raw(2, 2, vec![0.5, 0.5, 0.5, 0.5]).with_max_height(2.0);
         // Negative coordinates should clamp
         assert!((hm.sample(-10.0, -10.0) - 1.0).abs() < 1e-4);
         // Far positive should clamp
@@ -200,7 +199,9 @@ mod tests {
 
     #[test]
     fn normal_on_flat_surface_points_up() {
-        let hm = Heightmap::flat(8, 8).with_cell_size(1.0).with_max_height(10.0);
+        let hm = Heightmap::flat(8, 8)
+            .with_cell_size(1.0)
+            .with_max_height(10.0);
         let n = hm.normal_at(3.0, 3.0);
         // Should be approximately (0, 1, 0).
         assert!((n.x).abs() < 1e-4, "nx = {}", n.x);
@@ -213,16 +214,9 @@ mod tests {
         // A 4x2 heightmap that slopes upward along X (identical rows):
         //   row 0: [0.0, 0.333, 0.666, 1.0]
         //   row 1: [0.0, 0.333, 0.666, 1.0]
-        let hm = Heightmap::from_raw(
-            4,
-            2,
-            vec![
-                0.0, 0.333, 0.666, 1.0,
-                0.0, 0.333, 0.666, 1.0,
-            ],
-        )
-        .with_cell_size(1.0)
-        .with_max_height(3.0);
+        let hm = Heightmap::from_raw(4, 2, vec![0.0, 0.333, 0.666, 1.0, 0.0, 0.333, 0.666, 1.0])
+            .with_cell_size(1.0)
+            .with_max_height(3.0);
         let n = hm.normal_at(1.5, 0.5);
         // Normal should tilt in -X direction (slope goes up in +X).
         assert!(n.x < -0.1, "Expected negative nx on +X slope, got {}", n.x);

@@ -474,9 +474,15 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq)]
-    struct Position { x: f32, y: f32 }
+    struct Position {
+        x: f32,
+        y: f32,
+    }
     #[derive(Debug, Clone, PartialEq)]
-    struct Velocity { dx: f32, dy: f32 }
+    struct Velocity {
+        dx: f32,
+        dy: f32,
+    }
     #[derive(Debug, Clone, PartialEq)]
     struct Health(f32);
     #[derive(Debug, Clone, PartialEq)]
@@ -550,7 +556,12 @@ mod tests {
         let mut world = World::new();
         world.spawn(Position { x: 1.0, y: 1.0 });
         world.spawn(Position { x: 2.0, y: 2.0 });
-        { let query = Query::<&mut Position>::new(&world); for pos in query.iter() { pos.x += 10.0; } }
+        {
+            let query = Query::<&mut Position>::new(&world);
+            for pos in query.iter() {
+                pos.x += 10.0;
+            }
+        }
         let query = Query::<&Position>::new(&world);
         let positions: Vec<_> = query.iter().collect();
         assert_eq!(positions[0].x, 11.0);
@@ -562,7 +573,13 @@ mod tests {
         let mut world = World::new();
         let e = world.spawn(Position { x: 1.0, y: 1.0 });
         world.insert(e, Velocity { dx: 10.0, dy: 20.0 });
-        { let query = Query::<(&Velocity, &mut Position)>::new(&world); for (vel, pos) in query.iter() { pos.x += vel.dx; pos.y += vel.dy; } }
+        {
+            let query = Query::<(&Velocity, &mut Position)>::new(&world);
+            for (vel, pos) in query.iter() {
+                pos.x += vel.dx;
+                pos.y += vel.dy;
+            }
+        }
         assert_eq!(world.get::<Position>(e).unwrap().x, 11.0);
         assert_eq!(world.get::<Position>(e).unwrap().y, 21.0);
     }
@@ -573,7 +590,12 @@ mod tests {
         let e = world.spawn(Position { x: 1.0, y: 1.0 });
         assert_eq!(world.get_change_tick::<Position>(e), Some(0));
         world.tick();
-        { let query = Query::<&mut Position>::new(&world); for pos in query.iter() { pos.x = 99.0; } }
+        {
+            let query = Query::<&mut Position>::new(&world);
+            for pos in query.iter() {
+                pos.x = 99.0;
+            }
+        }
         assert_eq!(world.get_change_tick::<Position>(e), Some(1));
         assert_eq!(world.get::<Position>(e).unwrap().x, 99.0);
     }
@@ -591,7 +613,13 @@ mod tests {
         let mut world = World::new();
         let e = world.spawn(Position { x: 1.0, y: 1.0 });
         world.insert(e, Velocity { dx: 5.0, dy: 5.0 });
-        { let query = Query::<(&mut Position, &mut Velocity)>::new(&world); for (pos, vel) in query.iter() { pos.x += 1.0; vel.dx += 1.0; } }
+        {
+            let query = Query::<(&mut Position, &mut Velocity)>::new(&world);
+            for (pos, vel) in query.iter() {
+                pos.x += 1.0;
+                vel.dx += 1.0;
+            }
+        }
         assert_eq!(world.get::<Position>(e).unwrap().x, 2.0);
         assert_eq!(world.get::<Velocity>(e).unwrap().dx, 6.0);
     }
@@ -601,7 +629,16 @@ mod tests {
         let mut world = World::new();
         let e1 = world.spawn(Position { x: 1.0, y: 1.0 });
         let e2 = world.spawn(Position { x: 2.0, y: 2.0 });
-        { let query = Query::<(Entity, &mut Position)>::new(&world); for (entity, pos) in query.iter() { if entity == e1 { pos.x = 100.0; } else { pos.x = 200.0; } } }
+        {
+            let query = Query::<(Entity, &mut Position)>::new(&world);
+            for (entity, pos) in query.iter() {
+                if entity == e1 {
+                    pos.x = 100.0;
+                } else {
+                    pos.x = 200.0;
+                }
+            }
+        }
         assert_eq!(world.get::<Position>(e1).unwrap().x, 100.0);
         assert_eq!(world.get::<Position>(e2).unwrap().x, 200.0);
     }
@@ -612,7 +649,12 @@ mod tests {
         let e1 = world.spawn(Position { x: 1.0, y: 1.0 });
         let e2 = world.spawn(Position { x: 2.0, y: 2.0 });
         world.insert(e2, Static);
-        { let query = Query::<&mut Position, Without<Static>>::new(&world); for pos in query.iter() { pos.x += 100.0; } }
+        {
+            let query = Query::<&mut Position, Without<Static>>::new(&world);
+            for pos in query.iter() {
+                pos.x += 100.0;
+            }
+        }
         assert_eq!(world.get::<Position>(e1).unwrap().x, 101.0);
         assert_eq!(world.get::<Position>(e2).unwrap().x, 2.0);
     }
@@ -672,7 +714,8 @@ mod tests {
         let q_vel = Query::<&Velocity>::new_cached(&world);
         assert_eq!(q_pos.count(), 2);
         assert_eq!(q_vel.count(), 1);
-        drop(q_pos); drop(q_vel);
+        drop(q_pos);
+        drop(q_vel);
         let q_pos2 = Query::<&Position>::new_cached(&world);
         let q_vel2 = Query::<&Velocity>::new_cached(&world);
         assert_eq!(q_pos2.count(), 2);
@@ -689,7 +732,8 @@ mod tests {
         let q_filtered = Query::<&Position, Without<Static>>::new_cached(&world);
         assert_eq!(q_all.count(), 2);
         assert_eq!(q_filtered.count(), 1);
-        drop(q_all); drop(q_filtered);
+        drop(q_all);
+        drop(q_filtered);
         let e3 = world.spawn(Position { x: 3.0, y: 3.0 });
         world.insert(e3, Health(100.0));
         let q_all3 = Query::<&Position>::new_cached(&world);
@@ -703,7 +747,12 @@ mod tests {
         let mut world = World::new();
         world.spawn(Position { x: 1.0, y: 1.0 });
         world.spawn(Position { x: 2.0, y: 2.0 });
-        { let query = Query::<&mut Position>::new_cached(&world); for pos in query.iter() { pos.x += 100.0; } }
+        {
+            let query = Query::<&mut Position>::new_cached(&world);
+            for pos in query.iter() {
+                pos.x += 100.0;
+            }
+        }
         let query = Query::<&Position>::new_cached(&world);
         let positions: Vec<_> = query.iter().collect();
         assert_eq!(positions[0].x, 101.0);

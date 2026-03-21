@@ -83,6 +83,58 @@ impl MetalRenderHints {
 }
 
 // ---------------------------------------------------------------------------
+// ComputeOptimizer
+// ---------------------------------------------------------------------------
+
+/// Computes optimal dispatch parameters based on GPU architecture.
+pub struct ComputeOptimizer<'a> {
+    hints: &'a MetalRenderHints,
+}
+
+/// Apple Silicon threadgroup memory limit (32 KB).
+const APPLE_THREADGROUP_MEMORY_BYTES: usize = 32 * 1024;
+
+impl<'a> ComputeOptimizer<'a> {
+    /// Create an optimizer from existing render hints.
+    pub fn new(hints: &'a MetalRenderHints) -> Self {
+        Self { hints }
+    }
+
+    /// Returns `[workgroup_count_x, 1, 1]` for a 1D dispatch.
+    pub fn optimal_dispatch(&self, total_items: u32) -> [u32; 3] {
+        let workgroup_count = self.hints.workgroup_count(total_items);
+        [workgroup_count, 1, 1]
+    }
+
+    /// Whether `data_size` fits in Apple's 32 KB threadgroup shared memory.
+    pub fn should_use_shared_memory(&self, data_size: usize) -> bool {
+        if self.hints.is_apple_gpu {
+            data_size <= APPLE_THREADGROUP_MEMORY_BYTES
+        } else {
+            true
+        }
+    }
+
+    /// The underlying hints.
+    pub fn hints(&self) -> &MetalRenderHints {
+        self.hints
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ComputeTimingHint
+// ---------------------------------------------------------------------------
+
+/// Scheduling hint for compute dispatches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComputeTimingHint {
+    /// Compute results needed immediately.
+    Immediate,
+    /// Compute results can overlap with other work.
+    AsyncOverlap,
+}
+
+// ---------------------------------------------------------------------------
 // RenderPassLayout
 // ---------------------------------------------------------------------------
 
@@ -417,5 +469,77 @@ mod tests {
         let ops = RenderPassOptimizer::gbuffer_ops(&hints);
 
         assert_eq!(ops.store, wgpu::StoreOp::Store);
+    }
+
+    #[test]
+    fn compute_optimizer_dispatch_apple() {
+        let survey = make_survey(GpuVendor::Apple, wgpu::DeviceType::IntegratedGpu);
+        let hints = MetalRenderHints::detect(&survey);
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert_eq!(optimizer.optimal_dispatch(0), [0, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(1), [1, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(32), [1, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(33), [2, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(1024), [32, 1, 1]);
+    }
+
+    #[test]
+    fn compute_optimizer_dispatch_discrete() {
+        let survey = make_survey(GpuVendor::Nvidia, wgpu::DeviceType::DiscreteGpu);
+        let hints = MetalRenderHints::detect(&survey);
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert_eq!(optimizer.optimal_dispatch(0), [0, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(64), [1, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(65), [2, 1, 1]);
+        assert_eq!(optimizer.optimal_dispatch(1024), [16, 1, 1]);
+    }
+
+    #[test]
+    fn shared_memory_fits_apple() {
+        let survey = make_survey(GpuVendor::Apple, wgpu::DeviceType::IntegratedGpu);
+        let hints = MetalRenderHints::detect(&survey);
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert!(optimizer.should_use_shared_memory(0));
+        assert!(optimizer.should_use_shared_memory(32 * 1024));
+        assert!(!optimizer.should_use_shared_memory(32 * 1024 + 1));
+    }
+
+    #[test]
+    fn shared_memory_always_true_discrete() {
+        let survey = make_survey(GpuVendor::Nvidia, wgpu::DeviceType::DiscreteGpu);
+        let hints = MetalRenderHints::detect(&survey);
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert!(optimizer.should_use_shared_memory(0));
+        assert!(optimizer.should_use_shared_memory(64 * 1024));
+    }
+
+    #[test]
+    fn compute_optimizer_exposes_hints() {
+        let survey = make_survey(GpuVendor::Apple, wgpu::DeviceType::IntegratedGpu);
+        let hints = MetalRenderHints::detect(&survey);
+        let optimizer = ComputeOptimizer::new(&hints);
+        assert_eq!(optimizer.hints(), &hints);
+    }
+
+    #[test]
+    fn compute_timing_hint_equality() {
+        assert_eq!(ComputeTimingHint::Immediate, ComputeTimingHint::Immediate);
+        assert_eq!(
+            ComputeTimingHint::AsyncOverlap,
+            ComputeTimingHint::AsyncOverlap
+        );
+        assert_ne!(
+            ComputeTimingHint::Immediate,
+            ComputeTimingHint::AsyncOverlap
+        );
+    }
+
+    #[test]
+    fn compute_timing_hint_debug() {
+        assert_eq!(format!("{:?}", ComputeTimingHint::Immediate), "Immediate");
+        assert_eq!(
+            format!("{:?}", ComputeTimingHint::AsyncOverlap),
+            "AsyncOverlap"
+        );
     }
 }
