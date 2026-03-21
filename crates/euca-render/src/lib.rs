@@ -6,6 +6,7 @@ pub mod deferred;
 pub mod foliage;
 mod gpu;
 mod hardware;
+mod hlod;
 mod light;
 mod lod;
 mod material;
@@ -16,6 +17,7 @@ pub mod post_process;
 mod renderer;
 mod texture;
 mod vertex;
+pub mod volumetric;
 
 pub use wgpu;
 
@@ -35,6 +37,10 @@ pub use foliage::{
 };
 pub use gpu::GpuContext;
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
+pub use hlod::{
+    HlodCluster, HlodClusterId, HlodRegistry, HlodVisibility, generate_hlod_cluster,
+    hlod_select_system,
+};
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
 pub use lod::{LodSettings, lod_select_system};
 pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
@@ -45,3 +51,4 @@ pub use post_process::{PostProcessSettings, PostProcessStack};
 pub use renderer::{DrawCommand, Renderer};
 pub use texture::{TextureHandle, TextureStore};
 pub use vertex::Vertex;
+pub use volumetric::{VolumetricFogPass, VolumetricFogSettings};
