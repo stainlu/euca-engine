@@ -177,6 +177,11 @@ impl Default for AttackStyle {
     }
 }
 
+/// Marker: this hero is controlled by a player via `PlayerCommandQueue`.
+/// Entities with this component are skipped by `auto_combat_system`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PlayerHero;
+
 /// Entity automatically detects nearby enemies, chases, and attacks.
 /// Just add this + Health + Team to make an entity fight.
 #[derive(Clone, Copy, Debug)]
@@ -266,6 +271,11 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             if let Some(v) = world.get_mut::<Velocity>(entity) {
                 v.linear = Vec3::ZERO;
             }
+            continue;
+        }
+
+        // Skip player-controlled heroes — they use PlayerCommandQueue instead.
+        if world.get::<PlayerHero>(entity).is_some() {
             continue;
         }
 
@@ -815,6 +825,38 @@ mod tests {
             target.0.index(),
             enemy.index(),
             "fallback scan should find the nearby enemy"
+        );
+    }
+
+    // ── PlayerHero skip tests ──
+
+    #[test]
+    fn player_hero_skipped_by_auto_combat() {
+        let mut world = setup_world();
+
+        // Spawn a player-controlled hero on team 1.
+        let player = spawn_fighter(&mut world, Vec3::ZERO, 1, EntityRole::Hero);
+        world.insert(player, PlayerHero);
+
+        // Spawn an enemy within detect range so auto_combat would normally acquire it.
+        let _enemy = spawn_fighter(&mut world, Vec3::new(3.0, 0.0, 0.0), 2, EntityRole::Hero);
+
+        // Run several ticks of auto combat.
+        for _ in 0..5 {
+            auto_combat_system(&mut world, 0.016);
+        }
+
+        // The player hero must NOT have a target assigned by auto_combat.
+        assert!(
+            world.get::<CurrentTarget>(player).is_none(),
+            "PlayerHero should not acquire targets via auto_combat_system"
+        );
+
+        // The player hero's velocity must remain at zero (no chase/march).
+        let vel = world.get::<Velocity>(player).unwrap();
+        assert!(
+            vel.linear.x.abs() < 0.001 && vel.linear.z.abs() < 0.001,
+            "PlayerHero velocity should not be modified by auto_combat_system"
         );
     }
 }

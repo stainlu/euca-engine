@@ -26,7 +26,7 @@ pub mod triggers;
 // Re-export key types at crate root for convenience
 pub use ai::{AiBehavior, AiGoal, ai_system};
 pub use combat::{
-    AttackStyle, AutoCombat, CurrentTarget, EntityRole, MarchDirection, Projectile,
+    AttackStyle, AutoCombat, CurrentTarget, EntityRole, MarchDirection, PlayerHero, Projectile,
     auto_combat_system, projectile_system,
 };
 pub use data_table::DataTable;
