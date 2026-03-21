@@ -6,6 +6,8 @@
 //! Condition components: `OnDeathRule`, `TimerRule`, `HealthBelowRule`
 //! Action execution: `execute_action()` applies GameAction to the world.
 
+use std::sync::Arc;
+
 use euca_ecs::{Entity, Events, Query, World};
 use euca_math::Vec3;
 use euca_scene::LocalTransform;
@@ -92,7 +94,7 @@ fn default_text_color() -> String {
 }
 
 /// Who the action targets.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ActionTarget {
     /// The entity that triggered the condition.
@@ -104,7 +106,7 @@ pub enum ActionTarget {
 }
 
 /// Which entities a rule condition watches.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleFilter {
     Any,
@@ -128,7 +130,7 @@ impl RuleFilter {
 #[derive(Clone, Debug)]
 pub struct OnDeathRule {
     pub filter: RuleFilter,
-    pub actions: Vec<GameAction>,
+    pub actions: Arc<Vec<GameAction>>,
 }
 
 /// Fire actions periodically.
@@ -137,7 +139,7 @@ pub struct TimerRule {
     pub interval: f32,
     pub elapsed: f32,
     pub repeat: bool,
-    pub actions: Vec<GameAction>,
+    pub actions: Arc<Vec<GameAction>>,
 }
 
 /// Fire actions once when a watched entity's health drops below threshold.
@@ -146,7 +148,7 @@ pub struct HealthBelowRule {
     pub filter: RuleFilter,
     pub threshold: f32,
     pub triggered_entities: std::collections::HashSet<u32>,
-    pub actions: Vec<GameAction>,
+    pub actions: Arc<Vec<GameAction>>,
 }
 
 /// Fire actions when any player's score reaches threshold.
@@ -154,7 +156,7 @@ pub struct HealthBelowRule {
 pub struct OnScoreRule {
     pub score_threshold: i32,
     pub triggered: bool,
-    pub actions: Vec<GameAction>,
+    pub actions: Arc<Vec<GameAction>>,
 }
 
 /// Fire actions when game phase changes to a specific phase.
@@ -162,7 +164,7 @@ pub struct OnScoreRule {
 pub struct OnPhaseRule {
     pub phase: String, // "playing", "post_match", "lobby"
     pub triggered: bool,
-    pub actions: Vec<GameAction>,
+    pub actions: Arc<Vec<GameAction>>,
 }
 
 // ── Rule systems ──
@@ -174,11 +176,11 @@ pub fn on_score_rule_system(world: &mut World) {
         .map(|s| s.scoreboard())
         .unwrap_or_default();
 
-    let rules: Vec<(Entity, i32, bool, Vec<GameAction>)> = {
+    let rules: Vec<(Entity, i32, bool, Arc<Vec<GameAction>>)> = {
         let query = Query::<(Entity, &OnScoreRule)>::new(world);
         query
             .iter()
-            .map(|(e, r)| (e, r.score_threshold, r.triggered, r.actions.clone()))
+            .map(|(e, r)| (e, r.score_threshold, r.triggered, Arc::clone(&r.actions)))
             .collect()
     };
 
@@ -188,7 +190,7 @@ pub fn on_score_rule_system(world: &mut World) {
             continue;
         }
         if scores.iter().any(|(_, score)| *score >= *threshold) {
-            for action in actions {
+            for action in actions.iter() {
                 execute_action(world, action, dummy, None);
             }
             if let Some(rule) = world.get_mut::<OnScoreRule>(*rule_entity) {
@@ -215,11 +217,11 @@ pub fn on_phase_rule_system(world: &mut World) {
         None => return,
     };
 
-    let rules: Vec<(Entity, String, bool, Vec<GameAction>)> = {
+    let rules: Vec<(Entity, String, bool, Arc<Vec<GameAction>>)> = {
         let query = Query::<(Entity, &OnPhaseRule)>::new(world);
         query
             .iter()
-            .map(|(e, r)| (e, r.phase.clone(), r.triggered, r.actions.clone()))
+            .map(|(e, r)| (e, r.phase.clone(), r.triggered, Arc::clone(&r.actions)))
             .collect()
     };
 
@@ -229,7 +231,7 @@ pub fn on_phase_rule_system(world: &mut World) {
             continue;
         }
         if phase == *target_phase {
-            for action in actions {
+            for action in actions.iter() {
                 execute_action(world, action, dummy, None);
             }
             if let Some(rule) = world.get_mut::<OnPhaseRule>(*rule_entity) {
@@ -255,18 +257,18 @@ pub fn on_death_rule_system(world: &mut World) {
     }
 
     // Collect all OnDeathRule entities
-    let rules: Vec<(RuleFilter, Vec<GameAction>)> = {
+    let rules: Vec<(RuleFilter, Arc<Vec<GameAction>>)> = {
         let query = Query::<&OnDeathRule>::new(world);
         query
             .iter()
-            .map(|r| (r.filter.clone(), r.actions.clone()))
+            .map(|r| (r.filter, Arc::clone(&r.actions)))
             .collect()
     };
 
     for (dead_entity, killer) in &deaths {
         for (filter, actions) in &rules {
             if filter.matches(*dead_entity, world) {
-                for action in actions {
+                for action in actions.iter() {
                     execute_action(world, action, *dead_entity, *killer);
                 }
             }
@@ -277,12 +279,12 @@ pub fn on_death_rule_system(world: &mut World) {
 /// Process TimerRule: tick elapsed, fire when ready.
 pub fn timer_rule_system(world: &mut World, dt: f32) {
     // Collect timers that fired
-    let fired: Vec<(Entity, Vec<GameAction>)> = {
+    let fired: Vec<(Entity, Arc<Vec<GameAction>>)> = {
         let query = Query::<(Entity, &TimerRule)>::new(world);
         query
             .iter()
             .filter(|(_, t)| t.elapsed + dt >= t.interval)
-            .map(|(e, t)| (e, t.actions.clone()))
+            .map(|(e, t)| (e, Arc::clone(&t.actions)))
             .collect()
     };
 
@@ -297,7 +299,7 @@ pub fn timer_rule_system(world: &mut World, dt: f32) {
     // Execute fired timers and reset
     let dummy = Entity::from_raw(0, 0);
     for (entity, actions) in &fired {
-        for action in actions {
+        for action in actions.iter() {
             execute_action(world, action, dummy, None);
         }
         if let Some(timer) = world.get_mut::<TimerRule>(*entity)
@@ -336,7 +338,7 @@ pub fn health_below_rule_system(world: &mut World) {
         RuleFilter,
         f32,
         std::collections::HashSet<u32>,
-        Vec<GameAction>,
+        Arc<Vec<GameAction>>,
     )> = {
         let query = Query::<(Entity, &HealthBelowRule)>::new(world);
         query
@@ -344,10 +346,10 @@ pub fn health_below_rule_system(world: &mut World) {
             .map(|(e, r)| {
                 (
                     e,
-                    r.filter.clone(),
+                    r.filter,
                     r.threshold,
                     r.triggered_entities.clone(),
-                    r.actions.clone(),
+                    Arc::clone(&r.actions),
                 )
             })
             .collect()
@@ -359,7 +361,7 @@ pub fn health_below_rule_system(world: &mut World) {
                 && !triggered.contains(&entity.index())
                 && filter.matches(*entity, world)
             {
-                for action in actions {
+                for action in actions.iter() {
                     execute_action(world, action, *entity, None);
                 }
                 // Mark as triggered
@@ -798,7 +800,7 @@ mod tests {
         // Create rule: when team 2 dies, spawn at 0,5,0
         let rule = world.spawn(OnDeathRule {
             filter: RuleFilter::Team(2),
-            actions: vec![GameAction::Spawn {
+            actions: Arc::new(vec![GameAction::Spawn {
                 mesh: "cube".to_string(),
                 position: [0.0, 5.0, 0.0],
                 color: None,
@@ -811,7 +813,7 @@ mod tests {
                 gold_bounty: None,
                 xp_bounty: None,
                 role: None,
-            }],
+            }]),
         });
         let _ = rule;
 
@@ -832,7 +834,7 @@ mod tests {
             interval: 1.0,
             elapsed: 0.0,
             repeat: true,
-            actions: vec![GameAction::Spawn {
+            actions: Arc::new(vec![GameAction::Spawn {
                 mesh: "sphere".to_string(),
                 position: [0.0, 3.0, 0.0],
                 color: None,
@@ -845,7 +847,7 @@ mod tests {
                 gold_bounty: None,
                 xp_bounty: None,
                 role: None,
-            }],
+            }]),
         });
 
         let count_before = world.entity_count();
@@ -878,10 +880,10 @@ mod tests {
             filter: RuleFilter::Any,
             threshold: 30.0,
             triggered_entities: std::collections::HashSet::new(),
-            actions: vec![GameAction::Heal {
+            actions: Arc::new(vec![GameAction::Heal {
                 target: ActionTarget::This,
                 amount: 50.0,
-            }],
+            }]),
         });
 
         health_below_rule_system(&mut world);
