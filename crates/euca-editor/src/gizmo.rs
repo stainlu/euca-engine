@@ -114,6 +114,7 @@ pub fn gizmo_draw_commands(
             mesh,
             material: mat,
             model_matrix: shaft_mat,
+            aabb: None,
         });
 
         // Tip: small cube at the end of the axis
@@ -128,6 +129,7 @@ pub fn gizmo_draw_commands(
             mesh,
             material: mat,
             model_matrix: tip_mat,
+            aabb: None,
         });
     }
 

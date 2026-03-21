@@ -461,6 +461,7 @@ impl EditorApp {
                         mesh: mr.mesh,
                         material: mat.handle,
                         model_matrix: gt.0.to_matrix(),
+                        aabb: None,
                     })
                     .collect()
             };
@@ -488,6 +489,7 @@ impl EditorApp {
                                 mesh: mr.mesh,
                                 material: outline_mat,
                                 model_matrix: t.to_matrix(),
+                                aabb: None,
                             });
                         }
                     }
@@ -891,6 +893,7 @@ impl EditorApp {
                         mesh: mr.mesh,
                         material: mat.handle,
                         model_matrix: gt.0.to_matrix(),
+                        aabb: None,
                     })
                     .collect()
             };
