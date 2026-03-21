@@ -18,7 +18,7 @@ use crate::health::{DamageEvent, Health};
 pub struct PlayerHero;
 
 /// What a player command targets (for abilities).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AbilityTarget {
     SelfCast,
     Point(Vec3),
@@ -27,7 +27,7 @@ pub enum AbilityTarget {
 }
 
 /// A single player-issued command.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlayerCommand {
     MoveTo(Vec3),
     AttackTarget(Entity),
@@ -53,6 +53,18 @@ impl PlayerCommandQueue {
             commands: Vec::new(),
             current: None,
         }
+    }
+
+    pub fn push(&mut self, command: PlayerCommand) {
+        self.commands.push(command);
+    }
+
+    pub fn drain(&mut self) -> Vec<PlayerCommand> {
+        std::mem::take(&mut self.commands)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.current.is_none() && self.commands.is_empty()
     }
 }
 

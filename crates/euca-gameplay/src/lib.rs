@@ -53,6 +53,5 @@ pub use abilities::{
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use economy::{Gold, GoldBounty, gold_on_kill_system};
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
-pub use player_input::{
-    PlayerCommand, PlayerCommandQueue, ViewportSize, player_input_system, ray_ground_intersection,
-};
+pub use player::{PlayerCommand, PlayerCommandQueue};
+pub use player_input::{ViewportSize, player_input_system, ray_ground_intersection};

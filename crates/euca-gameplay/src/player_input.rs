@@ -9,7 +9,7 @@
 //! Types: [`PlayerCommand`], [`ViewportSize`].
 //! System: [`player_input_system`].
 
-use crate::player::PlayerHero;
+use crate::player::{AbilityTarget, PlayerCommand, PlayerCommandQueue, PlayerHero};
 use euca_ecs::{Entity, Query, World};
 use euca_input::InputState;
 use euca_math::Vec3;
@@ -19,46 +19,6 @@ use euca_scene::LocalTransform;
 use crate::abilities::AbilitySlot;
 use crate::health::Health;
 use crate::teams::Team;
-
-// ── Components & types ─────────────────────────────────────────────────────
-
-/// A single command issued by the player.
-#[derive(Clone, Debug, PartialEq)]
-pub enum PlayerCommand {
-    /// Move to a world-space position (right-click on ground).
-    MoveTo(Vec3),
-    /// Attack a specific enemy entity (right-click on enemy).
-    AttackTarget(Entity),
-    /// Stop all movement and actions (S key).
-    Stop,
-    /// Self-cast an ability in the given slot (Q/W/E/R keys).
-    /// Targeted casting is a future enhancement.
-    UseAbility { slot: AbilitySlot },
-}
-
-/// Queue of player commands on the hero entity, consumed by downstream systems.
-#[derive(Clone, Debug, Default)]
-pub struct PlayerCommandQueue {
-    pub commands: Vec<PlayerCommand>,
-}
-
-impl PlayerCommandQueue {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn push(&mut self, command: PlayerCommand) {
-        self.commands.push(command);
-    }
-
-    pub fn drain(&mut self) -> Vec<PlayerCommand> {
-        std::mem::take(&mut self.commands)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.commands.is_empty()
-    }
-}
 
 // ── Resource ───────────────────────────────────────────────────────────────
 
@@ -180,21 +140,25 @@ pub fn player_input_system(world: &mut World) {
     if q_pressed {
         commands.push(PlayerCommand::UseAbility {
             slot: AbilitySlot::Q,
+            target: AbilityTarget::SelfCast,
         });
     }
     if w_pressed {
         commands.push(PlayerCommand::UseAbility {
             slot: AbilitySlot::W,
+            target: AbilityTarget::SelfCast,
         });
     }
     if e_pressed {
         commands.push(PlayerCommand::UseAbility {
             slot: AbilitySlot::E,
+            target: AbilityTarget::SelfCast,
         });
     }
     if r_pressed {
         commands.push(PlayerCommand::UseAbility {
             slot: AbilitySlot::R,
+            target: AbilityTarget::SelfCast,
         });
     }
 
@@ -431,13 +395,15 @@ mod tests {
         assert!(queue.commands.iter().any(|c| matches!(
             c,
             PlayerCommand::UseAbility {
-                slot: AbilitySlot::Q
+                slot: AbilitySlot::Q,
+                ..
             }
         )));
         assert!(queue.commands.iter().any(|c| matches!(
             c,
             PlayerCommand::UseAbility {
-                slot: AbilitySlot::R
+                slot: AbilitySlot::R,
+                ..
             }
         )));
     }
