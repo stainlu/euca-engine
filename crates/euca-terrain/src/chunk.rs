@@ -33,8 +33,8 @@ pub struct TerrainChunk {
 /// `chunk_size` is the number of grid cells along one side of each chunk.
 pub fn build_chunks(heightmap: &Heightmap, chunk_size: u32) -> Vec<TerrainChunk> {
     let chunk_size = chunk_size.max(2);
-    let chunks_x = (heightmap.width.saturating_sub(1) + chunk_size - 1) / chunk_size;
-    let chunks_z = (heightmap.height.saturating_sub(1) + chunk_size - 1) / chunk_size;
+    let chunks_x = heightmap.width.saturating_sub(1).div_ceil(chunk_size);
+    let chunks_z = heightmap.height.saturating_sub(1).div_ceil(chunk_size);
 
     let mut chunks = Vec::with_capacity((chunks_x * chunks_z) as usize);
 
@@ -94,7 +94,10 @@ fn compute_chunk_bounds(
         y_max = 0.0;
     }
 
-    Aabb::new(Vec3::new(x_min, y_min, z_min), Vec3::new(x_max, y_max, z_max))
+    Aabb::new(
+        Vec3::new(x_min, y_min, z_min),
+        Vec3::new(x_max, y_max, z_max),
+    )
 }
 
 /// Test whether an AABB is (at least partially) inside a frustum defined by
@@ -133,7 +136,11 @@ pub fn aabb_in_frustum(bounds: &Aabb, planes: &[(Vec3, f32); 6]) -> bool {
 }
 
 /// Generate a mesh for a single chunk at the given LOD step.
-pub fn generate_chunk_mesh(heightmap: &Heightmap, chunk: &TerrainChunk, lod_step: u32) -> TerrainMesh {
+pub fn generate_chunk_mesh(
+    heightmap: &Heightmap,
+    chunk: &TerrainChunk,
+    lod_step: u32,
+) -> TerrainMesh {
     generate_terrain_mesh_region(
         heightmap,
         chunk.col_start,

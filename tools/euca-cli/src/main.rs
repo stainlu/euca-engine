@@ -114,6 +114,26 @@ enum Commands {
         command: AnimationCommands,
     },
 
+    /// Terrain: create and edit heightmap terrain
+    Terrain {
+        #[command(subcommand)]
+        command: TerrainCommands,
+    },
+    /// Prefab: spawn registered prefabs
+    Prefab {
+        #[command(subcommand)]
+        command: PrefabCommands,
+    },
+    /// Material: set material properties on entities
+    Material {
+        #[command(subcommand)]
+        command: MaterialCommands,
+    },
+    /// Post-processing: SSAO, FXAA, bloom, color grading
+    Postprocess {
+        #[command(subcommand)]
+        command: PostprocessCommands,
+    },
     /// Authentication via nit identity
     Auth {
         #[command(subcommand)]
@@ -762,6 +782,73 @@ enum UiCommands {
     Clear,
     /// List current HUD elements
     List,
+}
+
+#[derive(Subcommand)]
+enum TerrainCommands {
+    Create {
+        #[arg(long, default_value = "64")]
+        width: u32,
+        #[arg(long, default_value = "64")]
+        height: u32,
+        #[arg(long, default_value = "1.0")]
+        cell_size: f32,
+    },
+    Edit {
+        #[arg(long, default_value = "raise")]
+        op: String,
+        #[arg(long)]
+        x: f32,
+        #[arg(long)]
+        z: f32,
+        #[arg(long, default_value = "3")]
+        radius: f32,
+        #[arg(long, default_value = "0.5")]
+        amount: f32,
+    },
+}
+#[derive(Subcommand)]
+enum PrefabCommands {
+    Spawn {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        position: Option<String>,
+    },
+    List,
+}
+#[derive(Subcommand)]
+enum MaterialCommands {
+    Set {
+        #[arg(long)]
+        entity: u32,
+        #[arg(long)]
+        emissive: Option<String>,
+        #[arg(long)]
+        alpha_mode: Option<String>,
+        #[arg(long)]
+        metallic: Option<f32>,
+        #[arg(long)]
+        roughness: Option<f32>,
+    },
+}
+#[derive(Subcommand)]
+enum PostprocessCommands {
+    Get,
+    Set {
+        #[arg(long)]
+        ssao: Option<bool>,
+        #[arg(long)]
+        fxaa: Option<bool>,
+        #[arg(long)]
+        exposure: Option<f32>,
+        #[arg(long)]
+        bloom: Option<bool>,
+        #[arg(long)]
+        contrast: Option<f32>,
+        #[arg(long)]
+        saturation: Option<f32>,
+    },
 }
 
 // ── Helpers ──
@@ -1564,6 +1651,115 @@ fn main() {
             }
             AnimationCommands::List => {
                 let resp = client.get(format!("{server}/animation/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        Commands::Terrain { command } => match command {
+            TerrainCommands::Create {
+                width,
+                height,
+                cell_size,
+            } => {
+                let resp = client.post(format!("{server}/terrain/create")).json(&serde_json::json!({"width": width, "height": height, "cell_size": cell_size})).send();
+                handle_response(resp)
+            }
+            TerrainCommands::Edit {
+                op,
+                x,
+                z,
+                radius,
+                amount,
+            } => {
+                let resp = client.post(format!("{server}/terrain/edit")).json(&serde_json::json!({"op": op, "x": x, "z": z, "radius": radius, "amount": amount})).send();
+                handle_response(resp)
+            }
+        },
+        Commands::Prefab { command } => match command {
+            PrefabCommands::Spawn { name, position } => {
+                let mut body = serde_json::json!({"name": name});
+                if let Some(p) = position
+                    && let Some(v) = parse_vec3(&p)
+                {
+                    body["position"] = serde_json::json!(v);
+                }
+                let resp = client
+                    .post(format!("{server}/prefab/spawn"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            PrefabCommands::List => {
+                let resp = client.get(format!("{server}/prefab/list")).send();
+                handle_response(resp)
+            }
+        },
+        Commands::Material { command } => match command {
+            MaterialCommands::Set {
+                entity,
+                emissive,
+                alpha_mode,
+                metallic,
+                roughness,
+            } => {
+                let mut body = serde_json::json!({"entity_id": entity});
+                if let Some(e) = emissive
+                    && let Some(v) = parse_vec3(&e)
+                {
+                    body["emissive"] = serde_json::json!(v);
+                }
+                if let Some(a) = alpha_mode {
+                    body["alpha_mode"] = serde_json::json!(a);
+                }
+                if let Some(m) = metallic {
+                    body["metallic"] = serde_json::json!(m);
+                }
+                if let Some(r) = roughness {
+                    body["roughness"] = serde_json::json!(r);
+                }
+                let resp = client
+                    .post(format!("{server}/material/set"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+        },
+        Commands::Postprocess { command } => match command {
+            PostprocessCommands::Get => {
+                let resp = client.get(format!("{server}/postprocess/settings")).send();
+                handle_response(resp)
+            }
+            PostprocessCommands::Set {
+                ssao,
+                fxaa,
+                exposure,
+                bloom,
+                contrast,
+                saturation,
+            } => {
+                let mut body = serde_json::json!({});
+                if let Some(v) = ssao {
+                    body["ssao_enabled"] = serde_json::json!(v);
+                }
+                if let Some(v) = fxaa {
+                    body["fxaa_enabled"] = serde_json::json!(v);
+                }
+                if let Some(v) = exposure {
+                    body["exposure"] = serde_json::json!(v);
+                }
+                if let Some(v) = bloom {
+                    body["bloom_enabled"] = serde_json::json!(v);
+                }
+                if let Some(v) = contrast {
+                    body["contrast"] = serde_json::json!(v);
+                }
+                if let Some(v) = saturation {
+                    body["saturation"] = serde_json::json!(v);
+                }
+                let resp = client
+                    .post(format!("{server}/postprocess/settings"))
+                    .json(&body)
+                    .send();
                 handle_response(resp)
             }
         },
