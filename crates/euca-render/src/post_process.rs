@@ -173,6 +173,7 @@ pub struct PostProcessStack {
 
     // Main post-process (bloom + color grade + tonemap + vignette)
     main_pipeline: wgpu::RenderPipeline,
+    main_to_hdr_pipeline: wgpu::RenderPipeline,
     main_bgl: wgpu::BindGroupLayout,
     main_bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
@@ -182,8 +183,9 @@ pub struct PostProcessStack {
     fxaa_bgl: wgpu::BindGroupLayout,
     fxaa_bind_group: wgpu::BindGroup,
 
-    // Shared sampler
+    // Shared samplers
     linear_sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
 
     width: u32,
     height: u32,
@@ -205,6 +207,12 @@ impl PostProcessStack {
             label: Some("PostProcess Linear Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("PostProcess Nearest Sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -238,9 +246,16 @@ impl PostProcessStack {
         let ssao_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("SSAO BGL"),
             entries: &[
-                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
-                bgl_texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }),
-                bgl_sampler_entry(2),
+                // Depth resolve texture is R32Float — NOT filterable on most GPUs
+                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
+                bgl_texture_entry(1, wgpu::TextureSampleType::Float { filterable: false }),
+                // NonFiltering sampler — required when any texture is non-filterable
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
                 bgl_uniform_entry(3, std::mem::size_of::<SsaoUniforms>() as u64),
             ],
         });
@@ -292,12 +307,21 @@ impl PostProcessStack {
             "SSAO Composite",
             HDR_FORMAT,
         );
+        // When FXAA is on: main → HDR intermediate → FXAA → surface
+        // When FXAA is off: main → surface directly
         let main_pipeline = create_fullscreen_pipeline(
             device,
             &tex_sampler_uniform_bgl,
             &main_postprocess_shader(),
             "PP Main",
             surface_format,
+        );
+        let main_to_hdr_pipeline = create_fullscreen_pipeline(
+            device,
+            &tex_sampler_uniform_bgl,
+            &main_postprocess_shader(),
+            "PP Main (to HDR)",
+            HDR_FORMAT,
         );
         let fxaa_pipeline = create_fullscreen_pipeline(
             device,
@@ -313,7 +337,7 @@ impl PostProcessStack {
             &ssao_bgl,
             &depth_resolve_view,
             &ssao_noise_view,
-            &linear_sampler,
+            &nearest_sampler,
             &ssao_uniform_buffer,
         );
 
@@ -366,8 +390,14 @@ impl PostProcessStack {
         let ssr_normals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("SSR Normals BGL"),
             entries: &[
-                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
-                bgl_sampler_entry(1),
+                // Depth resolve is R32Float — not filterable
+                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
                 bgl_uniform_entry(2, std::mem::size_of::<SsrNormalsUniforms>() as u64),
             ],
         });
@@ -382,7 +412,7 @@ impl PostProcessStack {
             device,
             &ssr_normals_bgl,
             &depth_resolve_view,
-            &linear_sampler,
+            &nearest_sampler,
             &ssr_normals_uniform_buffer,
             "SSR Normals BG",
         );
@@ -435,6 +465,7 @@ impl PostProcessStack {
             ssr_composite_pipeline,
             ssr_composite_bgl,
             main_pipeline,
+            main_to_hdr_pipeline,
             main_bgl,
             main_bind_group,
             uniform_buffer,
@@ -453,6 +484,7 @@ impl PostProcessStack {
             }),
             fxaa_bind_group,
             linear_sampler,
+            nearest_sampler,
             width,
             height,
             surface_format,
@@ -483,7 +515,7 @@ impl PostProcessStack {
             &self.ssao_bgl,
             &depth_resolve_view,
             &self.ssao_noise_view,
-            &self.linear_sampler,
+            &self.nearest_sampler,
             &self.ssao_uniform_buffer,
         );
         self.ssao_blur_bind_group = create_tex_sampler_bind_group(
@@ -525,7 +557,7 @@ impl PostProcessStack {
             device,
             &self.ssr_normals_bgl,
             &depth_resolve_view,
-            &self.linear_sampler,
+            &self.nearest_sampler,
             &self.ssr_normals_uniform_buffer,
             "SSR Normals BG",
         );
@@ -675,7 +707,7 @@ impl PostProcessStack {
             };
             run_fullscreen_pass(
                 encoder,
-                &self.main_pipeline,
+                &self.main_to_hdr_pipeline,
                 &main_bg,
                 ldr_intermediate,
                 "PP Main (+FXAA)",

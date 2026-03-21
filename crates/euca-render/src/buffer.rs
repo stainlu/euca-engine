@@ -53,12 +53,11 @@ impl SmartBuffer {
         };
 
         // Always need COPY_DST for queue.write_buffer().
-        // On unified memory, also add MAP_WRITE so the Metal backend can
-        // optimize away the internal staging buffer.
-        let mut usage = kind_usage | wgpu::BufferUsages::COPY_DST;
-        if unified {
-            usage |= wgpu::BufferUsages::MAP_WRITE;
-        }
+        // Note: wgpu does NOT allow MAP_WRITE combined with STORAGE or UNIFORM.
+        // On Apple Silicon (unified memory), the Metal backend already optimizes
+        // queue.write_buffer() internally — it skips staging copies when it detects
+        // shared memory. So we just use COPY_DST on all platforms.
+        let usage = kind_usage | wgpu::BufferUsages::COPY_DST;
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
