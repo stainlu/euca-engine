@@ -128,8 +128,9 @@ pub fn player_command_system(world: &mut World, dt: f32) {
         // Step 2: Execute the current command.
         match current {
             PlayerCommand::MoveTo(target) => {
-                let diff = target - my_pos;
-                let dist = diff.length();
+                // Use XZ-only distance — hero Y may differ from ground target Y.
+                let diff_xz = Vec3::new(target.x - my_pos.x, 0.0, target.z - my_pos.z);
+                let dist = diff_xz.length();
                 if dist <= ARRIVAL_THRESHOLD {
                     // Arrived — stop and clear command.
                     velocity_updates.push((entity, Vec3::ZERO));
@@ -137,7 +138,7 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                 } else {
                     // Move toward target using combat speed (or a default).
                     let speed = combat.map(|c| c.speed).unwrap_or(3.0);
-                    let dir = diff.normalize();
+                    let dir = diff_xz.normalize();
                     velocity_updates.push((entity, Vec3::new(dir.x * speed, 0.0, dir.z * speed)));
                 }
             }
@@ -159,7 +160,9 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                     .get::<LocalTransform>(target_entity)
                     .map(|lt| lt.0.translation)
                     .unwrap_or(Vec3::ZERO);
-                let dist = (target_pos - my_pos).length();
+                // XZ-only distance for range checks.
+                let diff_xz = Vec3::new(target_pos.x - my_pos.x, 0.0, target_pos.z - my_pos.z);
+                let dist = diff_xz.length();
 
                 let ac = match combat {
                     Some(c) => c,
@@ -178,8 +181,8 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                         cooldown_resets.push(entity);
                     }
                 } else {
-                    // Move toward target.
-                    let dir = (target_pos - my_pos).normalize();
+                    // Move toward target on XZ plane.
+                    let dir = diff_xz.normalize();
                     velocity_updates
                         .push((entity, Vec3::new(dir.x * ac.speed, 0.0, dir.z * ac.speed)));
                 }
