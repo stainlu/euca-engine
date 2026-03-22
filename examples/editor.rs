@@ -1035,6 +1035,24 @@ impl EditorApp {
             profiler_begin(p, "render_draw");
         }
         let renderer = self.renderer.as_mut().unwrap();
+
+        // Set up light probe for indirect lighting (uniform probe from ambient light).
+        {
+            let probe = euca_render::LightProbe::uniform(
+                Vec3::ZERO,
+                [
+                    ambient.color[0] * ambient.intensity,
+                    ambient.color[1] * ambient.intensity,
+                    ambient.color[2] * ambient.intensity,
+                ],
+            );
+            let mut sh_gpu = [[0.0f32; 4]; 9];
+            for (i, coeffs) in probe.sh.iter().enumerate() {
+                sh_gpu[i] = [coeffs[0], coeffs[1], coeffs[2], 0.0];
+            }
+            renderer.set_probe_sh(sh_gpu);
+        }
+
         renderer.render_to_view(
             gpu,
             &camera,

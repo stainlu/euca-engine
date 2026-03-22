@@ -163,6 +163,10 @@ struct SceneUniforms {
     spot_lights: [GpuSpotLight; MAX_SPOT_LIGHTS],
     num_point_lights: [f32; 4],
     num_spot_lights: [f32; 4],
+    /// Interpolated L2 SH probe coefficients (9 bands × RGBA, blended on CPU).
+    probe_sh: [[f32; 4]; 9],
+    /// x=1.0 if probe data is valid, 0.0 otherwise. yzw=padding.
+    probe_enabled: [f32; 4],
 }
 
 struct GpuMaterial {
@@ -230,6 +234,10 @@ pub struct Renderer {
     taa_pass: crate::taa::TaaPass,
     /// Frame counter for TAA jitter sequence.
     frame_count: u32,
+    /// Interpolated SH probe coefficients for indirect lighting (set by caller).
+    probe_sh: [[f32; 4]; 9],
+    /// Whether probe data is valid.
+    probe_enabled: bool,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -684,6 +692,8 @@ impl Renderer {
                 gpu.surface_config.height,
             ),
             frame_count: 0,
+            probe_sh: [[0.0; 4]; 9],
+            probe_enabled: false,
         }
     }
 
@@ -843,6 +853,21 @@ impl Renderer {
             gpu.surface_config.width,
             gpu.surface_config.height,
         );
+    }
+
+    /// Set interpolated SH probe coefficients for indirect lighting.
+    ///
+    /// The caller should sample the nearest probes from a `LightProbeGrid`
+    /// and pass the blended coefficients here. The PBR shader will use these
+    /// instead of the flat ambient color.
+    pub fn set_probe_sh(&mut self, sh: [[f32; 4]; 9]) {
+        self.probe_sh = sh;
+        self.probe_enabled = true;
+    }
+
+    /// Disable probe-based ambient lighting (fall back to flat ambient_color).
+    pub fn clear_probe(&mut self) {
+        self.probe_enabled = false;
     }
 
     /// Enable CPU-side HZB occlusion culling.
@@ -1234,6 +1259,8 @@ impl Renderer {
                 0.0,
             ],
             num_spot_lights: [spot_lights.len().min(MAX_SPOT_LIGHTS) as f32, 0.0, 0.0, 0.0],
+            probe_sh: self.probe_sh,
+            probe_enabled: [if self.probe_enabled { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         self.scene_buffer
             .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));

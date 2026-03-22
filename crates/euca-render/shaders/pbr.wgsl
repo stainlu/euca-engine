@@ -38,6 +38,8 @@ struct SceneUniforms {
     spot_lights: array<SpotLightData, 2>,
     num_point_lights: vec4<f32>,
     num_spot_lights: vec4<f32>,
+    probe_sh: array<vec4<f32>, 9>,
+    probe_enabled: vec4<f32>,
 }
 
 struct MaterialUniforms {
@@ -137,6 +139,26 @@ fn geometry_smith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f
 // Schlick approximation for Fresnel reflectance.
 fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// ---------------------------------------------------------------------------
+// L2 Spherical Harmonics evaluation (9 coefficients)
+// ---------------------------------------------------------------------------
+
+fn evaluate_sh(normal: vec3<f32>, sh: array<vec4<f32>, 9>) -> vec3<f32> {
+    // L0
+    var result = sh[0].xyz * 0.282095;
+    // L1
+    result += sh[1].xyz * 0.488603 * normal.y;
+    result += sh[2].xyz * 0.488603 * normal.z;
+    result += sh[3].xyz * 0.488603 * normal.x;
+    // L2
+    result += sh[4].xyz * 1.092548 * normal.x * normal.y;
+    result += sh[5].xyz * 1.092548 * normal.y * normal.z;
+    result += sh[6].xyz * 0.315392 * (3.0 * normal.z * normal.z - 1.0);
+    result += sh[7].xyz * 1.092548 * normal.x * normal.z;
+    result += sh[8].xyz * 0.546274 * (normal.x * normal.x - normal.y * normal.y);
+    return max(result, vec3<f32>(0.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -299,9 +321,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         Lo += (kD * albedo / PI) * sl_radiance * sl_NdotL;
     }
 
-    // --- Ambient ---
-    let ambient_intensity = scene.ambient_color.w;
-    var ambient = scene.ambient_color.rgb * ambient_intensity * albedo;
+    // --- Ambient (SH probes or flat) ---
+    var ambient: vec3<f32>;
+    if scene.probe_enabled.x > 0.5 {
+        ambient = evaluate_sh(N, scene.probe_sh) * albedo;
+    } else {
+        let ambient_intensity = scene.ambient_color.w;
+        ambient = scene.ambient_color.rgb * ambient_intensity * albedo;
+    }
     if material.has_ao_tex > 0.5 {
         let ao = textureSample(ao_tex, albedo_sampler, in.uv).r;
         ambient = ambient * ao;
