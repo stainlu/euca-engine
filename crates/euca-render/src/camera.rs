@@ -1,5 +1,19 @@
 use euca_math::{Mat4, Vec3, Vec4};
 
+/// Halton low-discrepancy sequence value for the given index and base.
+/// Used to generate sub-pixel jitter patterns for TAA.
+fn halton(mut index: u32, base: u32) -> f32 {
+    let mut f = 1.0f32;
+    let mut r = 0.0f32;
+    let inv_base = 1.0 / base as f32;
+    while index > 0 {
+        f *= inv_base;
+        r += f * (index % base) as f32;
+        index /= base;
+    }
+    r
+}
+
 /// Camera component with view + projection.
 #[derive(Clone, Debug)]
 pub struct Camera {
@@ -19,6 +33,10 @@ pub struct Camera {
     pub orthographic: bool,
     /// Half-extent of the orthographic view in world units.
     pub ortho_size: f32,
+    /// Sub-pixel jitter offset in clip space for TAA (set each frame).
+    pub jitter: [f32; 2],
+    /// Previous frame's view-projection matrix for TAA reprojection.
+    pub prev_view_proj: Option<Mat4>,
 }
 
 impl Camera {
@@ -32,6 +50,8 @@ impl Camera {
             far: 1000.0,
             orthographic: false,
             ortho_size: 10.0,
+            jitter: [0.0, 0.0],
+            prev_view_proj: None,
         }
     }
 
@@ -54,6 +74,38 @@ impl Camera {
     /// Combined view-projection matrix.
     pub fn view_projection_matrix(&self, aspect_ratio: f32) -> Mat4 {
         self.projection_matrix(aspect_ratio) * self.view_matrix()
+    }
+
+    /// Build a jittered view-projection matrix for TAA.
+    ///
+    /// Applies a sub-pixel offset (Halton 2,3 sequence) to the projection matrix
+    /// and stores the current VP as `prev_view_proj` for next frame's reprojection.
+    pub fn jittered_view_projection_matrix(
+        &mut self,
+        aspect_ratio: f32,
+        frame_index: u32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> Mat4 {
+        let current_vp = self.view_projection_matrix(aspect_ratio);
+
+        // Store current VP for next frame's reprojection
+        self.prev_view_proj = Some(current_vp);
+
+        // Halton(2,3) sequence for sub-pixel jitter
+        let idx = (frame_index % 16) + 1;
+        let jx = halton(idx, 2) - 0.5; // center around 0 → [-0.5, 0.5]
+        let jy = halton(idx, 3) - 0.5;
+
+        // Convert pixel-space jitter to clip-space offset
+        self.jitter = [jx / screen_w * 2.0, jy / screen_h * 2.0];
+
+        // Apply jitter to projection (offset in clip space, column-major: cols[col][row])
+        let mut proj = self.projection_matrix(aspect_ratio);
+        proj.cols[2][0] += self.jitter[0];
+        proj.cols[2][1] += self.jitter[1];
+
+        proj * self.view_matrix()
     }
 
     /// Convert a screen pixel position to a world-space ray (origin, direction).

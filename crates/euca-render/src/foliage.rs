@@ -370,6 +370,8 @@ mod tests {
             far: 1000.0,
             orthographic: false,
             ortho_size: 10.0,
+            jitter: [0.0, 0.0],
+            prev_view_proj: None,
         };
         let vp = cam.view_projection_matrix(1.0);
         Frustum::from_view_projection(&vp)
@@ -474,6 +476,8 @@ mod tests {
             far: 500.0,
             orthographic: false,
             ortho_size: 10.0,
+            jitter: [0.0, 0.0],
+            prev_view_proj: None,
         };
         let vp = cam.view_projection_matrix(1.0);
         let frustum = Frustum::from_view_projection(&vp);
@@ -690,6 +694,8 @@ mod integration_tests {
             far: 1000.0,
             orthographic: false,
             ortho_size: 10.0,
+            jitter: [0.0, 0.0],
+            prev_view_proj: None,
         };
         let vp = cam.view_projection_matrix(1.0);
         let frustum = crate::camera::Frustum::from_view_projection(&vp);

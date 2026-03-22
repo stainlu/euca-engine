@@ -10,6 +10,7 @@ pub mod gpu_driven;
 mod hardware;
 mod hlod;
 mod light;
+pub mod light_probe;
 mod lod;
 mod material;
 mod mesh;
@@ -20,6 +21,7 @@ pub mod post_process;
 pub mod prepass;
 mod renderer;
 pub mod ssr;
+pub mod taa;
 mod texture;
 mod vertex;
 pub mod volumetric;
@@ -57,6 +59,7 @@ pub use hlod::{
     hlod_select_system,
 };
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
+pub use light_probe::{LightProbe, LightProbeGrid, evaluate_sh};
 pub use lod::{LodSettings, lod_select_system};
 pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
 pub use mesh::{Mesh, MeshHandle, MeshRenderer};
@@ -71,6 +74,7 @@ pub use renderer::{DrawCommand, RenderQuality, Renderer};
 pub use ssr::{
     SsrExecuteParams, SsrPass, SsrSettings, compute_step_count, passes_roughness_filter,
 };
+pub use taa::TaaPass;
 pub use texture::{TextureHandle, TextureStore};
 pub use vertex::Vertex;
 pub use volumetric::{VolumetricFogPass, VolumetricFogSettings};

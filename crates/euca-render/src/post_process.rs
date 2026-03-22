@@ -19,6 +19,10 @@
 /// Post-processing configuration. Intended to be stored as an ECS resource.
 #[derive(Clone, Debug)]
 pub struct PostProcessSettings {
+    // TAA
+    /// Temporal anti-aliasing (sub-pixel jitter + history accumulation).
+    pub taa_enabled: bool,
+
     // SSAO
     pub ssao_enabled: bool,
     /// Sampling radius in view-space units (default 0.5).
@@ -52,6 +56,7 @@ pub struct PostProcessSettings {
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
+            taa_enabled: false,
             ssao_enabled: true,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
@@ -1434,6 +1439,7 @@ mod tests {
     #[test]
     fn uniforms_encode_correctly() {
         let settings = PostProcessSettings {
+            taa_enabled: false,
             ssao_enabled: true,
             ssao_radius: 0.75,
             ssao_intensity: 1.5,
