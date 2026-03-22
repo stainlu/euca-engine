@@ -184,13 +184,12 @@ impl GameApp {
                 Query::<(euca_ecs::Entity, &euca_gameplay::player::PlayerHero)>::new(&self.world);
             q.iter().map(|(e, _)| e).next()
         };
-        if let Some(hero) = hero {
-            if let Some(cam) = self
+        if let Some(hero) = hero
+            && let Some(cam) = self
                 .world
                 .resource_mut::<euca_gameplay::camera::MobaCamera>()
-            {
-                cam.follow_entity = Some(hero);
-            }
+        {
+            cam.follow_entity = Some(hero);
         }
 
         // Auto-init navmesh
@@ -213,7 +212,7 @@ impl GameApp {
         let dt = self
             .world
             .resource::<Time>()
-            .map(|t| t.delta as f32)
+            .map(|t| t.delta)
             .unwrap_or(0.016);
 
         // Run core systems inline (simplified — no parallel schedule for standalone)
