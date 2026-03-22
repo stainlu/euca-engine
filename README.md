@@ -20,7 +20,7 @@ An ECS-first, agent-native game engine in Rust. AI agents build games via CLI co
 
 * **[Website](https://eucaengine.com)** — Landing page
 * **[CLI Reference (SKILL.md)](SKILL.md)** — Complete command reference for agents
-* **[MOBA Demo](scripts/moba.sh)** — Full working game built entirely from CLI commands
+* **[MOBA Demo](scripts/moba.sh)** — Combat arena demo built entirely from CLI commands
 * **[Examples](examples/)** — Editor, headless server, agent client
 
 ## 30-Second Demo
@@ -74,7 +74,7 @@ AI Agents (Claude Code, scripts, RL agents)
     │ CLI (euca) / HTTP REST (port 3917)
     ▼
 ┌─ Agent Layer (euca-agent) ─────────────────┐
-│  50+ endpoints: spawn, observe, combat,    │
+│  72 endpoints: spawn, observe, combat,     │
 │  rules, economy, abilities, diagnose       │
 └────────────────────────────────────────────┘
     │
@@ -126,10 +126,10 @@ AI Agents (Claude Code, scripts, RL agents)
 | `euca-ai` | Behavior trees, blackboard, decorators, composites, action/condition nodes |
 | `euca-ui` | Runtime UI: anchored layout, flex, widgets, input routing, world-space UI |
 | `euca-script` | Lua scripting (mlua): hot reload, sandboxing, ECS bridge, event handlers |
-| `euca-agent` | HTTP API (axum), 50+ endpoints, nit auth, HUD canvas |
+| `euca-agent` | HTTP API (axum), 72 endpoints, nit auth, HUD canvas |
 | `euca-editor` | egui editor: viewport, panels, gizmos, undo, scene save/load |
 | `euca-game` | Standalone game runner |
-| `euca-cli` | CLI tool: 20+ command groups |
+| `euca-cli` | CLI tool: 25 command groups |
 
 ## CLI Reference
 
