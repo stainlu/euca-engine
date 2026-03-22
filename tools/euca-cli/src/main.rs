@@ -191,6 +191,21 @@ enum Commands {
         output: String,
     },
 
+    /// Asset pipeline: info, optimize, LOD generation (offline, no engine needed)
+    Asset {
+        #[command(subcommand)]
+        command: AssetCommands,
+    },
+
+    /// Discover available commands (for AI agents and humans, works offline)
+    Discover {
+        /// Output as machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        /// Filter by group name (e.g., "entity", "asset")
+        group: Option<String>,
+    },
+
     // ── Hidden aliases for backward compatibility ──
     #[command(hide = true)]
     Observe {
@@ -937,6 +952,34 @@ enum FogCommands {
         /// Enable or disable fog
         #[arg(long)]
         enabled: Option<bool>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AssetCommands {
+    /// Show metadata about a glTF/glb asset file
+    Info {
+        /// Path to the asset file (.gltf or .glb)
+        file: String,
+    },
+    /// Run mesh optimization: dedup vertices, compute tangents, reorder for GPU cache
+    Optimize {
+        /// Input asset file (.gltf or .glb)
+        input: String,
+        /// Output stats file (JSON)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+    /// Generate LOD (Level of Detail) chain from a mesh
+    Lod {
+        /// Input asset file (.gltf or .glb)
+        input: String,
+        /// Output stats file (JSON)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Number of LOD levels to generate
+        #[arg(short, long, default_value = "4")]
+        levels: usize,
     },
 }
 
@@ -2020,6 +2063,16 @@ fn main() {
             Ok(())
         }
 
+        Commands::Discover { json, group } => {
+            run_discover(json, group.as_deref());
+            Ok(())
+        }
+
+        Commands::Asset { command } => {
+            run_asset(command);
+            Ok(())
+        }
+
         // ── Hidden backward-compat aliases ──
         Commands::Observe { entity } => {
             if let Some(id) = entity {
@@ -2390,6 +2443,335 @@ fn package_game(project_dir: &str, output_dir: &str) {
         let run_name = name.replace(' ', "-").to_lowercase();
         println!("Run with: cd {} && ./{}", out.display(), run_name);
     }
+}
+
+// ── Asset Pipeline: offline file-processing tools ──
+
+fn run_asset(command: AssetCommands) {
+    match command {
+        AssetCommands::Info { file } => run_asset_info(&file),
+        AssetCommands::Optimize { input, output } => run_asset_optimize(&input, output.as_deref()),
+        AssetCommands::Lod {
+            input,
+            output,
+            levels,
+        } => run_asset_lod(&input, output.as_deref(), levels),
+    }
+}
+
+fn run_asset_info(file: &str) {
+    let scene = match euca_asset::load_gltf(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to load asset: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut total_vertices: usize = 0;
+    let mut total_triangles: usize = 0;
+    let mut mesh_details = Vec::new();
+
+    for gm in &scene.meshes {
+        let verts = gm.mesh.vertices.len();
+        let tris = gm.mesh.indices.len() / 3;
+        total_vertices += verts;
+        total_triangles += tris;
+        mesh_details.push(serde_json::json!({
+            "name": gm.name.as_deref().unwrap_or("unnamed"),
+            "vertices": verts,
+            "triangles": tris,
+            "has_skin": gm.joint_indices.is_some(),
+        }));
+    }
+
+    let info = serde_json::json!({
+        "file": file,
+        "mesh_count": scene.meshes.len(),
+        "total_vertices": total_vertices,
+        "total_triangles": total_triangles,
+        "has_skeleton": scene.skeleton.is_some(),
+        "animation_count": scene.animations.len(),
+        "meshes": mesh_details,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&info).unwrap());
+}
+
+fn run_asset_optimize(input: &str, output: Option<&str>) {
+    let scene = match euca_asset::load_gltf(input) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to load asset: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut results = Vec::new();
+
+    for (i, gm) in scene.meshes.iter().enumerate() {
+        let name = gm.name.as_deref().unwrap_or("unnamed").to_string();
+        let before_verts = gm.mesh.vertices.len();
+        let before_tris = gm.mesh.indices.len() / 3;
+
+        let optimized = euca_asset::optimize_mesh(&gm.mesh);
+        let after_verts = optimized.vertices.len();
+        let after_tris = optimized.indices.len() / 3;
+
+        let dedup_ratio = if before_verts > 0 {
+            1.0 - (after_verts as f64 / before_verts as f64)
+        } else {
+            0.0
+        };
+
+        println!(
+            "  Mesh {i} \"{name}\": {before_verts} → {after_verts} vertices ({:.1}% reduction), {before_tris} → {after_tris} triangles",
+            dedup_ratio * 100.0,
+        );
+
+        results.push(serde_json::json!({
+            "name": name,
+            "vertices_before": before_verts,
+            "vertices_after": after_verts,
+            "triangles_before": before_tris,
+            "triangles_after": after_tris,
+            "dedup_ratio": format!("{:.3}", dedup_ratio),
+        }));
+    }
+
+    let stats = serde_json::json!({
+        "file": input,
+        "operation": "optimize",
+        "meshes": results,
+    });
+
+    if let Some(out_path) = output {
+        let json = serde_json::to_string_pretty(&stats).unwrap();
+        std::fs::write(out_path, json).expect("Failed to write stats file");
+        println!("  Stats written to {out_path}");
+    }
+}
+
+fn run_asset_lod(input: &str, output: Option<&str>, levels: usize) {
+    let scene = match euca_asset::load_gltf(input) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to load asset: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // Generate LOD ratios: 1.0, 0.5, 0.25, 0.125, ... for `levels` levels
+    let ratios: Vec<f32> = (0..levels).map(|i| 1.0 / (1 << i) as f32).collect();
+
+    let mut results = Vec::new();
+
+    for (i, gm) in scene.meshes.iter().enumerate() {
+        let name = gm.name.as_deref().unwrap_or("unnamed").to_string();
+
+        let lod_chain = euca_asset::generate_lod_chain(&gm.mesh, &ratios);
+
+        println!("  Mesh {i} \"{name}\":");
+        let mut lod_details = Vec::new();
+        for (level, lod_mesh) in lod_chain.iter().enumerate() {
+            let verts = lod_mesh.vertices.len();
+            let tris = lod_mesh.indices.len() / 3;
+            let ratio = ratios[level];
+            println!(
+                "    LOD {level}: {verts} vertices, {tris} triangles (target {:.0}%)",
+                ratio * 100.0
+            );
+            lod_details.push(serde_json::json!({
+                "level": level,
+                "target_ratio": ratio,
+                "vertices": verts,
+                "triangles": tris,
+            }));
+        }
+
+        results.push(serde_json::json!({
+            "name": name,
+            "lod_levels": lod_details,
+        }));
+    }
+
+    let stats = serde_json::json!({
+        "file": input,
+        "operation": "lod",
+        "levels": levels,
+        "ratios": ratios,
+        "meshes": results,
+    });
+
+    if let Some(out_path) = output {
+        let json = serde_json::to_string_pretty(&stats).unwrap();
+        std::fs::write(out_path, json).expect("Failed to write stats file");
+        println!("  Stats written to {out_path}");
+    }
+}
+
+// ── Discover: self-describing CLI for AI agents ──
+
+/// Commands that work offline (no engine running).
+const OFFLINE_COMMANDS: &[&str] = &["package", "asset", "discover"];
+
+#[derive(serde::Serialize)]
+struct CommandManifest {
+    version: String,
+    groups: Vec<GroupEntry>,
+}
+
+#[derive(serde::Serialize)]
+struct GroupEntry {
+    name: String,
+    description: String,
+    requires_engine: bool,
+    commands: Vec<CommandEntry>,
+}
+
+#[derive(serde::Serialize)]
+struct CommandEntry {
+    name: String,
+    description: String,
+    args: Vec<ArgEntry>,
+}
+
+#[derive(serde::Serialize)]
+struct ArgEntry {
+    name: String,
+    #[serde(rename = "type")]
+    arg_type: String,
+    required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<String>,
+    description: String,
+}
+
+fn run_discover(json: bool, group_filter: Option<&str>) {
+    use clap::CommandFactory;
+    let cmd = Cli::command();
+    let version = cmd.get_version().unwrap_or("0.4.0");
+
+    let mut groups: Vec<GroupEntry> = Vec::new();
+
+    for sub in cmd.get_subcommands() {
+        let name = sub.get_name().to_string();
+
+        // Skip hidden commands
+        if sub.is_hide_set() {
+            continue;
+        }
+
+        // Apply group filter
+        if let Some(filter) = group_filter
+            && !name.contains(filter)
+        {
+            continue;
+        }
+
+        let description = sub.get_about().map(|s| s.to_string()).unwrap_or_default();
+        let requires_engine = !OFFLINE_COMMANDS.contains(&name.as_str());
+
+        let mut commands = Vec::new();
+        let sub_subs: Vec<_> = sub.get_subcommands().collect();
+        if sub_subs.is_empty() {
+            // Leaf command (e.g., profile, status)
+            commands.push(CommandEntry {
+                name: name.clone(),
+                description: description.clone(),
+                args: collect_args(sub),
+            });
+        } else {
+            for child in sub_subs {
+                if child.is_hide_set() {
+                    continue;
+                }
+                commands.push(CommandEntry {
+                    name: child.get_name().to_string(),
+                    description: child.get_about().map(|s| s.to_string()).unwrap_or_default(),
+                    args: collect_args(child),
+                });
+            }
+        }
+
+        groups.push(GroupEntry {
+            name,
+            description,
+            requires_engine,
+            commands,
+        });
+    }
+
+    if json {
+        let manifest = CommandManifest {
+            version: version.to_string(),
+            groups,
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&manifest).expect("JSON serialization failed")
+        );
+    } else {
+        println!("Euca Engine CLI v{version}\n");
+        if group_filter.is_some() && groups.len() == 1 {
+            // Detailed view for a single group
+            let g = &groups[0];
+            let online = if g.requires_engine {
+                "requires engine"
+            } else {
+                "offline"
+            };
+            println!("  {} — {} ({})\n", g.name, g.description, online);
+            for cmd in &g.commands {
+                println!("    {} — {}", cmd.name, cmd.description);
+                for arg in &cmd.args {
+                    let req = if arg.required { " (required)" } else { "" };
+                    let def = arg
+                        .default
+                        .as_ref()
+                        .map(|d| format!(" [default: {d}]"))
+                        .unwrap_or_default();
+                    println!("      --{}: {}{}{}", arg.name, arg.arg_type, req, def);
+                }
+            }
+        } else {
+            // Overview of all groups
+            for g in &groups {
+                let online = if g.requires_engine { "" } else { " (offline)" };
+                println!("  {:<14} {}{}", g.name, g.description, online);
+            }
+            println!();
+            println!("Use --json for machine-readable output.");
+            println!("Use `euca discover <group>` to see group details.");
+        }
+    }
+}
+
+fn collect_args(cmd: &clap::Command) -> Vec<ArgEntry> {
+    cmd.get_arguments()
+        .filter(|a| a.get_id() != "help" && a.get_id() != "version")
+        .map(|a| {
+            let name = a.get_id().to_string();
+            let arg_type = if a.get_action().takes_values() {
+                "string".to_string()
+            } else {
+                "flag".to_string()
+            };
+            let required = a.is_required_set();
+            let default = a
+                .get_default_values()
+                .first()
+                .map(|v| v.to_string_lossy().to_string());
+            let description = a.get_help().map(|s| s.to_string()).unwrap_or_default();
+            ArgEntry {
+                name,
+                arg_type,
+                required,
+                default,
+                description,
+            }
+        })
+        .collect()
 }
 
 /// Recursively copy a directory.

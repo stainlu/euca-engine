@@ -10,7 +10,7 @@ pub use scene_file::{
 };
 pub use undo::UndoHistory;
 
-/// Editor state: tracks selection, play/pause, gizmo, undo history.
+/// Editor state: tracks selection, play/pause, gizmo, undo history, dirty tracking.
 pub struct EditorState {
     /// Currently selected entity index (if any).
     pub selected_entity: Option<u32>,
@@ -24,6 +24,10 @@ pub struct EditorState {
     pub gizmo: GizmoState,
     /// Undo/redo history.
     pub undo: UndoHistory,
+    /// Whether the scene has unsaved changes.
+    pub dirty: bool,
+    /// Elapsed time (seconds) when dirty was last set — used for auto-save debounce.
+    pub last_dirty_time: f64,
 }
 
 impl EditorState {
@@ -35,6 +39,8 @@ impl EditorState {
             reset_requested: false,
             gizmo: GizmoState::new(),
             undo: UndoHistory::new(),
+            dirty: false,
+            last_dirty_time: 0.0,
         }
     }
 
@@ -48,6 +54,12 @@ impl EditorState {
             return true;
         }
         false
+    }
+
+    /// Mark the scene as dirty (has unsaved changes). Resets debounce timer.
+    pub fn mark_dirty(&mut self, elapsed: f64) {
+        self.dirty = true;
+        self.last_dirty_time = elapsed;
     }
 }
 
@@ -99,5 +111,16 @@ mod tests {
     fn paused_does_not_tick() {
         let mut state = EditorState::new();
         assert!(!state.should_tick());
+    }
+
+    #[test]
+    fn dirty_tracking() {
+        let mut state = EditorState::new();
+        assert!(!state.dirty);
+        state.mark_dirty(1.0);
+        assert!(state.dirty);
+        assert_eq!(state.last_dirty_time, 1.0);
+        state.mark_dirty(3.5);
+        assert_eq!(state.last_dirty_time, 3.5);
     }
 }

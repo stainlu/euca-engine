@@ -191,7 +191,9 @@ pub fn hierarchy_panel(
 }
 
 /// Right panel: inspector for the selected entity.
-pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut World) {
+/// Returns `true` if a transform was changed via the inspector (for dirty tracking).
+pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut World) -> bool {
+    let mut transform_changed = false;
     egui::SidePanel::right("inspector")
         .default_width(280.0)
         .show(ctx, |ui| {
@@ -262,6 +264,7 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
                 if changed && let Some(lt) = world.get_mut::<LocalTransform>(entity) {
                     lt.0.translation = euca_math::Vec3::new(pos[0], pos[1], pos[2]);
                     lt.0.scale = euca_math::Vec3::new(scl[0], scl[1], scl[2]);
+                    transform_changed = true;
                 }
             }
 
@@ -275,6 +278,7 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
             reflect_component::<Collider>(ui, world, entity);
             reflect_component::<Velocity>(ui, world, entity);
         });
+    transform_changed
 }
 
 fn find_alive_entity(world: &World, index: u32) -> Option<Entity> {

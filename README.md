@@ -57,14 +57,16 @@ Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold 
 | **Animation** | Skeletal animation, blending, state machines, blend spaces, root motion, montages |
 | **Particles** | CPU particle emitters with gravity, color gradients |
 | **Terrain** | Heightmap, chunk-based LOD, 4-layer texture splatting, physics colliders, brush editing |
-| **Navigation** | Grid navmesh, A* pathfinding, steering behaviors |
-| **Networking** | UDP transport, interest culling, bandwidth budgeting |
+| **Navigation** | Grid navmesh, 8-connected A* pathfinding, path smoothing, RVO avoidance |
+| **Networking** | UDP + QUIC (Quinn) transport, interest culling, bandwidth budgeting |
 | **UI** | Runtime UI framework: anchored layout, flex, widgets, input routing, world-space UI |
 | **Scripting** | Embedded Lua (mlua), hot reload, sandboxing, ECS bridge, event handlers |
 | **Reflection** | Runtime field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` |
 | **Performance** | Frame profiler, ECS query caching, parallel system execution, Apple Silicon Metal optimization |
 | **Scale** | World streaming/chunk loading, hierarchical LOD, unified memory (Apple Silicon) |
-| **Editor** | egui: hierarchy, inspector, play/pause, gizmos, undo/redo |
+| **Editor** | egui: hierarchy, inspector, play/pause, gizmos, undo/redo, auto-save, hot-reload |
+| **Asset Pipeline** | `euca asset info/optimize/lod` — composable offline CLI tools for mesh processing |
+| **Agent Discovery** | `euca discover --json` — self-describing CLI manifest for AI agents |
 | **Diagnostics** | `euca diagnose` health check, `euca events` real-time debugging |
 
 ## Architecture
@@ -116,7 +118,7 @@ AI Agents (Claude Code, scripts, RL agents)
 | `euca-physics` | Collision layers/masks, mass, raycasting, scene queries, CCD, joints |
 | `euca-gameplay` | Health, damage, teams, combat, economy, leveling, abilities, rules, AI |
 | `euca-audio` | Spatial audio (kira): bus mixing, reverb zones, occlusion, priority |
-| `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload |
+| `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload, LOD, mesh optimization |
 | `euca-animation` | Animation blending, state machines, blend spaces, root motion, montages |
 | `euca-particle` | CPU particle emitters with gravity, color gradients |
 | `euca-terrain` | Heightmap terrain, chunk LOD, texture splatting, physics, brush editing |
@@ -127,7 +129,7 @@ AI Agents (Claude Code, scripts, RL agents)
 | `euca-ui` | Runtime UI: anchored layout, flex, widgets, input routing, world-space UI |
 | `euca-script` | Lua scripting (mlua): hot reload, sandboxing, ECS bridge, event handlers |
 | `euca-agent` | HTTP API (axum), 72 endpoints, nit auth, HUD canvas |
-| `euca-editor` | egui editor: viewport, panels, gizmos, undo, scene save/load |
+| `euca-editor` | egui editor: viewport, panels, gizmos, undo, scene save/load, auto-save |
 | `euca-game` | Standalone game runner |
 | `euca-cli` | CLI tool: 25 command groups |
 

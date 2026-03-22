@@ -1,7 +1,7 @@
 ---
 name: eucaengine
 description: ECS-first, agent-native game engine in Rust
-version: 0.1.0
+version: 0.4.0
 auth: nit
 protocol: cli
 ---
@@ -580,6 +580,46 @@ euca entity create --mesh cube --position 0,5,0 --physics Dynamic --collider aab
 euca entity create --mesh sphere --position 0,10,0 --physics Dynamic --collider sphere:0.5 --color blue
 euca sim play && sleep 2 && euca sim pause
 euca screenshot
+```
+
+### Asset Pipeline (offline)
+
+These commands work without the engine running — they process files directly.
+
+```bash
+# Show metadata about a glTF/glb file
+euca asset info model.glb
+
+# Run mesh optimization (dedup, tangents, cache reorder)
+euca asset optimize model.glb
+euca asset optimize model.glb -o stats.json   # Save stats to file
+
+# Generate LOD chain
+euca asset lod model.glb --levels 4
+euca asset lod model.glb --levels 6 -o lod_stats.json
+```
+
+### Discover (offline)
+
+Self-describing CLI for AI agents and humans. Always in sync with actual commands.
+
+```bash
+# Human-readable overview of all command groups
+euca discover
+
+# Machine-readable JSON manifest (for AI agents)
+euca discover --json
+
+# Details for a specific group
+euca discover entity
+euca discover asset
+```
+
+### Package (offline)
+
+```bash
+# Package game for distribution
+euca package --project . --output dist/
 ```
 
 ## Output

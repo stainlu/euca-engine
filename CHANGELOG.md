@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.4.0 (2026-03-23)
+
+### File-System-First Architecture
+Inspired by the "environment IS state" paradigm — the file system is now the canonical source of truth.
+
+- **File-watching hot reload**: Editor polls level and asset directories every ~1 second. External edits (e.g., in VSCode) are detected and the viewport reloads automatically
+- **Auto-save / journaling**: Dirty tracking on entity edits (spawn, despawn, gizmo drag, inspector). Debounced auto-save to `.euca_autosave.json` after 5 seconds of inactivity. Startup recovery detection
+- **Enhanced FileWatcher**: Added `watch_file()` for individual files, improved test coverage
+
+### Composable CLI Asset Pipeline
+Offline file-processing tools following the Unix philosophy — each does one thing, outputs JSON.
+
+- `euca asset info <file>` — Show glTF metadata (mesh count, vertices, triangles, skeleton, animations)
+- `euca asset optimize <file>` — Run mesh optimization (dedup, tangents, cache reorder) and report stats
+- `euca asset lod <file> --levels N` — Generate LOD chain with QEM simplification, report per-level stats
+
+### AI Agent Discoverability
+Self-describing CLI — always in sync because it's generated from clap definitions.
+
+- `euca discover` — Human-readable overview of all 30+ command groups
+- `euca discover --json` — Machine-readable JSON manifest with all commands, args, types, and descriptions
+- `euca discover <group>` — Detailed view of a specific group (e.g., `euca discover entity`)
+- Tags each command with `requires_engine` flag (offline vs. online)
+
+### Editor
+- Inspector panel returns dirty signal for auto-save tracking
+- Level entities appear in viewport on selection (carried from v0.3.0)
+
+### Infrastructure
+- 720+ tests
+- Version bump to 0.4.0
+
 ## v0.3.0 (2026-03-21)
 
 ### Rendering

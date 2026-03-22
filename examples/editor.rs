@@ -25,6 +25,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 const AGENT_PORT: u16 = 3917;
+const AUTOSAVE_FILE: &str = ".euca_autosave.json";
 
 // ---------------------------------------------------------------------------
 // Helper functions extracted from EditorApp to keep methods focused
@@ -715,6 +716,10 @@ struct EditorApp {
     plane_mesh: Option<MeshHandle>,
     /// Parallel gameplay system schedule (built once, run each tick).
     gameplay_schedule: euca_ecs::ParallelSchedule,
+    /// File watcher for hot-reloading levels and assets on external changes.
+    file_watcher: euca_asset::FileWatcher,
+    /// Frame counter for throttling file watcher polls.
+    poll_counter: u64,
 }
 
 impl EditorApp {
@@ -759,11 +764,25 @@ impl EditorApp {
             was_playing_last_frame: false,
             plane_mesh: None,
             gameplay_schedule: build_gameplay_schedule(),
+            file_watcher: euca_asset::FileWatcher::new(),
+            poll_counter: 0,
         };
         app.available_levels = Self::scan_level_files();
         if !app.available_levels.is_empty() {
             app.selected_level = Some(0);
         }
+
+        // Watch level directories for hot-reload
+        app.file_watcher.watch(".");
+        if std::path::Path::new("levels").is_dir() {
+            app.file_watcher.watch("levels");
+        }
+        if std::path::Path::new("assets").is_dir() {
+            app.file_watcher.watch("assets");
+        }
+        // Seed initial modification times
+        app.file_watcher.poll();
+
         app
     }
 
@@ -933,6 +952,32 @@ impl EditorApp {
         if self.editor_state.reset_requested {
             self.editor_state.reset_requested = false;
             self.reset_scene();
+        }
+
+        // Hot-reload: poll for external file changes every ~60 frames (~1 second at 60fps).
+        self.poll_counter += 1;
+        if self.poll_counter % 60 == 0 && !self.editor_state.playing {
+            let changed_files = self.file_watcher.poll().to_vec();
+            for path in &changed_files {
+                // Check if the changed file is the currently loaded level
+                if let Some(level_idx) = self.selected_level {
+                    if let Some(level_path) = self.available_levels.get(level_idx) {
+                        let level_canonical = std::path::Path::new(level_path).canonicalize().ok();
+                        let changed_canonical = path.canonicalize().ok();
+                        if level_canonical.is_some() && level_canonical == changed_canonical {
+                            log::info!("Level file changed externally, reloading...");
+                            self.load_selected_level();
+                            break;
+                        }
+                    }
+                }
+
+                // Log other asset changes (future: trigger asset hot-reload)
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if matches!(ext, "glb" | "gltf" | "png" | "jpg" | "wav" | "ogg") {
+                    log::info!("Asset changed: {}", path.display());
+                }
+            }
         }
 
         // Detect level selection change — reload entities in editor viewport.
@@ -1176,7 +1221,11 @@ impl EditorApp {
             );
             if !playing {
                 spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
-                inspector_panel(ctx, &mut self.editor_state, world);
+                let inspector_changed = inspector_panel(ctx, &mut self.editor_state, world);
+                if inspector_changed {
+                    let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
+                    self.editor_state.mark_dirty(elapsed);
+                }
             }
             draw_health_bars(ctx, world, aspect);
             draw_hud_overlay(ctx, world);
@@ -1194,6 +1243,7 @@ impl EditorApp {
                         log::error!("Save failed: {e}");
                     } else {
                         log::info!("Scene saved to scene.json");
+                        self.editor_state.dirty = false;
                     }
                 }
                 ToolbarAction::LoadScene => match SceneFile::load("scene.json") {
@@ -1264,6 +1314,22 @@ impl EditorApp {
                 .push(euca_editor::undo::UndoAction::SpawnEntity {
                     entity_index: e.index(),
                 });
+            let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
+            self.editor_state.mark_dirty(elapsed);
+        }
+
+        // Auto-save: debounced, 5 seconds after last change (only when not playing)
+        if self.editor_state.dirty && !self.editor_state.playing {
+            let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
+            if elapsed - self.editor_state.last_dirty_time > 5.0 {
+                let scene = SceneFile::capture(world);
+                if let Err(e) = scene.save(AUTOSAVE_FILE) {
+                    log::error!("Auto-save failed: {e}");
+                } else {
+                    log::info!("Auto-saved to {AUTOSAVE_FILE}");
+                }
+                self.editor_state.dirty = false;
+            }
         }
 
         if let Some(p) = world.resource_mut::<Profiler>() {
@@ -1370,6 +1436,13 @@ impl ApplicationHandler for EditorApp {
             self.setup_scene();
             self.load_selected_level();
 
+            // Check for auto-save recovery
+            if std::path::Path::new(AUTOSAVE_FILE).exists() {
+                log::warn!(
+                    "Auto-save file found ({AUTOSAVE_FILE}). Use File > Load to recover unsaved work."
+                );
+            }
+
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 .enable_all()
@@ -1428,6 +1501,7 @@ impl ApplicationHandler for EditorApp {
                         let mesh = world.get::<MeshRenderer>(e).map(|mr| mr.mesh);
                         let material = world.get::<MaterialRef>(e).map(|mr| mr.handle);
                         let collider = world.get::<Collider>(e).cloned();
+                        let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
                         world.despawn(e);
                         self.editor_state
                             .undo
@@ -1438,6 +1512,7 @@ impl ApplicationHandler for EditorApp {
                                 material,
                                 collider,
                             });
+                        self.editor_state.mark_dirty(elapsed);
                     }
                     self.editor_state.selected_entity = None;
                 }
@@ -1742,8 +1817,10 @@ impl EditorApp {
                     .get::<LocalTransform>(entity)
                     .map(|lt| lt.0)
                     .unwrap_or_default();
+                let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
                 drop(pool);
                 self.editor_state.undo.end_drag(current);
+                self.editor_state.mark_dirty(elapsed);
             } else {
                 drop(pool);
                 self.editor_state.undo.cancel_drag();
