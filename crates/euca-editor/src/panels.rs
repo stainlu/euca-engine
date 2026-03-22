@@ -31,12 +31,14 @@ pub enum ToolbarAction {
     LoadScene,
 }
 
-/// Top toolbar: Play/Pause/Step controls + Save/Load + info + FPS.
+/// Top toolbar: Play/Pause/Step controls + Level selector + Save/Load + info + FPS.
 pub fn toolbar_panel(
     ctx: &egui::Context,
     state: &mut EditorState,
     world: &World,
     delta_time: f32,
+    available_levels: &[String],
+    selected_level: &mut Option<usize>,
 ) -> Option<ToolbarAction> {
     let mut action = None;
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
@@ -57,6 +59,36 @@ pub fn toolbar_panel(
                 state.playing = false;
                 state.reset_requested = true;
             }
+
+            ui.separator();
+
+            // Level selector dropdown (disabled during play)
+            ui.add_enabled_ui(!state.playing, |ui| {
+                let current_label = selected_level
+                    .and_then(|i| available_levels.get(i))
+                    .map(|s| s.as_str())
+                    .unwrap_or("(No level)");
+
+                egui::ComboBox::from_id_salt("level_select")
+                    .selected_text(current_label)
+                    .width(160.0)
+                    .show_ui(ui, |ui| {
+                        // "(No level)" option
+                        if ui
+                            .selectable_label(selected_level.is_none(), "(No level)")
+                            .clicked()
+                        {
+                            *selected_level = None;
+                        }
+                        // Available level files
+                        for (i, name) in available_levels.iter().enumerate() {
+                            let is_selected = *selected_level == Some(i);
+                            if ui.selectable_label(is_selected, name).clicked() {
+                                *selected_level = Some(i);
+                            }
+                        }
+                    });
+            });
 
             ui.separator();
 

@@ -703,8 +703,10 @@ struct EditorApp {
     ctrl_held: bool,
     shift_held: bool,
     _tokio_rt: Option<tokio::runtime::Runtime>,
-    /// Path to a level JSON file loaded when Play is pressed.
-    level_path: Option<String>,
+    /// Discovered level files (scanned from current dir + levels/ subdirectory).
+    available_levels: Vec<String>,
+    /// Index into `available_levels` for the currently selected level.
+    selected_level: Option<usize>,
     /// Tracks previous frame's play state to detect play-start transitions.
     was_playing_last_frame: bool,
     /// Ground plane mesh handle — outlines are skipped for this mesh.
@@ -720,7 +722,7 @@ impl EditorApp {
         setup_default_resources(&mut world);
         let shared = SharedWorld::new(world, Schedule::new());
 
-        Self {
+        let mut app = Self {
             shared,
             survey,
             wgpu_instance,
@@ -749,29 +751,55 @@ impl EditorApp {
             ctrl_held: false,
             shift_held: false,
             _tokio_rt: None,
-            level_path: Self::detect_level_file(),
+            available_levels: Vec::new(),
+            selected_level: None,
             was_playing_last_frame: false,
             plane_mesh: None,
             gameplay_schedule: build_gameplay_schedule(),
+        };
+        app.available_levels = Self::scan_level_files();
+        if !app.available_levels.is_empty() {
+            app.selected_level = Some(0);
         }
+        app
     }
 
-    /// Auto-detect a level file in the current directory.
-    /// Looks for `level.json` or any `*.level.json` file.
-    fn detect_level_file() -> Option<String> {
+    /// Scan for level files in the current directory and `levels/` subdirectory.
+    /// Returns all discovered `.level.json` and `level.json` files.
+    fn scan_level_files() -> Vec<String> {
+        let mut files = Vec::new();
+
+        // Check current directory
         if std::path::Path::new("level.json").exists() {
-            return Some("level.json".to_string());
+            files.push("level.json".to_string());
         }
         if let Ok(entries) = std::fs::read_dir(".") {
             for entry in entries.flatten() {
                 let name = entry.file_name();
-                let name = name.to_string_lossy();
+                let name = name.to_string_lossy().to_string();
                 if name.ends_with(".level.json") {
-                    return Some(name.to_string());
+                    files.push(name);
                 }
             }
         }
-        None
+
+        // Check levels/ subdirectory
+        if let Ok(entries) = std::fs::read_dir("levels") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy().to_string();
+                if name.ends_with(".json") {
+                    files.push(format!("levels/{name}"));
+                }
+            }
+        }
+
+        files.sort();
+        files.dedup();
+        if !files.is_empty() {
+            log::info!("Discovered {} level files: {:?}", files.len(), files);
+        }
+        files
     }
 
     fn setup_scene(&mut self) {
@@ -890,17 +918,19 @@ impl EditorApp {
 
         // Detect play-start transition: load level file and auto-follow hero.
         if self.editor_state.playing && !self.was_playing_last_frame {
-            // Load level file if one is configured
-            if let Some(ref path) = self.level_path {
-                match std::fs::read_to_string(path) {
-                    Ok(data) => match serde_json::from_str::<serde_json::Value>(&data) {
-                        Ok(level) => {
-                            let count = euca_agent::load_level_into_world(world, &level);
-                            log::info!("Level loaded: {count} entities from {path}");
-                        }
-                        Err(e) => log::error!("Invalid level JSON in {path}: {e}"),
-                    },
-                    Err(e) => log::error!("Cannot read level file {path}: {e}"),
+            // Load the selected level file
+            if let Some(idx) = self.selected_level {
+                if let Some(path) = self.available_levels.get(idx) {
+                    match std::fs::read_to_string(path) {
+                        Ok(data) => match serde_json::from_str::<serde_json::Value>(&data) {
+                            Ok(level) => {
+                                let count = euca_agent::load_level_into_world(world, &level);
+                                log::info!("Level loaded: {count} entities from {path}");
+                            }
+                            Err(e) => log::error!("Invalid level JSON in {path}: {e}"),
+                        },
+                        Err(e) => log::error!("Cannot read level file {path}: {e}"),
+                    }
                 }
             }
             // Auto-detect PlayerHero and set camera follow
@@ -1092,7 +1122,14 @@ impl EditorApp {
         let playing = self.editor_state.playing;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             let dt = world.resource::<Time>().map(|t| t.delta).unwrap_or(0.0);
-            toolbar_action = toolbar_panel(ctx, &mut self.editor_state, world, dt);
+            toolbar_action = toolbar_panel(
+                ctx,
+                &mut self.editor_state,
+                world,
+                dt,
+                &self.available_levels,
+                &mut self.selected_level,
+            );
             if !playing {
                 spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
                 inspector_panel(ctx, &mut self.editor_state, world);
