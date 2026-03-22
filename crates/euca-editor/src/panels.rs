@@ -118,19 +118,26 @@ pub fn toolbar_panel(
     action
 }
 
-/// Entity spawn request from the hierarchy panel.
+/// Entity spawn request from the hierarchy or content browser panel.
 #[derive(Clone, Debug)]
 pub enum SpawnRequest {
     Empty,
     Cube,
     Sphere,
+    Plane,
+    Cylinder,
+    Cone,
 }
 
 /// Left panel: entity hierarchy list.
+///
+/// `shift_held` controls multi-select behaviour: normal click replaces
+/// selection, shift-click adds to the existing selection.
 pub fn hierarchy_panel(
     ctx: &egui::Context,
     state: &mut EditorState,
     world: &World,
+    shift_held: bool,
 ) -> Option<SpawnRequest> {
     let mut spawn = None;
     egui::SidePanel::left("hierarchy")
@@ -168,7 +175,7 @@ pub fn hierarchy_panel(
                 };
 
                 for (entity, has_mesh, has_transform, has_physics) in entities {
-                    let selected = state.selected_entity == Some(entity.index());
+                    let selected = state.is_selected(entity.index());
 
                     let mut label = format!("Entity {}", entity);
                     if has_mesh {
@@ -182,7 +189,11 @@ pub fn hierarchy_panel(
                     }
 
                     if ui.selectable_label(selected, &label).clicked() {
-                        state.selected_entity = Some(entity.index());
+                        if shift_held {
+                            state.add_select(entity.index());
+                        } else {
+                            state.select(entity.index());
+                        }
                     }
                 }
             });
@@ -200,7 +211,16 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
             ui.heading("Inspector");
             ui.separator();
 
-            let entity_idx = match state.selected_entity {
+            // Multiple selection: show count label instead of component details
+            if state.selected_entities.len() > 1 {
+                ui.label(format!(
+                    "{} entities selected",
+                    state.selected_entities.len()
+                ));
+                return;
+            }
+
+            let entity_idx = match state.primary_selected() {
                 Some(idx) => idx,
                 None => {
                     ui.label("No entity selected");
@@ -214,7 +234,7 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
                 Some(e) => e,
                 None => {
                     ui.label(format!("Entity {} not found", entity_idx));
-                    state.selected_entity = None;
+                    state.clear_selection();
                     return;
                 }
             };
@@ -279,6 +299,31 @@ pub fn inspector_panel(ctx: &egui::Context, state: &mut EditorState, world: &mut
             reflect_component::<Velocity>(ui, world, entity);
         });
     transform_changed
+}
+
+/// Bottom panel: content browser showing built-in meshes to spawn.
+pub fn content_browser_panel(ctx: &egui::Context, _state: &EditorState) -> Option<SpawnRequest> {
+    let mut spawn = None;
+    egui::TopBottomPanel::bottom("content_browser")
+        .default_height(60.0)
+        .show(ctx, |ui| {
+            ui.heading("Content Browser");
+            ui.horizontal(|ui| {
+                let meshes: &[(&str, SpawnRequest)] = &[
+                    ("Cube", SpawnRequest::Cube),
+                    ("Sphere", SpawnRequest::Sphere),
+                    ("Plane", SpawnRequest::Plane),
+                    ("Cylinder", SpawnRequest::Cylinder),
+                    ("Cone", SpawnRequest::Cone),
+                ];
+                for (label, request) in meshes {
+                    if ui.button(*label).clicked() {
+                        spawn = Some(request.clone());
+                    }
+                }
+            });
+        });
+    spawn
 }
 
 fn find_alive_entity(world: &World, index: u32) -> Option<Entity> {

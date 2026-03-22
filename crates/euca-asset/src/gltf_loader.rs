@@ -13,6 +13,23 @@ pub struct GltfMesh {
     pub joint_indices: Option<Vec<[u16; 4]>>,
     /// Per-vertex joint weights (4 weights per vertex). Present if model has a skin.
     pub joint_weights: Option<Vec<[f32; 4]>>,
+    /// Index into `GltfScene::images` for the albedo (base color) texture.
+    pub albedo_tex_index: Option<usize>,
+    /// Index into `GltfScene::images` for the normal map texture.
+    pub normal_tex_index: Option<usize>,
+    /// Index into `GltfScene::images` for the metallic-roughness texture.
+    pub metallic_roughness_tex_index: Option<usize>,
+    /// Index into `GltfScene::images` for the ambient occlusion texture.
+    pub ao_tex_index: Option<usize>,
+    /// Index into `GltfScene::images` for the emissive texture.
+    pub emissive_tex_index: Option<usize>,
+}
+
+/// An image extracted from a glTF file, converted to RGBA8.
+pub struct GltfImage {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// A complete glTF scene: all meshes with their materials.
@@ -22,15 +39,150 @@ pub struct GltfScene {
     pub skeleton: Option<Skeleton>,
     /// Animation clips (if the model has animations).
     pub animations: Vec<AnimationClipData>,
+    /// Texture images extracted from the file, in RGBA8 format.
+    pub images: Vec<GltfImage>,
 }
 
-/// Load a glTF/glb file, extracting meshes and PBR materials.
+/// Convert glTF image data to RGBA8 format.
+fn convert_to_rgba8(data: &gltf::image::Data) -> Vec<u8> {
+    use gltf::image::Format;
+    match data.format {
+        Format::R8G8B8A8 => data.pixels.clone(),
+        Format::R8G8B8 => {
+            let pixel_count = data.pixels.len() / 3;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(3) {
+                rgba.extend_from_slice(chunk);
+                rgba.push(255);
+            }
+            rgba
+        }
+        Format::R8 => {
+            let mut rgba = Vec::with_capacity(data.pixels.len() * 4);
+            for &v in &data.pixels {
+                rgba.extend_from_slice(&[v, v, v, 255]);
+            }
+            rgba
+        }
+        Format::R8G8 => {
+            let pixel_count = data.pixels.len() / 2;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(2) {
+                rgba.extend_from_slice(&[chunk[0], chunk[1], 0, 255]);
+            }
+            rgba
+        }
+        // 16-bit formats: downsample to 8-bit
+        Format::R16 => {
+            let pixel_count = data.pixels.len() / 2;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(2) {
+                let v = u16::from_le_bytes([chunk[0], chunk[1]]);
+                let v8 = (v >> 8) as u8;
+                rgba.extend_from_slice(&[v8, v8, v8, 255]);
+            }
+            rgba
+        }
+        Format::R16G16 => {
+            let pixel_count = data.pixels.len() / 4;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(4) {
+                let r = (u16::from_le_bytes([chunk[0], chunk[1]]) >> 8) as u8;
+                let g = (u16::from_le_bytes([chunk[2], chunk[3]]) >> 8) as u8;
+                rgba.extend_from_slice(&[r, g, 0, 255]);
+            }
+            rgba
+        }
+        Format::R16G16B16 => {
+            let pixel_count = data.pixels.len() / 6;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(6) {
+                let r = (u16::from_le_bytes([chunk[0], chunk[1]]) >> 8) as u8;
+                let g = (u16::from_le_bytes([chunk[2], chunk[3]]) >> 8) as u8;
+                let b = (u16::from_le_bytes([chunk[4], chunk[5]]) >> 8) as u8;
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+            rgba
+        }
+        Format::R16G16B16A16 => {
+            let pixel_count = data.pixels.len() / 8;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(8) {
+                let r = (u16::from_le_bytes([chunk[0], chunk[1]]) >> 8) as u8;
+                let g = (u16::from_le_bytes([chunk[2], chunk[3]]) >> 8) as u8;
+                let b = (u16::from_le_bytes([chunk[4], chunk[5]]) >> 8) as u8;
+                let a = (u16::from_le_bytes([chunk[6], chunk[7]]) >> 8) as u8;
+                rgba.extend_from_slice(&[r, g, b, a]);
+            }
+            rgba
+        }
+        // 32-bit float formats: convert to 8-bit with clamping
+        Format::R32G32B32FLOAT => {
+            let pixel_count = data.pixels.len() / 12;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(12) {
+                let r = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                let g = f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+                let b = f32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+                rgba.extend_from_slice(&[
+                    (r.clamp(0.0, 1.0) * 255.0) as u8,
+                    (g.clamp(0.0, 1.0) * 255.0) as u8,
+                    (b.clamp(0.0, 1.0) * 255.0) as u8,
+                    255,
+                ]);
+            }
+            rgba
+        }
+        Format::R32G32B32A32FLOAT => {
+            let pixel_count = data.pixels.len() / 16;
+            let mut rgba = Vec::with_capacity(pixel_count * 4);
+            for chunk in data.pixels.chunks_exact(16) {
+                let r = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                let g = f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+                let b = f32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+                let a = f32::from_le_bytes([chunk[12], chunk[13], chunk[14], chunk[15]]);
+                rgba.extend_from_slice(&[
+                    (r.clamp(0.0, 1.0) * 255.0) as u8,
+                    (g.clamp(0.0, 1.0) * 255.0) as u8,
+                    (b.clamp(0.0, 1.0) * 255.0) as u8,
+                    (a.clamp(0.0, 1.0) * 255.0) as u8,
+                ]);
+            }
+            rgba
+        }
+    }
+}
+
+/// Get the image index for a glTF texture reference.
+fn texture_image_index(tex_info: &gltf::texture::Info<'_>) -> usize {
+    tex_info.texture().source().index()
+}
+
+/// Load a glTF/glb file, extracting meshes, PBR materials, and texture images.
 ///
-/// Returns a `GltfScene` containing all meshes found in the file.
+/// Returns a `GltfScene` containing all meshes and images found in the file.
+/// Texture images are returned as RGBA8 data — the caller uploads them to the GPU.
 pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
     let path = path.as_ref();
-    let (document, buffers, _images) =
+    let (document, buffers, raw_images) =
         gltf::import(path).map_err(|e| format!("Failed to load glTF '{}': {e}", path.display()))?;
+
+    // Convert all images to RGBA8
+    let images: Vec<GltfImage> = raw_images
+        .iter()
+        .map(|img| {
+            let pixels = convert_to_rgba8(img);
+            GltfImage {
+                pixels,
+                width: img.width,
+                height: img.height,
+            }
+        })
+        .collect();
+
+    if !images.is_empty() {
+        log::info!("Extracted {} texture images from glTF", images.len());
+    }
 
     let mut scene_meshes = Vec::new();
 
@@ -88,17 +240,50 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
                 })
                 .collect();
 
-            // Extract PBR material
-            let pbr = primitive.material().pbr_metallic_roughness();
+            // Extract PBR material with texture references
+            let gltf_mat = primitive.material();
+            let pbr = gltf_mat.pbr_metallic_roughness();
             let base_color = pbr.base_color_factor();
-            let material = Material::new(base_color, pbr.metallic_factor(), pbr.roughness_factor());
+            let mut material =
+                Material::new(base_color, pbr.metallic_factor(), pbr.roughness_factor());
+
+            // Extract emissive factor
+            let emissive = gltf_mat.emissive_factor();
+            if emissive != [0.0, 0.0, 0.0] {
+                material = material.with_emissive(emissive);
+            }
+
+            // Extract texture indices (caller will map these to TextureHandles)
+            let albedo_tex_index = pbr.base_color_texture().map(|t| texture_image_index(&t));
+            let metallic_roughness_tex_index = pbr
+                .metallic_roughness_texture()
+                .map(|t| texture_image_index(&t));
+            let normal_tex_index = gltf_mat
+                .normal_texture()
+                .map(|t| t.texture().source().index());
+            let ao_tex_index = gltf_mat
+                .occlusion_texture()
+                .map(|t| t.texture().source().index());
+            let emissive_tex_index = gltf_mat.emissive_texture().map(|t| texture_image_index(&t));
+
+            let tex_count = [
+                albedo_tex_index,
+                normal_tex_index,
+                metallic_roughness_tex_index,
+                ao_tex_index,
+                emissive_tex_index,
+            ]
+            .iter()
+            .filter(|t| t.is_some())
+            .count();
 
             log::info!(
-                "Loaded mesh '{}': {} vertices, {} indices, albedo={:?}",
+                "Loaded mesh '{}': {} vertices, {} indices, albedo={:?}, textures={}",
                 mesh_name.as_deref().unwrap_or("unnamed"),
                 vertices.len(),
                 indices.len(),
                 &base_color[..3],
+                tex_count,
             );
 
             scene_meshes.push(GltfMesh {
@@ -107,6 +292,11 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
                 name: mesh_name.clone(),
                 joint_indices,
                 joint_weights,
+                albedo_tex_index,
+                normal_tex_index,
+                metallic_roughness_tex_index,
+                ao_tex_index,
+                emissive_tex_index,
             });
         }
     }
@@ -132,6 +322,7 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
         meshes: scene_meshes,
         skeleton,
         animations,
+        images,
     })
 }
 
@@ -143,5 +334,45 @@ mod tests {
     fn load_nonexistent_file() {
         let result = load_gltf("nonexistent.glb");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn convert_rgb_to_rgba() {
+        let data = gltf::image::Data {
+            pixels: vec![255, 0, 0, 0, 255, 0, 0, 0, 255],
+            format: gltf::image::Format::R8G8B8,
+            width: 3,
+            height: 1,
+        };
+        let rgba = convert_to_rgba8(&data);
+        assert_eq!(rgba.len(), 12); // 3 pixels * 4 channels
+        assert_eq!(&rgba[0..4], &[255, 0, 0, 255]); // Red
+        assert_eq!(&rgba[4..8], &[0, 255, 0, 255]); // Green
+        assert_eq!(&rgba[8..12], &[0, 0, 255, 255]); // Blue
+    }
+
+    #[test]
+    fn convert_r8_to_rgba() {
+        let data = gltf::image::Data {
+            pixels: vec![128],
+            format: gltf::image::Format::R8,
+            width: 1,
+            height: 1,
+        };
+        let rgba = convert_to_rgba8(&data);
+        assert_eq!(rgba, vec![128, 128, 128, 255]);
+    }
+
+    #[test]
+    fn convert_rgba_passthrough() {
+        let pixels = vec![10, 20, 30, 40];
+        let data = gltf::image::Data {
+            pixels: pixels.clone(),
+            format: gltf::image::Format::R8G8B8A8,
+            width: 1,
+            height: 1,
+        };
+        let rgba = convert_to_rgba8(&data);
+        assert_eq!(rgba, pixels);
     }
 }

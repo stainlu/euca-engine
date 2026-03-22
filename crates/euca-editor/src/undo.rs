@@ -23,6 +23,19 @@ pub enum UndoAction {
         material: Option<MaterialHandle>,
         collider: Option<Collider>,
     },
+    /// Multiple entities were spawned at once (e.g. paste).
+    SpawnMultiple { entity_indices: Vec<u32> },
+    /// Multiple entities were despawned at once.
+    #[allow(clippy::type_complexity)]
+    DespawnMultiple {
+        entities: Vec<(
+            u32,
+            Transform,
+            Option<MeshHandle>,
+            Option<MaterialHandle>,
+            Option<Collider>,
+        )>,
+    },
 }
 
 /// Stack-based undo/redo history with drag debouncing.
@@ -172,6 +185,45 @@ fn apply_inverse(world: &mut World, action: &UndoAction) -> UndoAction {
             }
             UndoAction::SpawnEntity {
                 entity_index: e.index(),
+            }
+        }
+        UndoAction::SpawnMultiple { entity_indices } => {
+            // Reverse of spawn-multiple = despawn all. Capture state first.
+            let mut captured = Vec::new();
+            for idx in entity_indices {
+                if let Some(entity) = crate::find_alive_entity(world, *idx) {
+                    let transform = world
+                        .get::<LocalTransform>(entity)
+                        .map(|lt| lt.0)
+                        .unwrap_or_default();
+                    let mesh = world.get::<MeshRenderer>(entity).map(|mr| mr.mesh);
+                    let material = world.get::<MaterialRef>(entity).map(|mr| mr.handle);
+                    let collider = world.get::<Collider>(entity).cloned();
+                    world.despawn(entity);
+                    captured.push((*idx, transform, mesh, material, collider));
+                }
+            }
+            UndoAction::DespawnMultiple { entities: captured }
+        }
+        UndoAction::DespawnMultiple { entities } => {
+            // Reverse of despawn-multiple = respawn all with stored data
+            let mut spawned_indices = Vec::with_capacity(entities.len());
+            for (_idx, transform, mesh, material, collider) in entities {
+                let e = world.spawn(LocalTransform(*transform));
+                world.insert(e, GlobalTransform::default());
+                if let Some(m) = mesh {
+                    world.insert(e, MeshRenderer { mesh: *m });
+                }
+                if let Some(m) = material {
+                    world.insert(e, MaterialRef { handle: *m });
+                }
+                if let Some(c) = collider {
+                    world.insert(e, c.clone());
+                }
+                spawned_indices.push(e.index());
+            }
+            UndoAction::SpawnMultiple {
+                entity_indices: spawned_indices,
             }
         }
     }

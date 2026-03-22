@@ -2485,6 +2485,20 @@ fn run_asset_info(file: &str) {
         }));
     }
 
+    let image_details: Vec<_> = scene
+        .images
+        .iter()
+        .enumerate()
+        .map(|(i, img)| {
+            serde_json::json!({
+                "index": i,
+                "width": img.width,
+                "height": img.height,
+                "size_bytes": img.pixels.len(),
+            })
+        })
+        .collect();
+
     let info = serde_json::json!({
         "file": file,
         "mesh_count": scene.meshes.len(),
@@ -2492,7 +2506,9 @@ fn run_asset_info(file: &str) {
         "total_triangles": total_triangles,
         "has_skeleton": scene.skeleton.is_some(),
         "animation_count": scene.animations.len(),
+        "texture_count": scene.images.len(),
         "meshes": mesh_details,
+        "textures": image_details,
     });
 
     println!("{}", serde_json::to_string_pretty(&info).unwrap());

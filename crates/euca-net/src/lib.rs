@@ -12,7 +12,9 @@ mod transport;
 pub use bandwidth::{BandwidthBudget, PriorityCalculator, select_entities_for_replication};
 pub use client::GameClient;
 pub use interest::{InterestConfig, InterestManager, interest_culling_system};
-pub use prediction::ClientPrediction;
+pub use prediction::{
+    ClientPrediction, apply_prediction_system, reconcile_entity, record_prediction_for_entity,
+};
 pub use protocol::{ClientMessage, EntityState, NetworkId, Replicated, ServerMessage};
 pub use quic_transport::{QuicTransport, generate_self_signed_cert};
 pub use replication::{

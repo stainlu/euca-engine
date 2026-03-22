@@ -7,8 +7,8 @@ use euca_core::{Profiler, Time, profiler_begin, profiler_end};
 use euca_ecs::Events;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
-    EditorState, SceneFile, SpawnRequest, ToolbarAction, find_alive_entity, hierarchy_panel,
-    inspector_panel, toolbar_panel,
+    EditorState, SceneEntity, SceneFile, SpawnRequest, ToolbarAction, content_browser_panel,
+    find_alive_entity, hierarchy_panel, inspector_panel, toolbar_panel,
 };
 use euca_math::{Transform, Vec3};
 use euca_physics::{
@@ -452,53 +452,55 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
         .collect()
 }
 
-/// Append a selection outline (slightly scaled, orange material) for the selected entity.
+/// Append selection outlines (slightly scaled, orange material) for all selected entities.
 /// Skips the outline for the ground plane mesh to avoid z-fighting on flat geometry.
 fn append_selection_outline(
     world: &World,
-    selected: Option<u32>,
+    selected: &[u32],
     outline_mat: Option<MaterialHandle>,
     plane_mesh: Option<MeshHandle>,
     cmds: &mut Vec<DrawCommand>,
 ) {
-    let (Some(sel_idx), Some(mat)) = (selected, outline_mat) else {
+    let Some(mat) = outline_mat else {
         return;
     };
-    for g in 0..16u32 {
-        let entity = euca_ecs::Entity::from_raw(sel_idx, g);
-        if !world.is_alive(entity) {
-            continue;
-        }
-        if let (Some(gt), Some(mr)) = (
-            world.get::<GlobalTransform>(entity),
-            world.get::<MeshRenderer>(entity),
-        ) {
-            // Skip outline for ground plane — flat geometry causes z-fighting.
-            if let Some(pm) = plane_mesh {
-                if mr.mesh == pm {
-                    break;
+    for sel_idx in selected {
+        for g in 0..16u32 {
+            let entity = euca_ecs::Entity::from_raw(*sel_idx, g);
+            if !world.is_alive(entity) {
+                continue;
+            }
+            if let (Some(gt), Some(mr)) = (
+                world.get::<GlobalTransform>(entity),
+                world.get::<MeshRenderer>(entity),
+            ) {
+                // Skip outline for ground plane — flat geometry causes z-fighting.
+                if let Some(pm) = plane_mesh {
+                    if mr.mesh == pm {
+                        break;
+                    }
+                }
+                let max_scale = gt.0.scale.x.max(gt.0.scale.y).max(gt.0.scale.z);
+                if max_scale < 5.0 {
+                    let mut t = gt.0;
+                    t.scale = t.scale * 1.03;
+                    t.translation.y += 0.002;
+                    cmds.push(DrawCommand {
+                        mesh: mr.mesh,
+                        material: mat,
+                        model_matrix: t.to_matrix(),
+                        aabb: None,
+                    });
                 }
             }
-            let max_scale = gt.0.scale.x.max(gt.0.scale.y).max(gt.0.scale.z);
-            if max_scale < 5.0 {
-                let mut t = gt.0;
-                t.scale = t.scale * 1.03;
-                t.translation.y += 0.002;
-                cmds.push(DrawCommand {
-                    mesh: mr.mesh,
-                    material: mat,
-                    model_matrix: t.to_matrix(),
-                    aabb: None,
-                });
-            }
+            break;
         }
-        break;
     }
 }
 
 /// Append gizmo axis handle draw commands for the selected entity.
 fn append_gizmo_commands(world: &World, editor_state: &EditorState, cmds: &mut Vec<DrawCommand>) {
-    let Some(sel_idx) = editor_state.selected_entity else {
+    let Some(sel_idx) = editor_state.primary_selected() else {
         return;
     };
     let Some(entity) = find_alive_entity(world, sel_idx) else {
@@ -700,6 +702,8 @@ struct EditorApp {
     outline_material: Option<MaterialHandle>,
     cube_mesh: Option<MeshHandle>,
     sphere_mesh: Option<MeshHandle>,
+    cylinder_mesh: Option<MeshHandle>,
+    cone_mesh: Option<MeshHandle>,
     default_material: Option<MaterialHandle>,
     ctrl_held: bool,
     shift_held: bool,
@@ -754,6 +758,8 @@ impl EditorApp {
             outline_material: None,
             cube_mesh: None,
             sphere_mesh: None,
+            cylinder_mesh: None,
+            cone_mesh: None,
             default_material: None,
             ctrl_held: false,
             shift_held: false,
@@ -831,9 +837,13 @@ impl EditorApp {
         let cube = renderer.upload_mesh(gpu, &Mesh::cube());
         let sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.5, 16, 32));
         let plane = renderer.upload_mesh(gpu, &Mesh::plane(20.0));
+        let cylinder = renderer.upload_mesh(gpu, &Mesh::cylinder(0.5, 1.0, 24));
+        let cone = renderer.upload_mesh(gpu, &Mesh::cone(0.5, 1.0, 24));
         self.cube_mesh = Some(cube);
         self.sphere_mesh = Some(sphere);
         self.plane_mesh = Some(plane);
+        self.cylinder_mesh = Some(cylinder);
+        self.cone_mesh = Some(cone);
         self.editor_state.gizmo = euca_editor::gizmo::init_gizmo(renderer, gpu, cube);
 
         let grid_tex = renderer.checkerboard_texture(gpu, 512, 32);
@@ -876,6 +886,8 @@ impl EditorApp {
         meshes.insert("cube".to_string(), cube);
         meshes.insert("sphere".to_string(), sphere);
         meshes.insert("plane".to_string(), plane);
+        meshes.insert("cylinder".to_string(), cylinder);
+        meshes.insert("cone".to_string(), cone);
 
         let mut pool = self.shared.lock();
         let world = pool.world();
@@ -919,7 +931,7 @@ impl EditorApp {
         self.setup_scene();
         // Reload the selected level so entities reset to saved positions
         self.load_selected_level();
-        self.editor_state.selected_entity = None;
+        self.editor_state.clear_selection();
     }
 
     /// Load the currently selected level file into the world.
@@ -1002,7 +1014,7 @@ impl EditorApp {
             } else {
                 self.loaded_level = None;
             }
-            self.editor_state.selected_entity = None;
+            self.editor_state.clear_selection();
         }
 
         let mut pool = self.shared.lock();
@@ -1046,7 +1058,7 @@ impl EditorApp {
                 world.insert_resource(mesh);
             }
             // Clear editor selection for clean play mode
-            self.editor_state.selected_entity = None;
+            self.editor_state.clear_selection();
         }
         self.was_playing_last_frame = self.editor_state.playing;
 
@@ -1139,7 +1151,7 @@ impl EditorApp {
         if !self.editor_state.playing {
             append_selection_outline(
                 world,
-                self.editor_state.selected_entity,
+                &self.editor_state.selected_entities,
                 self.outline_material,
                 self.plane_mesh,
                 &mut draw_commands,
@@ -1220,7 +1232,12 @@ impl EditorApp {
                 &mut self.selected_level,
             );
             if !playing {
-                spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world);
+                let shift = self.shift_held;
+                spawn_request = hierarchy_panel(ctx, &mut self.editor_state, world, shift);
+                let browser_spawn = content_browser_panel(ctx, &self.editor_state);
+                if spawn_request.is_none() {
+                    spawn_request = browser_spawn;
+                }
                 let inspector_changed = inspector_panel(ctx, &mut self.editor_state, world);
                 if inspector_changed {
                     let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
@@ -1276,7 +1293,7 @@ impl EditorApp {
                             color: [1.0, 0.98, 0.95],
                             intensity: 2.0,
                         });
-                        self.editor_state.selected_entity = None;
+                        self.editor_state.clear_selection();
                     }
                     Err(e) => log::error!("Load failed: {e}"),
                 },
@@ -1306,9 +1323,36 @@ impl EditorApp {
                     }
                     world.insert(e, Collider::sphere(0.5));
                 }
+                SpawnRequest::Plane => {
+                    if let Some(mesh) = self.plane_mesh {
+                        world.insert(e, MeshRenderer { mesh });
+                    }
+                    if let Some(mat) = self.default_material {
+                        world.insert(e, MaterialRef { handle: mat });
+                    }
+                    world.insert(e, Collider::aabb(10.0, 0.01, 10.0));
+                }
+                SpawnRequest::Cylinder => {
+                    if let Some(mesh) = self.cylinder_mesh {
+                        world.insert(e, MeshRenderer { mesh });
+                    }
+                    if let Some(mat) = self.default_material {
+                        world.insert(e, MaterialRef { handle: mat });
+                    }
+                    world.insert(e, Collider::aabb(0.5, 0.5, 0.5));
+                }
+                SpawnRequest::Cone => {
+                    if let Some(mesh) = self.cone_mesh {
+                        world.insert(e, MeshRenderer { mesh });
+                    }
+                    if let Some(mat) = self.default_material {
+                        world.insert(e, MaterialRef { handle: mat });
+                    }
+                    world.insert(e, Collider::aabb(0.5, 0.5, 0.5));
+                }
                 SpawnRequest::Empty => {}
             }
-            self.editor_state.selected_entity = Some(e.index());
+            self.editor_state.select(e.index());
             self.editor_state
                 .undo
                 .push(euca_editor::undo::UndoAction::SpawnEntity {
@@ -1490,19 +1534,28 @@ impl ApplicationHandler for EditorApp {
                     },
                 ..
             } => {
-                if let Some(idx) = self.editor_state.selected_entity {
+                let indices: Vec<u32> = self.editor_state.selected_entities.clone();
+                if !indices.is_empty() {
                     let mut pool = self.shared.lock();
                     let world = pool.world();
-                    if let Some(e) = find_alive_entity(world, idx) {
-                        let transform = world
-                            .get::<LocalTransform>(e)
-                            .map(|lt| lt.0)
-                            .unwrap_or_default();
-                        let mesh = world.get::<MeshRenderer>(e).map(|mr| mr.mesh);
-                        let material = world.get::<MaterialRef>(e).map(|mr| mr.handle);
-                        let collider = world.get::<Collider>(e).cloned();
-                        let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
-                        world.despawn(e);
+                    let mut despawned = Vec::new();
+                    let mut elapsed = 0.0;
+                    for idx in &indices {
+                        if let Some(e) = find_alive_entity(world, *idx) {
+                            let transform = world
+                                .get::<LocalTransform>(e)
+                                .map(|lt| lt.0)
+                                .unwrap_or_default();
+                            let mesh = world.get::<MeshRenderer>(e).map(|mr| mr.mesh);
+                            let material = world.get::<MaterialRef>(e).map(|mr| mr.handle);
+                            let collider = world.get::<Collider>(e).cloned();
+                            elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
+                            world.despawn(e);
+                            despawned.push((*idx, transform, mesh, material, collider));
+                        }
+                    }
+                    if despawned.len() == 1 {
+                        let (idx, transform, mesh, material, collider) = despawned.remove(0);
                         self.editor_state
                             .undo
                             .push(euca_editor::undo::UndoAction::DespawnEntity {
@@ -1512,9 +1565,15 @@ impl ApplicationHandler for EditorApp {
                                 material,
                                 collider,
                             });
-                        self.editor_state.mark_dirty(elapsed);
+                    } else if !despawned.is_empty() {
+                        self.editor_state.undo.push(
+                            euca_editor::undo::UndoAction::DespawnMultiple {
+                                entities: despawned,
+                            },
+                        );
                     }
-                    self.editor_state.selected_entity = None;
+                    self.editor_state.mark_dirty(elapsed);
+                    self.editor_state.clear_selection();
                 }
             }
             WindowEvent::KeyboardInput {
@@ -1526,7 +1585,7 @@ impl ApplicationHandler for EditorApp {
                     },
                 ..
             } if ch.as_str() == "f" || ch.as_str() == "F" => {
-                if let Some(idx) = self.editor_state.selected_entity {
+                if let Some(idx) = self.editor_state.primary_selected() {
                     let pool = self.shared.lock_read();
                     let world = pool.world();
                     if let Some(e) = find_alive_entity(world, idx) {
@@ -1590,6 +1649,141 @@ impl ApplicationHandler for EditorApp {
             {
                 let mut pool = self.shared.lock();
                 self.editor_state.undo.redo(pool.world());
+            }
+            // Ctrl+C: copy selected entities to clipboard
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(ref ch),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if ch.as_str() == "c" && self.ctrl_held => {
+                let indices: Vec<u32> = self.editor_state.selected_entities.clone();
+                if !indices.is_empty() {
+                    let pool = self.shared.lock_read();
+                    let world = pool.world();
+                    let mut clipboard = Vec::new();
+                    for idx in &indices {
+                        if let Some(entity) = find_alive_entity(world, *idx) {
+                            let t = world
+                                .get::<LocalTransform>(entity)
+                                .map(|lt| lt.0)
+                                .unwrap_or_default();
+                            let mesh_str = world
+                                .get::<MeshRenderer>(entity)
+                                .map_or("none".to_string(), |m| format!("mesh_{}", m.mesh.0));
+                            let material =
+                                world.get::<MaterialRef>(entity).map_or(0, |m| m.handle.0);
+                            clipboard.push(SceneEntity {
+                                position: [t.translation.x, t.translation.y, t.translation.z],
+                                scale: [t.scale.x, t.scale.y, t.scale.z],
+                                rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                                mesh: mesh_str,
+                                material,
+                                health: None,
+                                team: None,
+                                physics_body: None,
+                                combat: false,
+                            });
+                        }
+                    }
+                    self.editor_state.clipboard = clipboard;
+                    log::info!("Copied {} entities to clipboard", indices.len());
+                }
+            }
+            // Ctrl+V: paste from clipboard, offset by +1.0 X
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(ref ch),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if ch.as_str() == "v" && self.ctrl_held => {
+                let clipboard = self.editor_state.clipboard.clone();
+                if !clipboard.is_empty() {
+                    let mut pool = self.shared.lock();
+                    let world = pool.world();
+                    let mut new_indices = Vec::new();
+                    for se in &clipboard {
+                        let pos = Vec3::new(se.position[0] + 1.0, se.position[1], se.position[2]);
+                        let scl = Vec3::new(se.scale[0], se.scale[1], se.scale[2]);
+                        let rot = euca_math::Quat::from_xyzw(
+                            se.rotation[0],
+                            se.rotation[1],
+                            se.rotation[2],
+                            se.rotation[3],
+                        );
+                        let mut transform = Transform::from_translation(pos);
+                        transform.scale = scl;
+                        transform.rotation = rot;
+                        let e = world.spawn(LocalTransform(transform));
+                        world.insert(e, GlobalTransform::default());
+                        // Resolve mesh handle from the stored mesh string
+                        if se.mesh != "none" {
+                            if let Some(assets) = world
+                                .resource::<euca_agent::routes::DefaultAssets>()
+                                .cloned()
+                            {
+                                // Try by name first, then by raw handle
+                                let mesh_handle = assets.mesh(&se.mesh).or_else(|| {
+                                    se.mesh
+                                        .strip_prefix("mesh_")
+                                        .and_then(|n| n.parse::<u32>().ok())
+                                        .map(MeshHandle)
+                                });
+                                if let Some(mh) = mesh_handle {
+                                    world.insert(e, MeshRenderer { mesh: mh });
+                                }
+                            }
+                        }
+                        if se.material > 0 {
+                            world.insert(
+                                e,
+                                MaterialRef {
+                                    handle: MaterialHandle(se.material),
+                                },
+                            );
+                        } else if let Some(mat) = self.default_material {
+                            world.insert(e, MaterialRef { handle: mat });
+                        }
+                        new_indices.push(e.index());
+                    }
+                    let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
+                    self.editor_state.mark_dirty(elapsed);
+                    self.editor_state
+                        .undo
+                        .push(euca_editor::undo::UndoAction::SpawnMultiple {
+                            entity_indices: new_indices.clone(),
+                        });
+                    // Select the newly pasted entities
+                    self.editor_state.selected_entities = new_indices;
+                    log::info!("Pasted {} entities from clipboard", clipboard.len());
+                }
+            }
+            // G key: toggle snap-to-grid
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(ref ch),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if (ch.as_str() == "g" || ch.as_str() == "G") && !self.ctrl_held => {
+                self.editor_state.snap_to_grid = !self.editor_state.snap_to_grid;
+                log::info!(
+                    "Snap to grid: {} (size: {})",
+                    if self.editor_state.snap_to_grid {
+                        "ON"
+                    } else {
+                        "OFF"
+                    },
+                    self.editor_state.grid_size,
+                );
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.ctrl_held = modifiers.state().control_key();
@@ -1745,11 +1939,19 @@ impl EditorApp {
                 }
             }
         }
-        self.editor_state.selected_entity = closest.map(|(e, _)| e.index());
+        if let Some((entity, _)) = closest {
+            if self.shift_held {
+                self.editor_state.add_select(entity.index());
+            } else {
+                self.editor_state.select(entity.index());
+            }
+        } else if !self.shift_held {
+            self.editor_state.clear_selection();
+        }
     }
 
     fn try_begin_gizmo_drag(&mut self) -> bool {
-        let sel_idx = match self.editor_state.selected_entity {
+        let sel_idx = match self.editor_state.primary_selected() {
             Some(i) => i,
             None => return false,
         };
@@ -1854,11 +2056,23 @@ impl EditorApp {
         let mut pool = self.shared.lock();
         let world = pool.world();
         if let Some(entity) = find_alive_entity(world, drag.entity_index) {
+            // Read old position before applying gizmo, to compute delta for other selections.
+            let old_translation = world
+                .get::<LocalTransform>(entity)
+                .map(|lt| lt.0.translation)
+                .unwrap_or_default();
             if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
                 match drag.mode {
                     euca_editor::gizmo::GizmoMode::Translate => {
-                        lt.0.translation =
+                        let mut new_pos =
                             euca_editor::gizmo::update_translate_drag(&drag, ray_origin, ray_dir_n);
+                        if self.editor_state.snap_to_grid {
+                            let gs = self.editor_state.grid_size;
+                            new_pos.x = (new_pos.x / gs).round() * gs;
+                            new_pos.y = (new_pos.y / gs).round() * gs;
+                            new_pos.z = (new_pos.z / gs).round() * gs;
+                        }
+                        lt.0.translation = new_pos;
                     }
                     euca_editor::gizmo::GizmoMode::Rotate => {
                         lt.0.rotation =
@@ -1867,6 +2081,29 @@ impl EditorApp {
                     euca_editor::gizmo::GizmoMode::Scale => {
                         lt.0.scale =
                             euca_editor::gizmo::update_scale_drag(&drag, ray_origin, ray_dir_n);
+                    }
+                }
+            }
+
+            // Apply the same translation delta to other selected entities
+            if matches!(drag.mode, euca_editor::gizmo::GizmoMode::Translate) {
+                let new_translation = world
+                    .get::<LocalTransform>(entity)
+                    .map(|lt| lt.0.translation)
+                    .unwrap_or_default();
+                let delta = new_translation - old_translation;
+                let other_indices: Vec<u32> = self
+                    .editor_state
+                    .selected_entities
+                    .iter()
+                    .filter(|&&idx| idx != drag.entity_index)
+                    .copied()
+                    .collect();
+                for idx in other_indices {
+                    if let Some(other) = find_alive_entity(world, idx) {
+                        if let Some(lt) = world.get_mut::<LocalTransform>(other) {
+                            lt.0.translation = lt.0.translation + delta;
+                        }
                     }
                 }
             }

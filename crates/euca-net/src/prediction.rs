@@ -146,6 +146,76 @@ impl Default for ClientPrediction {
     }
 }
 
+/// Apply pending prediction corrections to all entities with `ClientPrediction` + `LocalTransform`.
+///
+/// Call this once per frame in the gameplay loop. Each entity with a `ClientPrediction`
+/// component has its correction consumed and applied to its position.
+pub fn apply_prediction_system(world: &mut euca_ecs::World) {
+    use euca_ecs::{Entity, Query};
+
+    let entities_with_prediction: Vec<Entity> = {
+        let query = Query::<Entity>::new(world);
+        query
+            .iter()
+            .filter(|e| world.get::<ClientPrediction>(*e).is_some())
+            .collect()
+    };
+
+    for entity in entities_with_prediction {
+        let correction = {
+            let pred = match world.get_mut::<ClientPrediction>(entity) {
+                Some(p) => p,
+                None => continue,
+            };
+            pred.consume_correction()
+        };
+
+        // Skip zero corrections
+        if correction[0].abs() + correction[1].abs() + correction[2].abs() < 1e-7 {
+            continue;
+        }
+
+        if let Some(lt) = world.get_mut::<euca_scene::LocalTransform>(entity) {
+            lt.0.translation.x += correction[0];
+            lt.0.translation.y += correction[1];
+            lt.0.translation.z += correction[2];
+        }
+    }
+}
+
+/// Record a prediction for the given entity at the current tick.
+///
+/// Captures the entity's current position and the provided input snapshot.
+pub fn record_prediction_for_entity(
+    world: &mut euca_ecs::World,
+    entity: euca_ecs::Entity,
+    tick: u64,
+    input_snapshot: Vec<u8>,
+) {
+    let position = world
+        .get::<euca_scene::LocalTransform>(entity)
+        .map(|lt| [lt.0.translation.x, lt.0.translation.y, lt.0.translation.z])
+        .unwrap_or([0.0; 3]);
+
+    if let Some(pred) = world.get_mut::<ClientPrediction>(entity) {
+        pred.record_prediction(tick, position, input_snapshot);
+    }
+}
+
+/// Reconcile a server state update for the given entity.
+///
+/// If the server position diverges from our prediction at `server_tick`,
+/// the correction is accumulated for smooth application via `apply_prediction_system`.
+pub fn reconcile_entity(
+    world: &mut euca_ecs::World,
+    entity: euca_ecs::Entity,
+    server_tick: u64,
+    server_position: [f32; 3],
+) -> Option<[f32; 3]> {
+    let pred = world.get_mut::<ClientPrediction>(entity)?;
+    pred.reconcile(server_tick, server_position)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +266,38 @@ mod tests {
         // Reconcile at tick 5 — predictions 0-5 should be discarded
         let _ = pred.reconcile(5, [5.0, 0.0, 0.0]);
         assert_eq!(pred.buffer_len(), 4); // ticks 6,7,8,9 remain
+    }
+
+    #[test]
+    fn apply_prediction_system_corrects_position() {
+        let mut world = euca_ecs::World::new();
+        let e = world.spawn(euca_scene::LocalTransform(
+            euca_math::Transform::from_translation(euca_math::Vec3::new(0.0, 0.0, 0.0)),
+        ));
+        let mut pred = ClientPrediction::new();
+        pred.pending_correction = [2.0, 0.0, 0.0];
+        pred.smoothing = 0.0; // Snap correction (factor = 1.0)
+        world.insert(e, pred);
+
+        apply_prediction_system(&mut world);
+
+        let lt = world.get::<euca_scene::LocalTransform>(e).unwrap();
+        assert!((lt.0.translation.x - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn record_and_reconcile_entity() {
+        let mut world = euca_ecs::World::new();
+        let e = world.spawn(euca_scene::LocalTransform(
+            euca_math::Transform::from_translation(euca_math::Vec3::new(5.0, 0.0, 0.0)),
+        ));
+        world.insert(e, ClientPrediction::new());
+
+        record_prediction_for_entity(&mut world, e, 1, vec![]);
+
+        // Server says we're at 7.0, we predicted 5.0
+        let correction = reconcile_entity(&mut world, e, 1, [7.0, 0.0, 0.0]);
+        assert!(correction.is_some());
+        assert!((correction.unwrap()[0] - 2.0).abs() < 1e-5);
     }
 }

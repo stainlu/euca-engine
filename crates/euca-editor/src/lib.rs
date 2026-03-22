@@ -4,7 +4,10 @@ mod scene_file;
 pub mod undo;
 
 pub use gizmo::GizmoState;
-pub use panels::{SpawnRequest, ToolbarAction, hierarchy_panel, inspector_panel, toolbar_panel};
+pub use panels::{
+    SpawnRequest, ToolbarAction, content_browser_panel, hierarchy_panel, inspector_panel,
+    toolbar_panel,
+};
 pub use scene_file::{
     PrefabRegistry, SCENE_VERSION, SceneEntity, SceneFile, load_scene_into_world,
 };
@@ -12,8 +15,8 @@ pub use undo::UndoHistory;
 
 /// Editor state: tracks selection, play/pause, gizmo, undo history, dirty tracking.
 pub struct EditorState {
-    /// Currently selected entity index (if any).
-    pub selected_entity: Option<u32>,
+    /// Currently selected entity indices.
+    pub selected_entities: Vec<u32>,
     /// Whether the simulation is running.
     pub playing: bool,
     /// Whether to advance a single tick (when paused).
@@ -28,12 +31,18 @@ pub struct EditorState {
     pub dirty: bool,
     /// Elapsed time (seconds) when dirty was last set — used for auto-save debounce.
     pub last_dirty_time: f64,
+    /// Clipboard for copy/paste of entities.
+    pub clipboard: Vec<SceneEntity>,
+    /// Whether snap-to-grid is enabled.
+    pub snap_to_grid: bool,
+    /// Grid cell size used when snap-to-grid is enabled.
+    pub grid_size: f32,
 }
 
 impl EditorState {
     pub fn new() -> Self {
         Self {
-            selected_entity: None,
+            selected_entities: Vec::new(),
             playing: false,
             step_once: false,
             reset_requested: false,
@@ -41,7 +50,47 @@ impl EditorState {
             undo: UndoHistory::new(),
             dirty: false,
             last_dirty_time: 0.0,
+            clipboard: Vec::new(),
+            snap_to_grid: false,
+            grid_size: 1.0,
         }
+    }
+
+    /// Clear selection and select a single entity.
+    pub fn select(&mut self, idx: u32) {
+        self.selected_entities.clear();
+        self.selected_entities.push(idx);
+    }
+
+    /// Toggle an entity in the selection (add if absent, remove if present).
+    pub fn toggle_select(&mut self, idx: u32) {
+        if let Some(pos) = self.selected_entities.iter().position(|&i| i == idx) {
+            self.selected_entities.remove(pos);
+        } else {
+            self.selected_entities.push(idx);
+        }
+    }
+
+    /// Add an entity to the selection if not already present.
+    pub fn add_select(&mut self, idx: u32) {
+        if !self.selected_entities.contains(&idx) {
+            self.selected_entities.push(idx);
+        }
+    }
+
+    /// Clear all selected entities.
+    pub fn clear_selection(&mut self) {
+        self.selected_entities.clear();
+    }
+
+    /// Check whether an entity is currently selected.
+    pub fn is_selected(&self, idx: u32) -> bool {
+        self.selected_entities.contains(&idx)
+    }
+
+    /// Return the primary (first) selected entity, if any.
+    pub fn primary_selected(&self) -> Option<u32> {
+        self.selected_entities.first().copied()
     }
 
     /// Should the simulation tick this frame?
@@ -88,7 +137,43 @@ mod tests {
     fn paused_by_default() {
         let state = EditorState::new();
         assert!(!state.playing);
-        assert!(state.selected_entity.is_none());
+        assert!(state.selected_entities.is_empty());
+    }
+
+    #[test]
+    fn select_single() {
+        let mut state = EditorState::new();
+        state.select(5);
+        assert_eq!(state.selected_entities, vec![5]);
+        assert_eq!(state.primary_selected(), Some(5));
+        state.select(10);
+        assert_eq!(state.selected_entities, vec![10]);
+    }
+
+    #[test]
+    fn add_and_toggle_select() {
+        let mut state = EditorState::new();
+        state.add_select(1);
+        state.add_select(2);
+        state.add_select(1); // duplicate — no-op
+        assert_eq!(state.selected_entities, vec![1, 2]);
+        assert!(state.is_selected(1));
+        assert!(state.is_selected(2));
+        state.toggle_select(1); // remove
+        assert!(!state.is_selected(1));
+        assert_eq!(state.selected_entities, vec![2]);
+        state.toggle_select(3); // add
+        assert_eq!(state.selected_entities, vec![2, 3]);
+    }
+
+    #[test]
+    fn clear_selection() {
+        let mut state = EditorState::new();
+        state.select(1);
+        state.add_select(2);
+        state.clear_selection();
+        assert!(state.selected_entities.is_empty());
+        assert_eq!(state.primary_selected(), None);
     }
 
     #[test]

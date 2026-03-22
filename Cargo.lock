@@ -1427,6 +1427,8 @@ dependencies = [
  "bincode",
  "euca-ecs",
  "euca-input",
+ "euca-math",
+ "euca-scene",
  "log",
  "quinn",
  "rcgen",

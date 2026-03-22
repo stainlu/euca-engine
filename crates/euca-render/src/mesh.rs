@@ -214,6 +214,170 @@ impl Mesh {
         let indices = vec![0, 1, 2, 0, 2, 3];
         Self { vertices, indices }
     }
+
+    /// Create a cylinder along the Y axis with given radius and height.
+    pub fn cylinder(radius: f32, height: f32, sectors: u32) -> Self {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let half_h = height / 2.0;
+
+        // Side vertices: two rings (bottom and top)
+        for ring in 0..2u32 {
+            let y = if ring == 0 { -half_h } else { half_h };
+            for j in 0..=sectors {
+                let theta = 2.0 * std::f32::consts::PI * j as f32 / sectors as f32;
+                let x = radius * theta.cos();
+                let z = radius * theta.sin();
+                let nx = theta.cos();
+                let nz = theta.sin();
+                let tx = -theta.sin();
+                let tz = theta.cos();
+                vertices.push(Vertex {
+                    position: [x, y, z],
+                    normal: [nx, 0.0, nz],
+                    tangent: [tx, 0.0, tz],
+                    uv: [j as f32 / sectors as f32, ring as f32],
+                });
+            }
+        }
+        let ring_verts = sectors + 1;
+        for j in 0..sectors {
+            let a = j;
+            let b = j + ring_verts;
+            indices.push(a);
+            indices.push(b);
+            indices.push(a + 1);
+            indices.push(a + 1);
+            indices.push(b);
+            indices.push(b + 1);
+        }
+
+        // Top cap
+        let top_center = vertices.len() as u32;
+        vertices.push(Vertex {
+            position: [0.0, half_h, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0],
+            uv: [0.5, 0.5],
+        });
+        for j in 0..=sectors {
+            let theta = 2.0 * std::f32::consts::PI * j as f32 / sectors as f32;
+            let x = radius * theta.cos();
+            let z = radius * theta.sin();
+            vertices.push(Vertex {
+                position: [x, half_h, z],
+                normal: [0.0, 1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0],
+                uv: [0.5 + 0.5 * theta.cos(), 0.5 + 0.5 * theta.sin()],
+            });
+        }
+        for j in 0..sectors {
+            indices.push(top_center);
+            indices.push(top_center + 1 + j);
+            indices.push(top_center + 2 + j);
+        }
+
+        // Bottom cap
+        let bot_center = vertices.len() as u32;
+        vertices.push(Vertex {
+            position: [0.0, -half_h, 0.0],
+            normal: [0.0, -1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0],
+            uv: [0.5, 0.5],
+        });
+        for j in 0..=sectors {
+            let theta = 2.0 * std::f32::consts::PI * j as f32 / sectors as f32;
+            let x = radius * theta.cos();
+            let z = radius * theta.sin();
+            vertices.push(Vertex {
+                position: [x, -half_h, z],
+                normal: [0.0, -1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0],
+                uv: [0.5 + 0.5 * theta.cos(), 0.5 + 0.5 * theta.sin()],
+            });
+        }
+        for j in 0..sectors {
+            indices.push(bot_center);
+            indices.push(bot_center + 2 + j);
+            indices.push(bot_center + 1 + j);
+        }
+
+        Self { vertices, indices }
+    }
+
+    /// Create a cone along the Y axis with given radius and height.
+    /// The base is at `-height/2` and the apex at `+height/2`.
+    pub fn cone(radius: f32, height: f32, sectors: u32) -> Self {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let half_h = height / 2.0;
+        let slope = radius / height;
+
+        // Side vertices: base ring + apex duplicated per sector for correct normals
+        for j in 0..=sectors {
+            let theta = 2.0 * std::f32::consts::PI * j as f32 / sectors as f32;
+            let x = radius * theta.cos();
+            let z = radius * theta.sin();
+            // Normal: outward and upward along the slope
+            let ny = slope;
+            let nx = theta.cos();
+            let nz = theta.sin();
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            vertices.push(Vertex {
+                position: [x, -half_h, z],
+                normal: [nx / len, ny / len, nz / len],
+                tangent: [-theta.sin(), 0.0, theta.cos()],
+                uv: [j as f32 / sectors as f32, 1.0],
+            });
+        }
+        // Apex vertices (one per sector for smooth shading)
+        for j in 0..=sectors {
+            let theta = 2.0 * std::f32::consts::PI * j as f32 / sectors as f32;
+            let ny = slope;
+            let nx = theta.cos();
+            let nz = theta.sin();
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            vertices.push(Vertex {
+                position: [0.0, half_h, 0.0],
+                normal: [nx / len, ny / len, nz / len],
+                tangent: [-theta.sin(), 0.0, theta.cos()],
+                uv: [j as f32 / sectors as f32, 0.0],
+            });
+        }
+        let ring_verts = sectors + 1;
+        for j in 0..sectors {
+            indices.push(j);
+            indices.push(j + 1);
+            indices.push(ring_verts + j);
+        }
+
+        // Bottom cap
+        let bot_center = vertices.len() as u32;
+        vertices.push(Vertex {
+            position: [0.0, -half_h, 0.0],
+            normal: [0.0, -1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0],
+            uv: [0.5, 0.5],
+        });
+        for j in 0..=sectors {
+            let theta = 2.0 * std::f32::consts::PI * j as f32 / sectors as f32;
+            let x = radius * theta.cos();
+            let z = radius * theta.sin();
+            vertices.push(Vertex {
+                position: [x, -half_h, z],
+                normal: [0.0, -1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0],
+                uv: [0.5 + 0.5 * theta.cos(), 0.5 + 0.5 * theta.sin()],
+            });
+        }
+        for j in 0..sectors {
+            indices.push(bot_center);
+            indices.push(bot_center + 2 + j);
+            indices.push(bot_center + 1 + j);
+        }
+
+        Self { vertices, indices }
+    }
 }
 
 #[cfg(test)]

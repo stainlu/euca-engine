@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.5.0 (2026-03-23)
+
+### Asset Pipeline
+- glTF texture image extraction — all 10 image formats converted to RGBA8
+- Texture indices per mesh (albedo, normal, metallic-roughness, AO, emissive)
+- `euca asset info` now reports texture count and dimensions
+
+### GPU Compute Particles
+- GpuParticleSystem: compute emit/update + instanced billboard render
+- PCG hash PRNG on GPU for particle randomization
+- Configurable: 100K+ particles, cone emission, gravity, lifetime color fade
+- Compute + render shaders (particle_compute.wgsl, particle_render.wgsl)
+
+### Editor UX
+- **Multi-select**: Shift-click in hierarchy or viewport to add to selection
+- **Content browser**: Bottom panel with built-in mesh buttons (Cube, Sphere, Plane, Cylinder, Cone)
+- **Copy/paste**: Ctrl+C copies selected entities, Ctrl+V pastes with offset
+- **Snap-to-grid**: G key toggles grid snapping for gizmo translate
+- **Cylinder & Cone meshes**: New built-in primitive meshes
+- **Multi-entity gizmo**: Transform applies to all selected entities
+
+### Networking
+- Client prediction system wired into ECS: `apply_prediction_system()`
+- `record_prediction_for_entity()` and `reconcile_entity()` helper functions
+- Smooth correction with configurable smoothing factor
+
+### Infrastructure
+- 740+ tests
+- Version bump to 0.5.0
+
 ## v0.4.0 (2026-03-23)
 
 ### File-System-First Architecture

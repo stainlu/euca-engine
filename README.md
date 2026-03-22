@@ -64,8 +64,9 @@ Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold 
 | **Reflection** | Runtime field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` |
 | **Performance** | Frame profiler, ECS query caching, parallel system execution, Apple Silicon Metal optimization |
 | **Scale** | World streaming/chunk loading, hierarchical LOD, unified memory (Apple Silicon) |
-| **Editor** | egui: hierarchy, inspector, play/pause, gizmos, undo/redo, auto-save, hot-reload |
-| **Asset Pipeline** | `euca asset info/optimize/lod` — composable offline CLI tools for mesh processing |
+| **Editor** | egui: hierarchy, inspector, multi-select, copy/paste, content browser, snap-to-grid, auto-save, hot-reload |
+| **Asset Pipeline** | glTF textures, `euca asset info/optimize/lod`, composable offline CLI tools |
+| **GPU Particles** | Compute shader emit/update, instanced billboard render, 100K+ particles |
 | **Agent Discovery** | `euca discover --json` — self-describing CLI manifest for AI agents |
 | **Diagnostics** | `euca diagnose` health check, `euca events` real-time debugging |
 

@@ -7,6 +7,7 @@ pub mod deferred;
 pub mod foliage;
 mod gpu;
 pub mod gpu_driven;
+pub mod gpu_particles;
 mod hardware;
 mod hlod;
 mod light;
@@ -53,6 +54,7 @@ pub use gpu_driven::{
     DrawCommandGpu, DrawIndexedIndirectArgs, GpuCullParams, GpuDrivenPipeline, GpuFrustumData,
     IndirectDrawBuffer,
 };
+pub use gpu_particles::{GpuParticleConfig, GpuParticleSystem};
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
 pub use hlod::{
     HlodCluster, HlodClusterId, HlodRegistry, HlodVisibility, generate_hlod_cluster,
