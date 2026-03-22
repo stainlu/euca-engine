@@ -6,7 +6,7 @@ use euca_physics::Velocity;
 use euca_scene::GlobalTransform;
 
 use crate::navmesh::NavMesh;
-use crate::pathfinding::find_path;
+use crate::pathfinding::{find_path, smooth_path};
 
 /// ECS component: navigation agent properties.
 #[derive(Clone, Debug)]
@@ -66,7 +66,7 @@ pub fn pathfinding_system(world: &mut World) {
     };
 
     for (entity, pos, target) in needs_path {
-        let path = find_path(&navmesh, pos, target);
+        let path = find_path(&navmesh, pos, target).map(|p| smooth_path(&navmesh, &p)); // smooth away grid zigzags
 
         if let Some(goal) = world.get_mut::<PathGoal>(entity) {
             goal.path = path;

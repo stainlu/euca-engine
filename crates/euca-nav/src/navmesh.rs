@@ -117,45 +117,129 @@ impl NavMesh {
         )
     }
 
-    /// Get walkable neighbors of a cell (4-connected: up/down/left/right).
-    pub fn neighbors(&self, gx: usize, gz: usize) -> Vec<(usize, usize)> {
-        let mut result = Vec::with_capacity(4);
+    /// Get walkable neighbors of a cell (8-connected: cardinal + diagonal).
+    /// Returns `(gx, gz, cost)` where cost is 1.0 for cardinal, √2 for diagonal.
+    pub fn neighbors(&self, gx: usize, gz: usize) -> Vec<(usize, usize, f32)> {
+        const SQRT2: f32 = std::f32::consts::SQRT_2;
+        let mut result = Vec::with_capacity(8);
+
+        // Cardinal neighbors (cost 1.0)
         if gx > 0 && self.is_walkable(gx - 1, gz) {
-            result.push((gx - 1, gz));
+            result.push((gx - 1, gz, 1.0));
         }
         if gx + 1 < self.width && self.is_walkable(gx + 1, gz) {
-            result.push((gx + 1, gz));
+            result.push((gx + 1, gz, 1.0));
         }
         if gz > 0 && self.is_walkable(gx, gz - 1) {
-            result.push((gx, gz - 1));
+            result.push((gx, gz - 1, 1.0));
         }
         if gz + 1 < self.height && self.is_walkable(gx, gz + 1) {
-            result.push((gx, gz + 1));
+            result.push((gx, gz + 1, 1.0));
         }
+
+        // Diagonal neighbors (cost √2) — only if both adjacent cardinal cells are walkable
+        // (prevents corner cutting through obstacles)
+        if gx > 0
+            && gz > 0
+            && self.is_walkable(gx - 1, gz - 1)
+            && self.is_walkable(gx - 1, gz)
+            && self.is_walkable(gx, gz - 1)
+        {
+            result.push((gx - 1, gz - 1, SQRT2));
+        }
+        if gx + 1 < self.width
+            && gz > 0
+            && self.is_walkable(gx + 1, gz - 1)
+            && self.is_walkable(gx + 1, gz)
+            && self.is_walkable(gx, gz - 1)
+        {
+            result.push((gx + 1, gz - 1, SQRT2));
+        }
+        if gx > 0
+            && gz + 1 < self.height
+            && self.is_walkable(gx - 1, gz + 1)
+            && self.is_walkable(gx - 1, gz)
+            && self.is_walkable(gx, gz + 1)
+        {
+            result.push((gx - 1, gz + 1, SQRT2));
+        }
+        if gx + 1 < self.width
+            && gz + 1 < self.height
+            && self.is_walkable(gx + 1, gz + 1)
+            && self.is_walkable(gx + 1, gz)
+            && self.is_walkable(gx, gz + 1)
+        {
+            result.push((gx + 1, gz + 1, SQRT2));
+        }
+
         result
+    }
+
+    /// Check if all cells along a grid line are walkable (Bresenham).
+    /// Used for path smoothing line-of-sight checks.
+    pub fn line_of_sight(&self, x0: usize, z0: usize, x1: usize, z1: usize) -> bool {
+        let mut x = x0 as i32;
+        let mut z = z0 as i32;
+        let dx = (x1 as i32 - x0 as i32).abs();
+        let dz = (z1 as i32 - z0 as i32).abs();
+        let sx = if (x1 as i32) > x { 1 } else { -1 };
+        let sz = if (z1 as i32) > z { 1 } else { -1 };
+        let mut err = dx - dz;
+
+        loop {
+            if !self.is_walkable(x as usize, z as usize) {
+                return false;
+            }
+            if x == x1 as i32 && z == z1 as i32 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 > -dz {
+                err -= dz;
+                x += sx;
+            }
+            if e2 < dx {
+                err += dx;
+                z += sz;
+            }
+        }
+        true
     }
 }
 
 /// Build a navmesh from physics colliders in the world.
+///
+/// `agent_radius` inflates each obstacle by the agent's collision radius
+/// so pathfinding keeps agents away from obstacle edges.
 pub fn build_navmesh_from_world(world: &euca_ecs::World, config: GridConfig) -> NavMesh {
+    build_navmesh_from_world_with_radius(world, config, 0.0)
+}
+
+/// Build a navmesh with agent radius inflation.
+pub fn build_navmesh_from_world_with_radius(
+    world: &euca_ecs::World,
+    config: GridConfig,
+    agent_radius: f32,
+) -> NavMesh {
     use euca_physics::{Collider, ColliderShape};
     use euca_scene::GlobalTransform;
 
     let mut mesh = NavMesh::from_grid(config);
 
-    // Block cells that overlap with static colliders
+    // Block cells that overlap with static colliders (inflated by agent_radius)
     let query = euca_ecs::Query::<(&GlobalTransform, &Collider)>::new(world);
     for (gt, collider) in query.iter() {
         let pos = gt.0.translation;
+        let pad = agent_radius;
         match &collider.shape {
             ColliderShape::Aabb { hx, hy: _, hz } => {
-                mesh.block_aabb(pos, Vec3::new(*hx, 0.0, *hz));
+                mesh.block_aabb(pos, Vec3::new(*hx + pad, 0.0, *hz + pad));
             }
             ColliderShape::Sphere { radius } => {
-                mesh.block_aabb(pos, Vec3::new(*radius, 0.0, *radius));
+                mesh.block_aabb(pos, Vec3::new(*radius + pad, 0.0, *radius + pad));
             }
             ColliderShape::Capsule { radius, .. } => {
-                mesh.block_aabb(pos, Vec3::new(*radius, 0.0, *radius));
+                mesh.block_aabb(pos, Vec3::new(*radius + pad, 0.0, *radius + pad));
             }
         }
     }
@@ -204,7 +288,31 @@ mod tests {
             ground_y: 0.0,
         });
         let n = mesh.neighbors(0, 0);
-        assert_eq!(n.len(), 2); // right + down
+        // 8-connected: at corner (0,0) → right, down, and diagonal (1,1) = 3
+        assert_eq!(n.len(), 3);
+    }
+
+    #[test]
+    fn line_of_sight_clear() {
+        let mesh = NavMesh::from_grid(GridConfig {
+            min: [0.0, 0.0],
+            max: [10.0, 10.0],
+            cell_size: 1.0,
+            ground_y: 0.0,
+        });
+        assert!(mesh.line_of_sight(0, 0, 9, 9));
+    }
+
+    #[test]
+    fn line_of_sight_blocked() {
+        let mut mesh = NavMesh::from_grid(GridConfig {
+            min: [0.0, 0.0],
+            max: [10.0, 10.0],
+            cell_size: 1.0,
+            ground_y: 0.0,
+        });
+        mesh.block(5, 5);
+        assert!(!mesh.line_of_sight(0, 0, 9, 9));
     }
 
     #[test]

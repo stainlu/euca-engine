@@ -19,8 +19,11 @@
 
 pub mod navmesh;
 mod pathfinding;
+pub mod rvo;
 mod steering;
 
-pub use navmesh::{GridConfig, NavMesh, build_navmesh_from_world};
-pub use pathfinding::find_path;
+pub use navmesh::{
+    GridConfig, NavMesh, build_navmesh_from_world, build_navmesh_from_world_with_radius,
+};
+pub use pathfinding::{find_path, smooth_path};
 pub use steering::{NavAgent, PathGoal, pathfinding_system, steering_system};

@@ -915,6 +915,17 @@ impl EditorApp {
                     }
                 }
             }
+            // Auto-initialize navmesh from world geometry if none exists
+            if world.resource::<euca_nav::NavMesh>().is_none() {
+                let config = euca_nav::GridConfig {
+                    min: [-12.0, -12.0],
+                    max: [12.0, 12.0],
+                    cell_size: 0.5,
+                    ground_y: 0.0,
+                };
+                let mesh = euca_nav::build_navmesh_from_world_with_radius(world, config, 0.5);
+                world.insert_resource(mesh);
+            }
             // Clear editor selection for clean play mode
             self.editor_state.selected_entity = None;
         }

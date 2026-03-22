@@ -31,9 +31,11 @@ impl PartialOrd for AStarNode {
     }
 }
 
-/// Heuristic: Manhattan distance on grid (admissible for 4-connected).
+/// Heuristic: Euclidean distance (admissible for 8-connected).
 fn heuristic(ax: usize, az: usize, bx: usize, bz: usize) -> f32 {
-    (ax.abs_diff(bx) + az.abs_diff(bz)) as f32
+    let dx = ax.abs_diff(bx) as f32;
+    let dz = az.abs_diff(bz) as f32;
+    (dx * dx + dz * dz).sqrt()
 }
 
 /// Find a path from `start` to `goal` on the navmesh using A*.
@@ -86,8 +88,8 @@ pub fn find_path(mesh: &NavMesh, start: Vec3, goal: Vec3) -> Option<Vec<Vec3>> {
             .copied()
             .unwrap_or(f32::MAX);
 
-        for (nx, nz) in mesh.neighbors(current.gx, current.gz) {
-            let tentative_g = current_g + 1.0; // uniform cost for 4-connected
+        for (nx, nz, move_cost) in mesh.neighbors(current.gx, current.gz) {
+            let tentative_g = current_g + move_cost;
             let prev_g = g_score.get(&(nx, nz)).copied().unwrap_or(f32::MAX);
 
             if tentative_g < prev_g {
@@ -104,6 +106,40 @@ pub fn find_path(mesh: &NavMesh, start: Vec3, goal: Vec3) -> Option<Vec<Vec3>> {
     }
 
     None // No path found
+}
+
+/// Smooth a path by removing unnecessary intermediate waypoints.
+///
+/// Uses line-of-sight checks on the grid: if we can "see" a later waypoint
+/// directly (all cells along the line are walkable), skip the intermediates.
+/// This turns zigzag grid paths into smooth direct-line paths.
+pub fn smooth_path(mesh: &NavMesh, path: &[Vec3]) -> Vec<Vec3> {
+    if path.len() <= 2 {
+        return path.to_vec();
+    }
+
+    let mut smoothed = vec![path[0]];
+    let mut current = 0;
+
+    while current < path.len() - 1 {
+        // Try to skip as far ahead as possible
+        let mut farthest = current + 1;
+        for candidate in (current + 2)..path.len() {
+            let from_gx = mesh.world_to_grid_x(path[current].x);
+            let from_gz = mesh.world_to_grid_z(path[current].z);
+            let to_gx = mesh.world_to_grid_x(path[candidate].x);
+            let to_gz = mesh.world_to_grid_z(path[candidate].z);
+            if mesh.line_of_sight(from_gx, from_gz, to_gx, to_gz) {
+                farthest = candidate;
+            } else {
+                break;
+            }
+        }
+        smoothed.push(path[farthest]);
+        current = farthest;
+    }
+
+    smoothed
 }
 
 #[cfg(test)]
