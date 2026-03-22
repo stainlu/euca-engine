@@ -226,6 +226,10 @@ pub struct Renderer {
     prev_depth_buffer: Vec<f32>,
     /// Dimensions of the previous depth buffer.
     prev_depth_dims: (u32, u32),
+    /// TAA resolve pass (temporal anti-aliasing).
+    taa_pass: crate::taa::TaaPass,
+    /// Frame counter for TAA jitter sequence.
+    frame_count: u32,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -674,6 +678,12 @@ impl Renderer {
             occlusion_culler: None,
             prev_depth_buffer: Vec::new(),
             prev_depth_dims: (0, 0),
+            taa_pass: crate::taa::TaaPass::new(
+                &gpu.device,
+                gpu.surface_config.width,
+                gpu.surface_config.height,
+            ),
+            frame_count: 0,
         }
     }
 
@@ -828,6 +838,11 @@ impl Renderer {
                 gpu.surface_config.height,
             );
         }
+        self.taa_pass.resize(
+            &gpu.device,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
+        );
     }
 
     /// Enable CPU-side HZB occlusion culling.
@@ -1312,6 +1327,45 @@ impl Renderer {
             };
             fog_pass.execute(&gpu.device, encoder, resolve_target, &gpu.queue, &frame);
         }
+
+        // TAA resolve: blend current frame with history for temporal anti-aliasing.
+        if self.post_process_settings.taa_enabled {
+            let inv_vp = vp.inverse();
+            let prev_vp = camera.prev_view_proj.unwrap_or(vp);
+            self.taa_pass.execute(
+                &gpu.device,
+                &gpu.queue,
+                encoder,
+                resolve_target,
+                &self.post_process_stack.depth_resolve_view,
+                &inv_vp,
+                &prev_vp,
+                camera.jitter,
+            );
+            // Copy TAA output back to ping_view so post-processing reads the
+            // temporally resolved image.
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: self.taa_pass.output_texture(),
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: self.post_process_stack.ping_texture(),
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: gpu.surface_config.width,
+                    height: gpu.surface_config.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        self.frame_count = self.frame_count.wrapping_add(1);
 
         // Post-processing via the modular stack.
         {

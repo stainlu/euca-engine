@@ -236,6 +236,11 @@ impl TaaPass {
         &self.output_view
     }
 
+    /// Returns a reference to the output texture (for copy operations).
+    pub fn output_texture(&self) -> &wgpu::Texture {
+        &self.output_texture
+    }
+
     /// Execute the TAA resolve pass.
     ///
     /// Reads the current HDR frame and depth, reprojects from history,

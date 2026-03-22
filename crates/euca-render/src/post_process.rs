@@ -742,6 +742,11 @@ impl PostProcessStack {
         &self.ping_view
     }
 
+    /// The ping texture (for copy operations, e.g., TAA output → ping).
+    pub fn ping_texture(&self) -> &wgpu::Texture {
+        &self.ping_texture
+    }
+
     /// The depth resolve texture. The renderer should resolve MSAA depth into this.
     #[allow(dead_code)]
     pub fn depth_resolve_texture(&self) -> &wgpu::Texture {
