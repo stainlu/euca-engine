@@ -707,6 +707,8 @@ struct EditorApp {
     available_levels: Vec<String>,
     /// Index into `available_levels` for the currently selected level.
     selected_level: Option<usize>,
+    /// Previously loaded level index (to detect selection changes).
+    loaded_level: Option<usize>,
     /// Tracks previous frame's play state to detect play-start transitions.
     was_playing_last_frame: bool,
     /// Ground plane mesh handle — outlines are skipped for this mesh.
@@ -753,6 +755,7 @@ impl EditorApp {
             _tokio_rt: None,
             available_levels: Vec::new(),
             selected_level: None,
+            loaded_level: None,
             was_playing_last_frame: false,
             plane_mesh: None,
             gameplay_schedule: build_gameplay_schedule(),
@@ -895,13 +898,66 @@ impl EditorApp {
             world.insert_resource(PhysicsConfig::new());
         }
         self.setup_scene();
+        // Reload the selected level so entities reset to saved positions
+        self.load_selected_level();
         self.editor_state.selected_entity = None;
+    }
+
+    /// Load the currently selected level file into the world.
+    /// Called when the level selection changes or on Stop to restore saved state.
+    fn load_selected_level(&mut self) {
+        let path = match self.selected_level {
+            Some(idx) => match self.available_levels.get(idx) {
+                Some(p) => p.clone(),
+                None => return,
+            },
+            None => return,
+        };
+
+        let mut pool = self.shared.lock();
+        let world = pool.world();
+        match std::fs::read_to_string(&path) {
+            Ok(data) => match serde_json::from_str::<serde_json::Value>(&data) {
+                Ok(level) => {
+                    let count = euca_agent::load_level_into_world(world, &level);
+                    log::info!("Level loaded into editor: {count} entities from {path}");
+                }
+                Err(e) => log::error!("Invalid level JSON in {path}: {e}"),
+            },
+            Err(e) => log::error!("Cannot read level file {path}: {e}"),
+        }
+        self.loaded_level = self.selected_level;
     }
 
     fn render_frame(&mut self) {
         if self.editor_state.reset_requested {
             self.editor_state.reset_requested = false;
             self.reset_scene();
+        }
+
+        // Detect level selection change — reload entities in editor viewport.
+        if !self.editor_state.playing && self.selected_level != self.loaded_level {
+            // Clear existing non-persistent entities and reload
+            {
+                let mut pool = self.shared.lock();
+                let world = pool.world();
+                let entities: Vec<euca_ecs::Entity> = {
+                    let query = euca_ecs::Query::<euca_ecs::Entity>::new(world);
+                    query.iter().collect()
+                };
+                for entity in entities {
+                    // Keep persistent entities (ground, light)
+                    if world.get::<euca_agent::Persistent>(entity).is_none() {
+                        world.despawn(entity);
+                    }
+                }
+            }
+            if self.selected_level.is_some() {
+                self.load_selected_level();
+            } else {
+                self.loaded_level = None;
+            }
+            self.editor_state.selected_entity = None;
         }
 
         let mut pool = self.shared.lock();
@@ -918,21 +974,9 @@ impl EditorApp {
 
         // Detect play-start transition: load level file and auto-follow hero.
         if self.editor_state.playing && !self.was_playing_last_frame {
-            // Load the selected level file
-            if let Some(idx) = self.selected_level {
-                if let Some(path) = self.available_levels.get(idx) {
-                    match std::fs::read_to_string(path) {
-                        Ok(data) => match serde_json::from_str::<serde_json::Value>(&data) {
-                            Ok(level) => {
-                                let count = euca_agent::load_level_into_world(world, &level);
-                                log::info!("Level loaded: {count} entities from {path}");
-                            }
-                            Err(e) => log::error!("Invalid level JSON in {path}: {e}"),
-                        },
-                        Err(e) => log::error!("Cannot read level file {path}: {e}"),
-                    }
-                }
-            }
+            // Level is already loaded in the editor viewport — no need to load again.
+            // Just set up play-time resources (camera follow, navmesh).
+
             // Auto-detect PlayerHero and set camera follow
             let hero = {
                 let q = Query::<(euca_ecs::Entity, &euca_gameplay::player::PlayerHero)>::new(world);
@@ -1324,6 +1368,7 @@ impl ApplicationHandler for EditorApp {
             self.egui_winit = Some(egui_winit);
             self.egui_renderer = Some(egui_renderer);
             self.setup_scene();
+            self.load_selected_level();
 
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
