@@ -245,6 +245,7 @@ impl TaaPass {
     ///
     /// Reads the current HDR frame and depth, reprojects from history,
     /// blends with neighborhood clamping, writes to output.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &mut self,
         device: &wgpu::Device,

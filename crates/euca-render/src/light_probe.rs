@@ -85,6 +85,7 @@ impl LightProbeGrid {
 
     /// Pack the N nearest probes into GPU-ready format.
     /// Returns (positions, sh_coefficients, weights, count).
+    #[allow(clippy::type_complexity)]
     pub fn pack_nearest(
         &self,
         world_pos: Vec3,
