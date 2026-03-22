@@ -1,0 +1,13 @@
+{
+  "name": "Euca MOBA Demo",
+  "version": "0.1.0",
+  "default_level": "level.json",
+  "window": {
+    "title": "Euca MOBA Demo",
+    "width": 1280,
+    "height": 720,
+    "fullscreen": false
+  },
+  "levels_dir": "levels",
+  "assets_dir": "assets"
+}
