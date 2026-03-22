@@ -3,6 +3,7 @@ mod client;
 pub mod interest;
 pub mod prediction;
 mod protocol;
+pub mod quic_transport;
 pub mod replication;
 mod server;
 pub mod tick_rate;
@@ -13,6 +14,7 @@ pub use client::GameClient;
 pub use interest::{InterestConfig, InterestManager, interest_culling_system};
 pub use prediction::ClientPrediction;
 pub use protocol::{ClientMessage, EntityState, NetworkId, Replicated, ServerMessage};
+pub use quic_transport::{QuicTransport, generate_self_signed_cert};
 pub use replication::{
     ClientReplicationReceiver, ClientRpc, ComponentData, ComponentDeserializationRegistry,
     ComponentReplicationRegistry, EntityReplicationData, PendingReplication, ReplicatedComponent,
