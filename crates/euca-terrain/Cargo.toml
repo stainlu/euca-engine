@@ -10,3 +10,4 @@ categories = ["game-development"]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
 euca-physics = { path = "../euca-physics" }
+log = "0.4"
