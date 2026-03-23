@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.7.0 (2026-03-23)
+
+### Quality Release — READMEs, Robustness, Architecture Review
+
+- **24 per-crate READMEs**: Every crate now has a README.md with description, features, usage example. Ready for crates.io discoverability.
+- **Hot-path unwrap elimination**: Replaced dangerous `.expect()`/`.unwrap()` in production render, physics, and scheduler code with graceful fallbacks (`Option` returns, `log::warn` + skip, early return guards).
+  - `compute.rs`: Frustum cull bind group → returns `Option<BindGroup>`
+  - `occlusion.rs`: HZB bind group → returns `Option<BindGroup>`, dispatch → logs + returns on missing pipeline
+  - `vehicle.rs`: Torque curve → early return on empty samples
+  - `schedule.rs`: Thread join → `log::error!` instead of propagating panic
+- **Architecture audit**: Verified no circular dependencies, no dead code beyond legitimate GPU resource ownership, clean layered dependency graph.
+
+### Infrastructure
+- 740+ tests, 0 failures
+- Version bump to 0.7.0
+
 ## v0.6.0 (2026-03-23)
 
 ### Wire Everything — Close All Integration Gaps

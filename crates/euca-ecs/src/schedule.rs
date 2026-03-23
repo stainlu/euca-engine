@@ -174,7 +174,10 @@ unsafe fn run_batch_parallel(
             handles.push(s.spawn(move || unsafe { job.run() }));
         }
         for h in handles {
-            h.join().expect("System panicked during parallel execution");
+            match h.join() {
+                Ok(()) => {}
+                Err(e) => log::error!("System panicked during parallel execution: {:?}", e),
+            }
         }
     });
 }
@@ -647,7 +650,10 @@ impl ParallelSchedule {
                 handles.push(s.spawn(move || unsafe { job.run() }));
             }
             for h in handles {
-                h.join().expect("System panicked during parallel execution");
+                match h.join() {
+                    Ok(()) => {}
+                    Err(e) => log::error!("System panicked during parallel execution: {:?}", e),
+                }
             }
         });
     }

@@ -363,20 +363,18 @@ pub fn setup_frustum_culling(
 
 /// Create the bind group for one frustum-cull dispatch.
 ///
-/// The caller must have previously called `setup_frustum_culling`.
+/// Returns `None` if frustum culling has not been set up (pipeline or buffers missing).
 pub fn create_frustum_cull_bind_group(
     device: &wgpu::Device,
     manager: &ComputeManager,
-) -> wgpu::BindGroup {
-    let pipeline = manager
-        .pipeline("frustum_cull")
-        .expect("frustum_cull pipeline not set up");
-    let frustum_buf = manager.buffer("frustum_planes").expect("buffer missing");
-    let aabb_buf = manager.buffer("cull_aabbs").expect("buffer missing");
-    let vis_buf = manager.buffer("cull_visibility").expect("buffer missing");
-    let params_buf = manager.buffer("cull_params").expect("buffer missing");
+) -> Option<wgpu::BindGroup> {
+    let pipeline = manager.pipeline("frustum_cull")?;
+    let frustum_buf = manager.buffer("frustum_planes")?;
+    let aabb_buf = manager.buffer("cull_aabbs")?;
+    let vis_buf = manager.buffer("cull_visibility")?;
+    let params_buf = manager.buffer("cull_params")?;
 
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("frustum_cull_bind_group"),
         layout: pipeline.bind_group_layout(),
         entries: &[
@@ -397,7 +395,7 @@ pub fn create_frustum_cull_bind_group(
                 resource: params_buf.raw().as_entire_binding(),
             },
         ],
-    })
+    }))
 }
 
 /// Dispatch a frustum-culling compute pass.

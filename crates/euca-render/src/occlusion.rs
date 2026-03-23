@@ -487,17 +487,42 @@ pub fn create_hzb_buffers(
 }
 
 /// Create a bind group for one HZB downsample dispatch.
-pub fn create_hzb_bind_group(device: &wgpu::Device, manager: &ComputeManager) -> wgpu::BindGroup {
-    let pipeline = manager
-        .pipeline(HZB_PIPELINE_NAME)
-        .expect("hzb_downsample pipeline not set up");
-    let src_buf = manager.buffer("hzb_src").expect("hzb_src buffer missing");
-    let dst_buf = manager.buffer("hzb_dst").expect("hzb_dst buffer missing");
-    let params_buf = manager
-        .buffer("hzb_params")
-        .expect("hzb_params buffer missing");
+///
+/// Returns `None` if the pipeline or any required buffer has not been set up.
+pub fn create_hzb_bind_group(
+    device: &wgpu::Device,
+    manager: &ComputeManager,
+) -> Option<wgpu::BindGroup> {
+    let pipeline = match manager.pipeline(HZB_PIPELINE_NAME) {
+        Some(p) => p,
+        None => {
+            log::warn!("HZB bind group creation skipped: pipeline not set up");
+            return None;
+        }
+    };
+    let src_buf = match manager.buffer("hzb_src") {
+        Some(b) => b,
+        None => {
+            log::warn!("HZB bind group creation skipped: hzb_src buffer missing");
+            return None;
+        }
+    };
+    let dst_buf = match manager.buffer("hzb_dst") {
+        Some(b) => b,
+        None => {
+            log::warn!("HZB bind group creation skipped: hzb_dst buffer missing");
+            return None;
+        }
+    };
+    let params_buf = match manager.buffer("hzb_params") {
+        Some(b) => b,
+        None => {
+            log::warn!("HZB bind group creation skipped: hzb_params buffer missing");
+            return None;
+        }
+    };
 
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("hzb_downsample_bind_group"),
         layout: pipeline.bind_group_layout(),
         entries: &[
@@ -514,10 +539,12 @@ pub fn create_hzb_bind_group(device: &wgpu::Device, manager: &ComputeManager) ->
                 resource: params_buf.raw().as_entire_binding(),
             },
         ],
-    })
+    }))
 }
 
 /// Dispatch one mip-transition of the HZB downsample shader.
+///
+/// Does nothing if the HZB pipeline has not been set up.
 pub fn dispatch_hzb_downsample(
     encoder: &mut wgpu::CommandEncoder,
     manager: &ComputeManager,
@@ -525,9 +552,13 @@ pub fn dispatch_hzb_downsample(
     dst_width: u32,
     dst_height: u32,
 ) {
-    let pipeline = manager
-        .pipeline(HZB_PIPELINE_NAME)
-        .expect("hzb_downsample pipeline not set up");
+    let pipeline = match manager.pipeline(HZB_PIPELINE_NAME) {
+        Some(p) => p,
+        None => {
+            log::warn!("HZB downsample dispatch skipped: pipeline not set up");
+            return;
+        }
+    };
 
     let wg_x = dst_width.div_ceil(8);
     let wg_y = dst_height.div_ceil(8);
