@@ -112,6 +112,22 @@ impl AudioEngine {
         Ok(handle)
     }
 
+    /// Unload a clip, freeing its sound data and any pooled playback handles.
+    ///
+    /// After this call the [`AudioClipHandle`] is invalidated — attempting to
+    /// play it will return an error.
+    pub fn unload_clip(&mut self, handle: AudioClipHandle) {
+        if self.clips.remove(&handle.0).is_some() {
+            self.handle_pool.remove(&handle.0);
+            log::info!("Unloaded audio clip (handle: {})", handle.0);
+        } else {
+            log::warn!(
+                "Attempted to unload unknown audio clip (handle: {})",
+                handle.0
+            );
+        }
+    }
+
     /// Return a handle to the pool for potential reuse.
     pub fn return_to_pool(&mut self, clip: AudioClipHandle, handle: StaticSoundHandle) {
         self.handle_pool.entry(clip.0).or_default().push(handle);
