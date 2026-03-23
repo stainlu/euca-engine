@@ -1,32 +1,65 @@
+//! Rendering subsystem for the Euca engine.
+//!
+//! Provides a PBR forward renderer built on `wgpu` with support for cascaded
+//! shadow maps, MSAA, HDR post-processing (SSAO, FXAA, bloom, color grading),
+//! TAA, volumetric fog, decals, and GPU-driven rendering.
+//!
+//! # Key types
+//!
+//! - [`Renderer`] -- main rendering pipeline; owns GPU resources and executes
+//!   draw calls each frame.
+//! - [`Camera`] / [`Frustum`] -- view and projection setup.
+//! - [`Material`] / [`MaterialHandle`] -- PBR material definitions.
+//! - [`Mesh`] / [`MeshHandle`] / [`MeshRenderer`] -- geometry data.
+//! - [`TextureStore`] / [`TextureHandle`] -- GPU texture management.
+//! - [`DrawCommand`] -- per-object draw parameters submitted each frame.
+//! - [`Vertex`] -- interleaved vertex layout (position, normal, tangent, UV).
+
 mod buffer;
 mod camera;
+/// Clustered light assignment for tiled/clustered forward shading.
 pub mod clustered;
+/// GPU compute pipeline management and indirect dispatch utilities.
 pub mod compute;
+/// Deferred decal projection volumes.
 pub mod decal;
+/// Deferred shading G-buffer and lighting pass.
 pub mod deferred;
+/// Procedural foliage scattering and instanced rendering.
 pub mod foliage;
 mod gpu;
+/// GPU-driven rendering with indirect draw and compute culling.
 pub mod gpu_driven;
+/// GPU compute particle systems.
 pub mod gpu_particles;
 mod hardware;
 mod hlod;
 mod light;
+/// Spherical-harmonics light probes for indirect lighting.
 pub mod light_probe;
 mod lod;
 mod material;
 mod mesh;
+/// Apple Metal backend hints and render pass optimization.
 pub mod metal_hints;
+/// Hierarchical Z-buffer (HZB) occlusion culling.
 pub mod occlusion;
 mod plugin;
+/// Post-processing stack (SSAO, FXAA, bloom, color grading, tone mapping).
 pub mod post_process;
+/// Depth and normal pre-pass for deferred techniques.
 pub mod prepass;
 mod renderer;
+/// Screen-space reflections.
 pub mod ssr;
+/// Temporal anti-aliasing resolve pass.
 pub mod taa;
 mod texture;
 mod vertex;
+/// Volumetric fog (ray-marched scattering).
 pub mod volumetric;
 
+/// Re-export `wgpu` so downstream crates can use the same version.
 pub use wgpu;
 
 pub use buffer::{BufferKind, SmartBuffer};
