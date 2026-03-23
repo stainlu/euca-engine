@@ -29,6 +29,8 @@ pub struct Projectile {
     pub owner: Entity,
     /// Time elapsed since spawn.
     pub elapsed: f32,
+    /// Collision radius for hit detection.
+    pub radius: f32,
 }
 
 impl Projectile {
@@ -41,6 +43,7 @@ impl Projectile {
             lifetime,
             owner,
             elapsed: 0.0,
+            radius: 0.5,
         }
     }
 }
@@ -52,11 +55,21 @@ pub fn projectile_system(world: &mut World, dt: f32) {
     let mut damage_events: Vec<DamageEvent> = Vec::new();
 
     // Collect projectile data
-    let projectiles: Vec<(Entity, Vec3, f32, f32, Entity, Vec3)> = {
+    let projectiles: Vec<(Entity, Vec3, f32, f32, Entity, Vec3, f32)> = {
         let query = Query::<(Entity, &Projectile, &LocalTransform)>::new(world);
         query
             .iter()
-            .map(|(e, p, lt)| (e, p.direction, p.speed, p.damage, p.owner, lt.0.translation))
+            .map(|(e, p, lt)| {
+                (
+                    e,
+                    p.direction,
+                    p.speed,
+                    p.damage,
+                    p.owner,
+                    lt.0.translation,
+                    p.radius,
+                )
+            })
             .collect()
     };
 
@@ -70,7 +83,7 @@ pub fn projectile_system(world: &mut World, dt: f32) {
             .collect()
     };
 
-    for (proj_entity, direction, speed, damage, owner, pos) in &projectiles {
+    for (proj_entity, direction, speed, damage, owner, pos, radius) in &projectiles {
         let new_pos = *pos + *direction * (*speed * dt);
 
         // Update position
@@ -87,14 +100,13 @@ pub fn projectile_system(world: &mut World, dt: f32) {
             }
         }
 
-        // Simple sphere collision with targets (radius 0.5)
-        let hit_radius = 0.5;
+        // Simple sphere collision with targets
         for (target_entity, target_pos) in &targets {
             if *target_entity == *owner || *target_entity == *proj_entity {
                 continue;
             }
             let dist = (new_pos - *target_pos).length();
-            if dist < hit_radius {
+            if dist < *radius {
                 damage_events.push(DamageEvent {
                     target: *target_entity,
                     amount: *damage,

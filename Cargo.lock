@@ -1544,6 +1544,7 @@ dependencies = [
  "euca-ecs",
  "euca-math",
  "euca-physics",
+ "log",
 ]
 
 [[package]]
