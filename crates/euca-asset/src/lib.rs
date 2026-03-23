@@ -8,7 +8,7 @@ pub mod skeleton;
 pub mod systems;
 
 pub use animation::{AnimationClipData, AnimationProperty};
-pub use gltf_loader::{GltfImage, GltfMesh, GltfScene, load_gltf};
+pub use gltf_loader::{GltfImage, GltfMesh, GltfScene, apply_texture_handles, load_gltf};
 pub use hot_reload::FileWatcher;
 pub use loader::{AssetHandle, AssetStore, LoadState};
 pub use lod::{generate_lod_chain, simplify_mesh};

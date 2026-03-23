@@ -5,8 +5,8 @@ pub mod undo;
 
 pub use gizmo::GizmoState;
 pub use panels::{
-    SpawnRequest, ToolbarAction, content_browser_panel, hierarchy_panel, inspector_panel,
-    toolbar_panel,
+    SpawnRequest, TerrainBrushAction, TerrainBrushMode, ToolbarAction, content_browser_panel,
+    hierarchy_panel, inspector_panel, terrain_panel, toolbar_panel,
 };
 pub use scene_file::{
     PrefabRegistry, SCENE_VERSION, SceneEntity, SceneFile, load_scene_into_world,
@@ -37,6 +37,16 @@ pub struct EditorState {
     pub snap_to_grid: bool,
     /// Grid cell size used when snap-to-grid is enabled.
     pub grid_size: f32,
+    /// Whether the terrain brush is currently active.
+    pub terrain_brush_active: bool,
+    /// Current terrain brush sculpting mode.
+    pub terrain_brush_mode: TerrainBrushMode,
+    /// Brush radius in world units.
+    pub terrain_brush_radius: f32,
+    /// Brush strength (how much each stroke affects the heightmap).
+    pub terrain_brush_strength: f32,
+    /// Target height used by the Flatten brush mode.
+    pub terrain_brush_target_height: f32,
 }
 
 impl EditorState {
@@ -53,6 +63,11 @@ impl EditorState {
             clipboard: Vec::new(),
             snap_to_grid: false,
             grid_size: 1.0,
+            terrain_brush_active: false,
+            terrain_brush_mode: TerrainBrushMode::Raise,
+            terrain_brush_radius: 5.0,
+            terrain_brush_strength: 0.1,
+            terrain_brush_target_height: 0.0,
         }
     }
 

@@ -58,7 +58,7 @@ Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold 
 | **Particles** | CPU particle emitters with gravity, color gradients |
 | **Terrain** | Heightmap, chunk-based LOD, 4-layer texture splatting, physics colliders, brush editing |
 | **Navigation** | Grid navmesh, 8-connected A* pathfinding, path smoothing, RVO avoidance |
-| **Networking** | UDP + QUIC (Quinn) transport, interest culling, bandwidth budgeting |
+| **Networking** | UDP + QUIC (Quinn) transport, client prediction, interest culling, bandwidth budgeting |
 | **UI** | Runtime UI framework: anchored layout, flex, widgets, input routing, world-space UI |
 | **Scripting** | Embedded Lua (mlua), hot reload, sandboxing, ECS bridge, event handlers |
 | **Reflection** | Runtime field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` |

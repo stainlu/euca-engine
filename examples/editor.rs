@@ -400,6 +400,15 @@ fn build_gameplay_schedule() -> euca_ecs::ParallelSchedule {
         )
         .after("pathfinding");
 
+    // ── Stage 9: Network prediction correction ──────────────────────────
+    sched
+        .add_system(
+            "prediction_correction",
+            euca_net::apply_prediction_system,
+            ParallelSystemAccess::new().write::<LocalTransform>(),
+        )
+        .after("steering");
+
     // ── Finalize: event flush + tick advance ─────────────────────────────
     sched
         .add_system(
@@ -415,7 +424,8 @@ fn build_gameplay_schedule() -> euca_ecs::ParallelSchedule {
         .after("audio")
         .after("skeletal_animation")
         .after("particle_update")
-        .after("steering");
+        .after("steering")
+        .after("prediction_correction");
 
     sched.build();
 
@@ -1193,6 +1203,42 @@ impl EditorApp {
                 sh_gpu[i] = [coeffs[0], coeffs[1], coeffs[2], 0.0];
             }
             renderer.set_probe_sh(sh_gpu);
+        }
+
+        // Collect and render CPU particle emitters as billboard meshes.
+        {
+            let batches = euca_particle::render::collect_particle_render_data(world, camera.eye);
+            let axes = euca_particle::render::BillboardAxes::from_camera(
+                camera.eye,
+                camera.target,
+                Vec3::new(0.0, 1.0, 0.0),
+            );
+            for batch in &batches {
+                if batch.is_empty() {
+                    continue;
+                }
+                let (billboard_verts, indices) = batch.build_billboard_geometry(&axes);
+                let vertices: Vec<Vertex> = billboard_verts
+                    .iter()
+                    .map(|bv| Vertex {
+                        position: bv.position,
+                        normal: [0.0, 0.0, 1.0],
+                        tangent: [1.0, 0.0, 0.0],
+                        uv: bv.uv,
+                    })
+                    .collect();
+                let mesh = Mesh { vertices, indices };
+                let mesh_handle = renderer.upload_mesh(gpu, &mesh);
+                let mat =
+                    Material::new([1.0, 1.0, 1.0, 1.0], 0.0, 1.0).with_emissive([1.0, 1.0, 1.0]);
+                let mat_handle = renderer.upload_material(gpu, &mat);
+                draw_commands.push(DrawCommand {
+                    mesh: mesh_handle,
+                    material: mat_handle,
+                    model_matrix: euca_math::Mat4::IDENTITY,
+                    aabb: None,
+                });
+            }
         }
 
         renderer.render_to_view(

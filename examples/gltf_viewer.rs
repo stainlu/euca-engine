@@ -65,8 +65,21 @@ impl GltfViewerApp {
             self.gltf_path
         );
 
-        // Upload and spawn each mesh
-        for gltf_mesh in &scene.meshes {
+        // Upload texture images from glTF to GPU
+        let tex_handles: Vec<euca_render::TextureHandle> = scene
+            .images
+            .iter()
+            .map(|img| renderer.upload_texture(gpu, img.width, img.height, &img.pixels))
+            .collect();
+
+        if !tex_handles.is_empty() {
+            println!("Uploaded {} texture(s) to GPU", tex_handles.len());
+        }
+
+        // Wire texture handles into materials, then upload and spawn each mesh
+        let mut scene = scene;
+        for gltf_mesh in &mut scene.meshes {
+            euca_asset::apply_texture_handles(gltf_mesh, &tex_handles);
             let mesh_handle = renderer.upload_mesh(gpu, &gltf_mesh.mesh);
             let mat_handle = renderer.upload_material(gpu, &gltf_mesh.material);
 

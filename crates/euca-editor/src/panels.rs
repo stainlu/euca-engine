@@ -326,6 +326,123 @@ pub fn content_browser_panel(ctx: &egui::Context, _state: &EditorState) -> Optio
     spawn
 }
 
+/// Which sculpting operation the terrain brush performs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerrainBrushMode {
+    Raise,
+    Lower,
+    Flatten,
+    Smooth,
+}
+
+/// Snapshot of the current terrain brush settings, returned each frame the
+/// brush is active so the caller can apply the sculpt operation.
+#[derive(Clone, Debug)]
+pub struct TerrainBrushAction {
+    pub mode: TerrainBrushMode,
+    pub radius: f32,
+    pub strength: f32,
+    pub target_height: f32,
+}
+
+/// Terrain brush editor panel.
+///
+/// Renders inside the right-side inspector area as a collapsible section.
+/// Returns `Some(TerrainBrushAction)` when the brush is active, `None`
+/// otherwise.
+pub fn terrain_panel(ctx: &egui::Context, state: &mut EditorState) -> Option<TerrainBrushAction> {
+    let mut action = None;
+
+    egui::SidePanel::right("terrain_brush")
+        .default_width(260.0)
+        .show(ctx, |ui| {
+            ui.heading("Terrain Brush");
+            ui.separator();
+
+            // Active toggle
+            ui.checkbox(&mut state.terrain_brush_active, "Brush Active");
+            ui.separator();
+
+            // Mode selection
+            ui.label("Mode:");
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(state.terrain_brush_mode == TerrainBrushMode::Raise, "Raise")
+                    .clicked()
+                {
+                    state.terrain_brush_mode = TerrainBrushMode::Raise;
+                }
+                if ui
+                    .selectable_label(state.terrain_brush_mode == TerrainBrushMode::Lower, "Lower")
+                    .clicked()
+                {
+                    state.terrain_brush_mode = TerrainBrushMode::Lower;
+                }
+                if ui
+                    .selectable_label(
+                        state.terrain_brush_mode == TerrainBrushMode::Flatten,
+                        "Flatten",
+                    )
+                    .clicked()
+                {
+                    state.terrain_brush_mode = TerrainBrushMode::Flatten;
+                }
+                if ui
+                    .selectable_label(
+                        state.terrain_brush_mode == TerrainBrushMode::Smooth,
+                        "Smooth",
+                    )
+                    .clicked()
+                {
+                    state.terrain_brush_mode = TerrainBrushMode::Smooth;
+                }
+            });
+
+            ui.separator();
+
+            // Radius
+            ui.horizontal(|ui| {
+                ui.label("Radius:");
+                ui.add(
+                    egui::DragValue::new(&mut state.terrain_brush_radius)
+                        .speed(0.1)
+                        .range(1.0..=50.0),
+                );
+            });
+
+            // Strength
+            ui.horizontal(|ui| {
+                ui.label("Strength:");
+                ui.add(
+                    egui::DragValue::new(&mut state.terrain_brush_strength)
+                        .speed(0.005)
+                        .range(0.01..=1.0),
+                );
+            });
+
+            // Target height (relevant for Flatten mode)
+            ui.horizontal(|ui| {
+                ui.label("Target Height:");
+                ui.add(
+                    egui::DragValue::new(&mut state.terrain_brush_target_height)
+                        .speed(0.1)
+                        .range(0.0..=100.0),
+                );
+            });
+
+            if state.terrain_brush_active {
+                action = Some(TerrainBrushAction {
+                    mode: state.terrain_brush_mode.clone(),
+                    radius: state.terrain_brush_radius,
+                    strength: state.terrain_brush_strength,
+                    target_height: state.terrain_brush_target_height,
+                });
+            }
+        });
+
+    action
+}
+
 fn find_alive_entity(world: &World, index: u32) -> Option<Entity> {
     crate::find_alive_entity(world, index)
 }

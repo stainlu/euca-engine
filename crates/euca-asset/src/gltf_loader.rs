@@ -1,4 +1,4 @@
-use euca_render::{Material, Mesh, Vertex};
+use euca_render::{Material, Mesh, TextureHandle, Vertex};
 use std::path::Path;
 
 use crate::animation::{AnimationClipData, parse_animations};
@@ -41,6 +41,38 @@ pub struct GltfScene {
     pub animations: Vec<AnimationClipData>,
     /// Texture images extracted from the file, in RGBA8 format.
     pub images: Vec<GltfImage>,
+}
+
+/// Wire GPU texture handles into a GltfMesh's material using its texture index fields.
+///
+/// Call this after uploading `GltfScene::images` to the GPU. Pass the resulting
+/// `TextureHandle` slice so each mesh's material gets the correct textures.
+pub fn apply_texture_handles(mesh: &mut GltfMesh, handles: &[TextureHandle]) {
+    if let Some(idx) = mesh.albedo_tex_index
+        && let Some(&h) = handles.get(idx)
+    {
+        mesh.material.albedo_texture = Some(h);
+    }
+    if let Some(idx) = mesh.normal_tex_index
+        && let Some(&h) = handles.get(idx)
+    {
+        mesh.material.normal_texture = Some(h);
+    }
+    if let Some(idx) = mesh.metallic_roughness_tex_index
+        && let Some(&h) = handles.get(idx)
+    {
+        mesh.material.metallic_roughness_texture = Some(h);
+    }
+    if let Some(idx) = mesh.ao_tex_index
+        && let Some(&h) = handles.get(idx)
+    {
+        mesh.material.ao_texture = Some(h);
+    }
+    if let Some(idx) = mesh.emissive_tex_index
+        && let Some(&h) = handles.get(idx)
+    {
+        mesh.material.emissive_texture = Some(h);
+    }
 }
 
 /// Convert glTF image data to RGBA8 format.

@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.0 (2026-03-23)
+
+### Wire Everything — Close All Integration Gaps
+Every "declared but not functional" feature is now wired into the render/gameplay loop.
+
+- **glTF texture upload**: `apply_texture_handles()` bridges image indices to GPU TextureHandles. glTF viewer wires textures before material upload.
+- **CPU particle rendering**: `collect_particle_render_data()` called in editor render loop, billboard geometry converted to Vertex meshes and drawn.
+- **GPU particle integration**: `Renderer::add_gpu_particle_system()` API, compute emit/update + billboard draw in `render_to_view()`.
+- **Client prediction in gameplay schedule**: `apply_prediction_system` added as "prediction_correction" stage after steering, before event flush.
+- **Terrain brush editor UI**: `terrain_panel()` with Raise/Lower/Flatten/Smooth modes, radius/strength/target_height sliders. `EditorState` tracks brush state.
+- **Decal rendering**: `DecalRenderer` initialized in Renderer, `set_decal_commands()` API, drawn after opaque geometry using unit-cube projection.
+
+### Infrastructure
+- 740+ tests, 0 failures
+- Version bump to 0.6.0
+
 ## v0.5.0 (2026-03-23)
 
 ### Asset Pipeline

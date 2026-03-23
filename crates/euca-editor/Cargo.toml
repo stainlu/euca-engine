@@ -30,6 +30,7 @@ euca-audio = { path = "../euca-audio" }
 euca-asset = { path = "../euca-asset" }
 euca-particle = { path = "../euca-particle" }
 euca-nav = { path = "../euca-nav" }
+euca-net = { path = "../euca-net" }
 euca-input = { path = "../euca-input" }
 tokio = { version = "1", features = ["full"] }
 png = "0.17"

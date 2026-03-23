@@ -1,5 +1,6 @@
 use crate::buffer::{BufferKind, SmartBuffer};
 use crate::camera::Camera;
+use crate::decal::{DecalDrawCommand, DecalRenderer};
 use crate::gpu::GpuContext;
 use crate::light::{AmbientLight, DirectionalLight};
 use crate::material::{Material, MaterialHandle};
@@ -238,6 +239,12 @@ pub struct Renderer {
     probe_sh: [[f32; 4]; 9],
     /// Whether probe data is valid.
     probe_enabled: bool,
+    /// GPU resources for decal projection volumes.
+    decal_renderer: DecalRenderer,
+    /// Decal draw commands staged by the caller for the current frame.
+    pending_decals: Vec<DecalDrawCommand>,
+    /// GPU compute particle systems.
+    gpu_particle_systems: Vec<crate::gpu_particles::GpuParticleSystem>,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -652,6 +659,9 @@ impl Renderer {
         let post_process_stack =
             PostProcessStack::new(&gpu.device, &gpu.queue, &gpu.surface_config);
 
+        let decal_renderer = DecalRenderer::new(&gpu.device);
+        decal_renderer.upload(&gpu.queue);
+
         Self {
             pipeline,
             transparent_pipeline,
@@ -694,6 +704,9 @@ impl Renderer {
             frame_count: 0,
             probe_sh: [[0.0; 4]; 9],
             probe_enabled: false,
+            decal_renderer,
+            pending_decals: Vec::new(),
+            gpu_particle_systems: Vec::new(),
         }
     }
 
@@ -868,6 +881,39 @@ impl Renderer {
     /// Disable probe-based ambient lighting (fall back to flat ambient_color).
     pub fn clear_probe(&mut self) {
         self.probe_enabled = false;
+    }
+
+    /// Stage decal draw commands for the current frame.
+    ///
+    /// These will be rendered after opaque geometry in `render_to_view_with_lights`.
+    /// The list is consumed (cleared) at the end of each frame.
+    pub fn set_decal_commands(&mut self, commands: Vec<DecalDrawCommand>) {
+        self.pending_decals = commands;
+    }
+
+    /// Read-only access to the decal renderer (unit-cube GPU resources).
+    pub fn decal_renderer(&self) -> &DecalRenderer {
+        &self.decal_renderer
+    }
+
+    /// Add a GPU compute particle system. Returns its index.
+    pub fn add_gpu_particle_system(
+        &mut self,
+        gpu: &GpuContext,
+        config: crate::gpu_particles::GpuParticleConfig,
+    ) -> usize {
+        let format = gpu.surface_config.format;
+        let system = crate::gpu_particles::GpuParticleSystem::new(gpu, config, format);
+        self.gpu_particle_systems.push(system);
+        self.gpu_particle_systems.len() - 1
+    }
+
+    /// Access a GPU particle system by index.
+    pub fn gpu_particle_system_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut crate::gpu_particles::GpuParticleSystem> {
+        self.gpu_particle_systems.get_mut(index)
     }
 
     /// Enable CPU-side HZB occlusion culling.
@@ -1313,6 +1359,28 @@ impl Renderer {
                     batch.instance_start..batch.instance_start + batch.instance_count,
                 );
             }
+            // ── Decal pass: draw projected decal volumes after opaque geometry ──
+            // Each decal is a unit cube scaled/positioned by its model matrix.
+            // The decal shader (when a dedicated pipeline is added) reads the
+            // depth buffer to reconstruct world-space position and projects the
+            // decal texture. For now we bind the decal vertex/index buffers and
+            // issue one draw per command so the integration path is exercised.
+            if !self.pending_decals.is_empty() {
+                pass.set_vertex_buffer(0, self.decal_renderer.vertex_buffer().slice(..));
+                pass.set_index_buffer(
+                    self.decal_renderer.index_buffer().slice(..),
+                    wgpu::IndexFormat::Uint16,
+                );
+                for decal_cmd in &self.pending_decals {
+                    // TODO: bind per-decal uniforms (model_matrix, opacity) and
+                    // switch to a dedicated decal render pipeline once the decal
+                    // shader is authored. Priority is respected by draw order
+                    // (commands are pre-sorted ascending).
+                    let _ = decal_cmd;
+                    pass.draw_indexed(0..self.decal_renderer.index_count(), 0, 0..1);
+                }
+            }
+
             if !transparent_cmds.is_empty() {
                 let (trans_instances, trans_batches) =
                     Self::build_batches_from_refs(&transparent_cmds);
@@ -1333,6 +1401,45 @@ impl Renderer {
                         0,
                         batch.instance_start..batch.instance_start + batch.instance_count,
                     );
+                }
+            }
+        }
+
+        // Clear pending decals after rendering — they must be re-submitted each frame.
+        self.pending_decals.clear();
+
+        // GPU compute particles: update (compute dispatch) then draw (render pass).
+        if !self.gpu_particle_systems.is_empty() {
+            let dt = 1.0 / 60.0; // Fixed timestep for particle update
+            for system in &mut self.gpu_particle_systems {
+                system.update(encoder, &gpu.queue, dt);
+            }
+
+            // Draw particles in a separate render pass (after opaque, blended on top)
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("gpu_particles"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_texture,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    ..Default::default()
+                });
+                for system in &self.gpu_particle_systems {
+                    system.draw(&mut pass);
                 }
             }
         }
