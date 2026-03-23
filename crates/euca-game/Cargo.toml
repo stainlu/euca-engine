@@ -2,6 +2,9 @@
 name = "euca-game"
 version.workspace = true
 edition.workspace = true
+description = "Standalone game runner with .eucaproject.json configuration"
+keywords = ["gamedev", "game-engine", "runtime", "game-runner"]
+categories = ["game-development"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }

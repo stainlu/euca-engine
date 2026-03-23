@@ -1,3 +1,9 @@
+//! Input abstraction layer: keyboard, mouse, gamepad, and action mapping.
+//!
+//! [`InputState`] tracks raw per-frame input. [`ActionMap`] maps physical
+//! keys to named game actions. [`InputSnapshot`] serialises input for
+//! network transmission.
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -26,6 +32,7 @@ pub struct InputContextStack {
 }
 
 impl InputContextStack {
+    /// Create a new stack with [`InputContext::Gameplay`] as the initial context.
     pub fn new() -> Self {
         Self {
             stack: vec![InputContext::Gameplay],
@@ -87,10 +94,12 @@ pub struct GamepadState {
 }
 
 impl GamepadState {
+    /// Set the value of a gamepad axis (e.g., stick or trigger).
     pub fn set_axis(&mut self, gamepad: u32, axis: GamepadAxisType, value: f32) {
         self.axes.insert((gamepad, axis), value);
     }
 
+    /// Read the current value of a gamepad axis (0.0 if not set).
     pub fn axis_value(&self, gamepad: u32, axis: &GamepadAxisType) -> f32 {
         self.axes
             .get(&(gamepad, axis.clone()))
@@ -98,14 +107,17 @@ impl GamepadState {
             .unwrap_or(0.0)
     }
 
+    /// Record a gamepad button press.
     pub fn press_button(&mut self, gamepad: u32, button: u32) {
         self.buttons.insert((gamepad, button));
     }
 
+    /// Record a gamepad button release.
     pub fn release_button(&mut self, gamepad: u32, button: u32) {
         self.buttons.remove(&(gamepad, button));
     }
 
+    /// Check if a gamepad button is currently held.
     pub fn is_button_pressed(&self, gamepad: u32, button: u32) -> bool {
         self.buttons.contains(&(gamepad, button))
     }
@@ -134,6 +146,7 @@ pub struct InputState {
 }
 
 impl InputState {
+    /// Create a default (empty) input state.
     pub fn new() -> Self {
         Self::default()
     }
@@ -201,6 +214,7 @@ pub struct ActionMap {
 }
 
 impl ActionMap {
+    /// Create an empty action map with no bindings.
     pub fn new() -> Self {
         Self::default()
     }

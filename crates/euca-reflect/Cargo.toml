@@ -2,6 +2,9 @@
 name = "euca-reflect"
 version.workspace = true
 edition.workspace = true
+description = "Runtime reflection with field access, TypeRegistry, and JSON serialization"
+keywords = ["gamedev", "game-engine", "reflection", "type-registry", "serialization"]
+categories = ["game-development", "rust-patterns"]
 
 [dependencies]
 euca-reflect-derive = { path = "../euca-reflect-derive" }

@@ -20,16 +20,19 @@ pub struct PhysicsBody {
 }
 
 impl PhysicsBody {
+    /// Create a fully simulated dynamic body.
     pub fn dynamic() -> Self {
         Self {
             body_type: RigidBodyType::Dynamic,
         }
     }
+    /// Create a static (immovable) body.
     pub fn fixed() -> Self {
         Self {
             body_type: RigidBodyType::Static,
         }
     }
+    /// Create a kinematic body (moved by gameplay code, pushes dynamic bodies).
     pub fn kinematic() -> Self {
         Self {
             body_type: RigidBodyType::Kinematic,
@@ -43,9 +46,13 @@ impl PhysicsBody {
 /// Dynamic bodies use `Mass::new(mass, inertia)`.
 #[derive(Clone, Copy, Debug, Reflect)]
 pub struct Mass {
+    /// Total mass in kilograms.
     pub mass: f32,
+    /// Precomputed `1 / mass` (0 for static bodies).
     pub inverse_mass: f32,
+    /// Scalar moment of inertia (kg*m^2).
     pub inertia: f32,
+    /// Precomputed `1 / inertia` (0 for static bodies).
     pub inverse_inertia: f32,
 }
 
@@ -87,7 +94,9 @@ impl Mass {
 /// Velocity component for dynamic bodies.
 #[derive(Clone, Copy, Debug, Default, Reflect)]
 pub struct Velocity {
+    /// Linear velocity in world units per second.
     pub linear: Vec3,
+    /// Angular velocity in radians per second (axis-angle representation).
     pub angular: Vec3,
 }
 
@@ -134,6 +143,7 @@ pub struct Collider {
 }
 
 impl Collider {
+    /// Create an axis-aligned bounding box collider with the given half-extents.
     pub fn aabb(hx: f32, hy: f32, hz: f32) -> Self {
         Self {
             shape: ColliderShape::Aabb { hx, hy, hz },
@@ -144,6 +154,7 @@ impl Collider {
         }
     }
 
+    /// Create a sphere collider with the given radius.
     pub fn sphere(radius: f32) -> Self {
         Self {
             shape: ColliderShape::Sphere { radius },
@@ -168,11 +179,13 @@ impl Collider {
         }
     }
 
+    /// Set the bounciness (0.0 = no bounce, 1.0 = perfectly elastic).
     pub fn with_restitution(mut self, r: f32) -> Self {
         self.restitution = r;
         self
     }
 
+    /// Set the friction coefficient (0.0 = frictionless, 1.0 = high friction).
     pub fn with_friction(mut self, f: f32) -> Self {
         self.friction = f;
         self
@@ -199,7 +212,9 @@ pub fn layers_interact(layer_a: u32, mask_a: u32, layer_b: u32, mask_b: u32) -> 
 /// Event emitted when two colliders overlap during collision resolution.
 #[derive(Clone, Debug)]
 pub struct CollisionEvent {
+    /// First colliding entity.
     pub entity_a: Entity,
+    /// Second colliding entity.
     pub entity_b: Entity,
     /// Contact normal (from A toward B).
     pub normal: Vec3,

@@ -2,6 +2,9 @@
 name = "euca-core"
 version.workspace = true
 edition.workspace = true
+description = "App lifecycle, Plugin trait, and Time resource for game engines"
+keywords = ["gamedev", "game-engine", "core", "plugin", "lifecycle"]
+categories = ["game-development"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }

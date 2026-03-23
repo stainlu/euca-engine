@@ -8,12 +8,19 @@ pub struct MeshHandle(pub u32);
 /// Component that marks an entity for rendering with a specific mesh.
 #[derive(Clone, Copy, Debug, Reflect)]
 pub struct MeshRenderer {
+    /// Handle to the GPU-uploaded mesh this entity should be drawn with.
     pub mesh: MeshHandle,
 }
 
-/// CPU-side mesh data (vertices + indices).
+/// CPU-side mesh geometry (vertices and triangle indices).
+///
+/// Upload to the GPU via [`Renderer::upload_mesh`] to obtain a [`MeshHandle`]
+/// that can be referenced in [`DrawCommand`](crate::DrawCommand)s.
 pub struct Mesh {
+    /// Interleaved vertex data (position, normal, tangent, UV).
     pub vertices: Vec<Vertex>,
+    /// Triangle indices into `vertices`. Every three consecutive values form
+    /// one triangle (counter-clockwise winding).
     pub indices: Vec<u32>,
 }
 

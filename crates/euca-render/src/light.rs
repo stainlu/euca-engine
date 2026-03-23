@@ -20,9 +20,13 @@ impl Default for DirectionalLight {
 }
 
 /// Point light component (emits in all directions from a position).
+///
+/// Position is determined by the entity's transform component, not stored here.
 #[derive(Clone, Debug)]
 pub struct PointLight {
+    /// Light color (linear RGB).
     pub color: [f32; 3],
+    /// Intensity multiplier.
     pub intensity: f32,
     /// Maximum range. Light attenuates to zero at this distance.
     pub range: f32,
@@ -39,15 +43,21 @@ impl Default for PointLight {
 }
 
 /// Spot light component (cone-shaped light from a position).
+///
+/// Position is determined by the entity's transform component.
 #[derive(Clone, Debug)]
 pub struct SpotLight {
+    /// Direction the spotlight is aimed (normalized).
     pub direction: [f32; 3],
+    /// Light color (linear RGB).
     pub color: [f32; 3],
+    /// Intensity multiplier.
     pub intensity: f32,
-    /// Inner cone angle (radians) — full intensity inside this cone.
+    /// Inner cone angle (radians) -- full intensity inside this cone.
     pub inner_cone: f32,
-    /// Outer cone angle (radians) — light falls off to zero at this angle.
+    /// Outer cone angle (radians) -- light falls off to zero at this angle.
     pub outer_cone: f32,
+    /// Maximum range. Light attenuates to zero at this distance.
     pub range: f32,
 }
 
@@ -64,10 +74,12 @@ impl Default for SpotLight {
     }
 }
 
-/// Ambient light resource (global fill light).
+/// Ambient light resource (global fill light applied uniformly to all surfaces).
 #[derive(Clone, Debug)]
 pub struct AmbientLight {
+    /// Light color (linear RGB).
     pub color: [f32; 3],
+    /// Intensity multiplier.
     pub intensity: f32,
 }
 

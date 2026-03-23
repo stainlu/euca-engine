@@ -21,6 +21,7 @@ pub struct GameClient {
 }
 
 impl GameClient {
+    /// Create a new disconnected game client.
     pub fn new() -> Self {
         Self {
             player_network_id: None,

@@ -1,3 +1,8 @@
+//! Core application framework: time, plugins, profiling, and the main loop.
+//!
+//! Start with [`App`], register [`Plugin`]s, then call [`App::run_headless`]
+//! or [`App::run_windowed`].
+
 mod app;
 mod plugin;
 mod profiler;
@@ -8,5 +13,5 @@ pub use plugin::Plugin;
 pub use profiler::{ProfileSection, Profiler, profiler_begin, profiler_end};
 pub use time::Time;
 
-// Re-export winit for downstream crates
+/// Re-export `winit` for downstream crates that need window types.
 pub use winit;
