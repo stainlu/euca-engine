@@ -2,6 +2,9 @@
 name = "euca-nav"
 version.workspace = true
 edition.workspace = true
+description = "Grid navmesh, A* pathfinding, path smoothing, and RVO avoidance"
+keywords = ["gamedev", "game-engine", "navigation", "pathfinding", "navmesh"]
+categories = ["game-development"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }

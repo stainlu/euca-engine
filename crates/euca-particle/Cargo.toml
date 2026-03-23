@@ -2,6 +2,9 @@
 name = "euca-particle"
 version.workspace = true
 edition.workspace = true
+description = "CPU + GPU compute particle systems with billboard rendering"
+keywords = ["gamedev", "game-engine", "particles", "vfx", "compute"]
+categories = ["game-development", "rendering"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }

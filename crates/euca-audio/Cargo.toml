@@ -2,6 +2,9 @@
 name = "euca-audio"
 version.workspace = true
 edition.workspace = true
+description = "Spatial audio with bus mixing, reverb zones, and occlusion via kira"
+keywords = ["gamedev", "game-engine", "audio", "spatial-audio", "kira"]
+categories = ["game-development", "multimedia::audio"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
