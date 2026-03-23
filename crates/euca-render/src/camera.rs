@@ -94,11 +94,6 @@ impl Camera {
         screen_w: f32,
         screen_h: f32,
     ) -> Mat4 {
-        let current_vp = self.view_projection_matrix(aspect_ratio);
-
-        // Store current VP for next frame's reprojection
-        self.prev_view_proj = Some(current_vp);
-
         // Halton(2,3) sequence for sub-pixel jitter
         let idx = (frame_index % 16) + 1;
         let jx = halton(idx, 2) - 0.5; // center around 0 → [-0.5, 0.5]
@@ -112,7 +107,12 @@ impl Camera {
         proj.cols[2][0] += self.jitter[0];
         proj.cols[2][1] += self.jitter[1];
 
-        proj * self.view_matrix()
+        let jittered_vp = proj * self.view_matrix();
+
+        // Store the jittered VP for next frame's TAA reprojection
+        self.prev_view_proj = Some(jittered_vp);
+
+        jittered_vp
     }
 
     /// Convert a screen pixel position to a world-space ray (origin, direction).
@@ -308,5 +308,23 @@ mod tests {
         let wide = cam.projection_matrix(2.0);
         let narrow = cam.projection_matrix(0.5);
         assert_ne!(wide, narrow);
+    }
+
+    #[test]
+    fn prev_view_proj_stores_jittered() {
+        let mut cam = Camera::default();
+        let aspect = 16.0 / 9.0;
+
+        let jittered_vp = cam.jittered_view_projection_matrix(aspect, 1, 1920.0, 1080.0);
+        let stored = cam.prev_view_proj.expect("prev_view_proj should be set");
+
+        // The stored matrix must equal the jittered VP, not the unjittered one
+        assert_eq!(stored, jittered_vp);
+
+        let unjittered_vp = cam.view_projection_matrix(aspect);
+        assert_ne!(
+            stored, unjittered_vp,
+            "prev_view_proj must differ from the unjittered VP"
+        );
     }
 }

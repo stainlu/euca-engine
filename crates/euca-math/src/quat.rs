@@ -132,6 +132,11 @@ cfg_simd! {
 
             let theta = dot.acos();
             let sin_theta = theta.sin();
+            // Near-parallel fallback: avoid division by near-zero sin_theta
+            if sin_theta.abs() < 1e-6 {
+                let t_splat = f32x4::splat(t);
+                return Self::from_simd(a.add(b.sub(a).mul(t_splat))).normalize();
+            }
             let s0 = ((1.0 - t) * theta).sin() / sin_theta;
             let s1 = (t * theta).sin() / sin_theta;
             Self::from_simd(a.mul(f32x4::splat(s0)).add(b.mul(f32x4::splat(s1))))
@@ -184,6 +189,16 @@ cfg_scalar! {
 
             let theta = dot.acos();
             let sin_theta = theta.sin();
+            // Near-parallel fallback: avoid division by near-zero sin_theta
+            if sin_theta.abs() < 1e-6 {
+                return Self {
+                    x: self.x + (end.x - self.x) * t,
+                    y: self.y + (end.y - self.y) * t,
+                    z: self.z + (end.z - self.z) * t,
+                    w: self.w + (end.w - self.w) * t,
+                }
+                .normalize();
+            }
             let s0 = ((1.0 - t) * theta).sin() / sin_theta;
             let s1 = (t * theta).sin() / sin_theta;
 
@@ -322,6 +337,24 @@ mod tests {
         let q = Quat::from_xyzw(1.0, 2.0, 3.0, 4.0);
         let n = q.normalize();
         assert!((n.length() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn slerp_near_parallel_no_nan() {
+        // Two quaternions separated by a tiny angle that puts sin(theta) near zero.
+        // Without the guard this produces NaN from 0/0.
+        let a = Quat::IDENTITY;
+        let b = Quat::from_axis_angle(Vec3::Y, 1e-7);
+        let result = a.slerp(b, 0.5);
+        assert!(
+            !result.x.is_nan() && !result.y.is_nan() && !result.z.is_nan() && !result.w.is_nan(),
+            "slerp near-parallel produced NaN: {:?}",
+            result
+        );
+        assert!(
+            (result.length() - 1.0).abs() < 1e-4,
+            "result should be unit length"
+        );
     }
 
     #[test]

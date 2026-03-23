@@ -86,10 +86,20 @@ impl Transform {
         let mat = self.to_matrix().inverse();
         // Extract translation from column 3
         let translation = Vec3::new(mat.cols[3][0], mat.cols[3][1], mat.cols[3][2]);
-        // Extract scale from column lengths
-        let sx = Vec3::new(mat.cols[0][0], mat.cols[0][1], mat.cols[0][2]).length();
-        let sy = Vec3::new(mat.cols[1][0], mat.cols[1][1], mat.cols[1][2]).length();
-        let sz = Vec3::new(mat.cols[2][0], mat.cols[2][1], mat.cols[2][2]).length();
+        // Extract scale from column lengths, clamping degenerate values to
+        // avoid NaN from division-by-zero when extracting the rotation matrix.
+        let mut sx = Vec3::new(mat.cols[0][0], mat.cols[0][1], mat.cols[0][2]).length();
+        let mut sy = Vec3::new(mat.cols[1][0], mat.cols[1][1], mat.cols[1][2]).length();
+        let mut sz = Vec3::new(mat.cols[2][0], mat.cols[2][1], mat.cols[2][2]).length();
+        if sx.abs() < 1e-7 {
+            sx = 1.0;
+        }
+        if sy.abs() < 1e-7 {
+            sy = 1.0;
+        }
+        if sz.abs() < 1e-7 {
+            sz = 1.0;
+        }
         let scale = Vec3::new(sx, sy, sz);
         // Extract rotation (divide columns by scale)
         let rot_mat = Mat4 {
@@ -221,6 +231,30 @@ mod tests {
         assert!((from_transform.x - from_matrix.x).abs() < 1e-5);
         assert!((from_transform.y - from_matrix.y).abs() < 1e-5);
         assert!((from_transform.z - from_matrix.z).abs() < 1e-5);
+    }
+
+    #[test]
+    fn inverse_degenerate_scale_no_nan() {
+        // A transform with zero scale on one axis. Without the degenerate
+        // scale guard, inverse() would divide by zero and produce NaN.
+        let t = Transform {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::new(1.0, 0.0, 1.0), // degenerate Y scale
+        };
+        let inv = t.inverse();
+        assert!(
+            !inv.translation.x.is_nan()
+                && !inv.translation.y.is_nan()
+                && !inv.translation.z.is_nan(),
+            "inverse translation contains NaN: {:?}",
+            inv.translation
+        );
+        assert!(
+            !inv.scale.x.is_nan() && !inv.scale.y.is_nan() && !inv.scale.z.is_nan(),
+            "inverse scale contains NaN: {:?}",
+            inv.scale
+        );
     }
 
     #[test]

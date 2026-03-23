@@ -166,7 +166,8 @@ fn evaluate_sh(normal: vec3<f32>, sh: array<vec4<f32>, 9>) -> vec3<f32> {
 // ---------------------------------------------------------------------------
 
 fn shadow_factor_biased(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
-    let normal_bias = 0.05;
+    let light_dir = normalize(-scene.light_direction.xyz);
+    let normal_bias = 0.01 + 0.03 * (1.0 - max(dot(world_normal, light_dir), 0.0));
     let biased_pos = world_pos + world_normal * normal_bias;
 
     // Select the tightest cascade that contains this fragment.

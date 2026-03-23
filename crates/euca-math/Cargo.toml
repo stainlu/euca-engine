@@ -15,6 +15,7 @@ simd = []
 reflect = ["dep:euca-reflect"]
 
 [dependencies]
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 euca-reflect = { path = "../euca-reflect", optional = true }
 

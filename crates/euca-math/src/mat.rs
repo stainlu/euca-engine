@@ -237,6 +237,11 @@ impl Mat4 {
             + m[2][0] * (m[0][1] * a1323 - m[1][1] * a0323 + m[3][1] * a0123)
             - m[3][0] * (m[0][1] * a1223 - m[1][1] * a0223 + m[2][1] * a0123);
 
+        if det.abs() < 1e-10 {
+            log::warn!("Singular matrix: determinant {det} is near zero, returning identity");
+            return Self::IDENTITY;
+        }
+
         let inv_det = 1.0 / det;
 
         Self {
@@ -423,6 +428,14 @@ mod tests {
         assert!((result.y - 22.0).abs() < 1e-6);
         assert!((result.z - 33.0).abs() < 1e-6);
         assert!((result.w - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn singular_matrix_inverse_returns_identity() {
+        // A matrix with all zeros is singular (det=0). Its inverse should
+        // gracefully return IDENTITY instead of producing NaN/Inf.
+        let inv = Mat4::ZERO.inverse();
+        assert_eq!(inv, Mat4::IDENTITY);
     }
 
     #[test]

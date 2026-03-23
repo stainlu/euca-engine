@@ -591,16 +591,7 @@ impl ParallelSchedule {
                 .filter(|i| !order.contains(i))
                 .map(|i| self.systems[i].name.clone())
                 .collect();
-            log::warn!(
-                "ParallelSchedule: dependency cycle detected involving: {:?}. \
-                 Falling back to declaration order for these systems.",
-                unresolved
-            );
-            for i in 0..n {
-                if !order.contains(&i) {
-                    order.push(i);
-                }
-            }
+            panic!("dependency cycle detected: {:?}", unresolved);
         }
 
         order
@@ -1116,6 +1107,27 @@ mod tests {
         schedule.add_system("sys", |_w: &mut World| {}, ParallelSystemAccess::new());
         let mut world = World::new();
         schedule.run(&mut world);
+    }
+
+    #[test]
+    #[should_panic(expected = "dependency cycle detected")]
+    fn parallel_schedule_cycle_panics() {
+        let mut schedule = ParallelSchedule::new();
+        schedule
+            .add_system(
+                "A",
+                |_w: &mut World| {},
+                ParallelSystemAccess::new().read::<Position>(),
+            )
+            .after("B");
+        schedule
+            .add_system(
+                "B",
+                |_w: &mut World| {},
+                ParallelSystemAccess::new().read::<Velocity>(),
+            )
+            .after("A");
+        schedule.build(); // should panic due to cycle
     }
 
     #[test]

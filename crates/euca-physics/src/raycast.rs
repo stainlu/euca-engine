@@ -37,15 +37,28 @@ pub struct RayHit {
     pub normal: Vec3,
 }
 
+/// Safely compute the reciprocal of a scalar, returning ±f32::MAX for
+/// near-zero values to avoid NaN/Inf in axis-aligned ray directions.
+#[inline]
+fn safe_inv(v: f32) -> f32 {
+    if v.abs() > 1e-12 {
+        1.0 / v
+    } else if v >= 0.0 {
+        f32::MAX
+    } else {
+        f32::MIN
+    }
+}
+
 /// Raycast against an AABB. Returns the distance t if hit.
 pub fn raycast_aabb(ray: &Ray, aabb_center: Vec3, hx: f32, hy: f32, hz: f32) -> Option<RayHit> {
     let min = Vec3::new(aabb_center.x - hx, aabb_center.y - hy, aabb_center.z - hz);
     let max = Vec3::new(aabb_center.x + hx, aabb_center.y + hy, aabb_center.z + hz);
 
     let inv_dir = Vec3::new(
-        1.0 / ray.direction.x,
-        1.0 / ray.direction.y,
-        1.0 / ray.direction.z,
+        safe_inv(ray.direction.x),
+        safe_inv(ray.direction.y),
+        safe_inv(ray.direction.z),
     );
 
     let t1 = (min.x - ray.origin.x) * inv_dir.x;
@@ -392,6 +405,17 @@ mod tests {
         let ray = Ray::new(Vec3::new(-5.0, 5.0, 0.0), Vec3::X);
         let hit = raycast_capsule(&ray, Vec3::ZERO, 0.5, 1.0);
         assert!(hit.is_none());
+    }
+
+    #[test]
+    fn axis_aligned_ray_hits_aabb() {
+        // Ray traveling along +Y (direction.x == 0, direction.z == 0).
+        // Without safe_inv this would produce Inf/NaN and miss the box.
+        let ray = Ray::new(Vec3::new(0.0, -5.0, 0.0), Vec3::Y);
+        let hit = raycast_aabb(&ray, Vec3::ZERO, 1.0, 1.0, 1.0);
+        assert!(hit.is_some(), "Axis-aligned ray should hit AABB");
+        let h = hit.unwrap();
+        assert!((h.t - 4.0).abs() < 1e-3, "Expected t ~4.0, got {}", h.t);
     }
 
     // ── Scene query tests ──

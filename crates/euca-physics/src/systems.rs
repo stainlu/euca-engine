@@ -518,8 +518,9 @@ fn apply_velocity_response(
     let tangent_speed = tangent_vel.length();
     let friction_impulse = if tangent_speed > 1e-6 {
         let tangent_dir = tangent_vel * (1.0 / tangent_speed);
-        // Coulomb friction: clamp tangential impulse to mu * normal impulse
-        let jt = (-tangent_speed / total_inv_mass).max(-friction * j.abs());
+        // Coulomb friction: clamp tangential impulse to ±(mu * normal impulse)
+        let jt_max = friction * j.abs();
+        let jt = (-tangent_speed / total_inv_mass).clamp(-jt_max, jt_max);
         tangent_dir * jt
     } else {
         Vec3::ZERO
@@ -834,6 +835,67 @@ mod tests {
             "Light body should move more: light_d={}, heavy_d={}",
             light_displacement,
             heavy_displacement
+        );
+    }
+
+    #[test]
+    fn friction_decelerates_sliding() {
+        // A dynamic body sliding on a static surface should be slowed by friction,
+        // not accelerated. The friction impulse must oppose the sliding direction.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        // Static ground at y=0
+        let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(ground, GlobalTransform::default());
+        world.insert(ground, PhysicsBody::fixed());
+        world.insert(
+            ground,
+            Collider::aabb(10.0, 0.5, 10.0)
+                .with_friction(0.5)
+                .with_restitution(0.0),
+        );
+
+        // Sliding box at y=0.5 moving in +X
+        let slider = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 0.5, 0.0,
+        ))));
+        world.insert(slider, GlobalTransform::default());
+        world.insert(slider, PhysicsBody::dynamic());
+        world.insert(
+            slider,
+            Velocity {
+                linear: Vec3::new(10.0, 0.0, 0.0),
+                angular: Vec3::ZERO,
+            },
+        );
+        world.insert(
+            slider,
+            Collider::aabb(0.5, 0.5, 0.5)
+                .with_friction(0.5)
+                .with_restitution(0.0),
+        );
+
+        // Step physics several times
+        for _ in 0..10 {
+            physics_step_system(&mut world);
+        }
+
+        let vel = world.get::<Velocity>(slider).unwrap();
+        // Friction should have reduced the X velocity, not increased it
+        assert!(
+            vel.linear.x < 10.0,
+            "Friction should decelerate sliding body, vx={}",
+            vel.linear.x
+        );
+        assert!(
+            vel.linear.x >= 0.0,
+            "Friction should not reverse direction, vx={}",
+            vel.linear.x
         );
     }
 
