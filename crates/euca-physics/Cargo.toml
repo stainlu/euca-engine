@@ -2,6 +2,9 @@
 name = "euca-physics"
 version.workspace = true
 edition.workspace = true
+description = "Collision detection, raycasting, joints, and character/vehicle controllers"
+keywords = ["gamedev", "game-engine", "physics", "collision", "raycasting"]
+categories = ["game-development", "simulation"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }

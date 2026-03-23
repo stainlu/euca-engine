@@ -2,6 +2,9 @@
 name = "euca-reflect-derive"
 version.workspace = true
 edition.workspace = true
+description = "Derive macro for automatic Reflect trait implementation"
+keywords = ["gamedev", "game-engine", "reflection", "derive", "proc-macro"]
+categories = ["game-development", "rust-patterns"]
 
 [lib]
 proc-macro = true

@@ -2,6 +2,9 @@
 name = "euca-cli"
 version.workspace = true
 edition.workspace = true
+description = "CLI tool with 25+ command groups for engine control and asset pipeline"
+keywords = ["gamedev", "game-engine", "cli", "tools", "asset-pipeline"]
+categories = ["game-development", "command-line-utilities"]
 
 [[bin]]
 name = "euca"
