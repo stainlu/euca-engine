@@ -1,3 +1,9 @@
+//! Multiplayer networking: client/server, replication, prediction, and transport.
+//!
+//! Provides [`GameClient`] and [`GameServer`] for connection management,
+//! [`ClientPrediction`] for lag-hiding, and a [`replication`] layer for
+//! automatic ECS state synchronisation over the network.
+
 pub mod bandwidth;
 mod client;
 pub mod interest;
