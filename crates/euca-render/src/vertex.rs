@@ -1,16 +1,26 @@
 use bytemuck::{Pod, Zeroable};
 
-/// A vertex with position, normal, tangent, and UV coordinates.
+/// Interleaved vertex layout used by the PBR forward pipeline.
+///
+/// Fields are tightly packed in C layout (`#[repr(C)]`) and directly
+/// uploadable to the GPU via `bytemuck`. The corresponding wgpu vertex
+/// buffer layout is available as [`Vertex::LAYOUT`].
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
+    /// Object-space position (shader location 0).
     pub position: [f32; 3],
+    /// Unit-length surface normal (shader location 1).
     pub normal: [f32; 3],
+    /// Tangent vector for normal mapping, aligned with the U texture axis
+    /// (shader location 2).
     pub tangent: [f32; 3],
+    /// Texture coordinates (shader location 3).
     pub uv: [f32; 2],
 }
 
 impl Vertex {
+    /// Vertex buffer layout descriptor matching the field offsets above.
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,

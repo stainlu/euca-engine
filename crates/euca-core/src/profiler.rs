@@ -6,7 +6,9 @@ const MAX_FRAME_HISTORY: usize = 60;
 
 /// A recorded profile section within a single frame.
 pub struct ProfileSection {
+    /// Human-readable section label.
     pub name: &'static str,
+    /// Wall-clock duration of this section in microseconds.
     pub duration_us: f64,
 }
 
@@ -23,6 +25,7 @@ pub struct Profiler {
 }
 
 impl Profiler {
+    /// Create a new profiler with empty section and frame histories.
     pub fn new() -> Self {
         Self {
             sections: Vec::new(),

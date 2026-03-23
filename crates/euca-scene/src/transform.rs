@@ -3,6 +3,7 @@ use euca_reflect::Reflect;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 
+/// An entity's transform relative to its parent (or the world origin if it has no parent).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LocalTransform(pub Transform);
 
@@ -80,6 +81,7 @@ impl Reflect for LocalTransform {
     }
 }
 
+/// An entity's computed world-space transform, produced by [`crate::transform_propagation_system`].
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GlobalTransform(pub Transform);
 

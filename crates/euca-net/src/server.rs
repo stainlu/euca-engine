@@ -31,6 +31,7 @@ pub struct GameServer {
 }
 
 impl GameServer {
+    /// Create a new game server with no connected players.
     pub fn new() -> Self {
         Self {
             players: HashMap::new(),

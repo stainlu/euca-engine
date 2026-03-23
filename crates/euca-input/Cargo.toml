@@ -2,6 +2,9 @@
 name = "euca-input"
 version.workspace = true
 edition.workspace = true
+description = "Action maps, input contexts, and keyboard/gamepad bindings"
+keywords = ["gamedev", "game-engine", "input", "keyboard", "gamepad"]
+categories = ["game-development"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
