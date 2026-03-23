@@ -74,20 +74,32 @@ impl DefaultAssets {
 
     /// Resolve a color string to a material handle.
     /// Accepts named colors ("red", "gold") or RGB ("0.5,0.2,0.8") mapped to nearest preset.
+    /// Returns white material as default if parsing fails.
     pub fn material(&self, color: &str) -> Option<MaterialHandle> {
         // Try exact name match first
         if let Some(h) = self.materials.get(color) {
             return Some(*h);
         }
         // Try RGB parsing → nearest preset
-        let parts: Vec<f32> = color
-            .split(',')
-            .filter_map(|p| p.trim().parse().ok())
-            .collect();
-        if parts.len() == 3 {
-            return Some(self.nearest_color(parts[0], parts[1], parts[2]));
+        if let Some((r, g, b)) = Self::parse_rgb(color) {
+            return Some(self.nearest_color(r, g, b));
         }
-        None
+        // Fall back to white for unrecognised color strings
+        self.materials.get("white").copied()
+    }
+
+    /// Parse an RGB color string of the form "r,g,b" where each component is an f32.
+    /// Returns `None` if the string does not contain exactly 3 valid f32 components.
+    /// Components are clamped to the 0.0..=1.0 range.
+    fn parse_rgb(color: &str) -> Option<(f32, f32, f32)> {
+        let parts: Vec<&str> = color.split(',').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let r: f32 = parts[0].trim().parse().ok()?;
+        let g: f32 = parts[1].trim().parse().ok()?;
+        let b: f32 = parts[2].trim().parse().ok()?;
+        Some((r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)))
     }
 
     fn nearest_color(&self, r: f32, g: f32, b: f32) -> MaterialHandle {
