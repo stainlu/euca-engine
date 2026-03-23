@@ -349,6 +349,9 @@ impl Archetype {
     /// # Safety
     /// `T` must match the component type for `component_id`.
     /// Interior mutability via raw pointers — caller must ensure exclusive access.
+    // clippy::mut_from_ref — intentional: returns `&mut T` from `&self` using
+    // raw pointers for ECS interior mutability. Safety is enforced by the
+    // query system which guarantees exclusive component access at runtime.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) unsafe fn get_mut<T: 'static>(

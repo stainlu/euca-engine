@@ -245,6 +245,9 @@ impl TaaPass {
     ///
     /// Reads the current HDR frame and depth, reprojects from history,
     /// blends with neighborhood clamping, writes to output.
+    // clippy::too_many_arguments — TAA resolve requires the current frame,
+    // depth, two view-projection matrices, and jitter; all are distinct GPU
+    // resources or per-frame parameters that don't form a reusable struct.
     #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &mut self,

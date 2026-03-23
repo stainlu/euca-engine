@@ -81,21 +81,6 @@ impl Transform {
         self.rotation * scaled
     }
 
-    /// Compose two transforms.
-    #[inline]
-    #[allow(clippy::should_implement_trait)]
-    pub fn mul(self, other: Self) -> Self {
-        Self {
-            translation: self.transform_point(other.translation),
-            rotation: (self.rotation * other.rotation).normalize(),
-            scale: Vec3::new(
-                self.scale.x * other.scale.x,
-                self.scale.y * other.scale.y,
-                self.scale.z * other.scale.z,
-            ),
-        }
-    }
-
     /// Compute inverse via matrix decomposition.
     pub fn inverse(self) -> Self {
         let mat = self.to_matrix().inverse();
@@ -152,6 +137,24 @@ impl Transform {
     }
 }
 
+impl std::ops::Mul for Transform {
+    type Output = Self;
+
+    /// Compose two transforms: applies `rhs` first, then `self`.
+    #[inline]
+    fn mul(self, rhs: Self) -> Self {
+        Self {
+            translation: self.transform_point(rhs.translation),
+            rotation: (self.rotation * rhs.rotation).normalize(),
+            scale: Vec3::new(
+                self.scale.x * rhs.scale.x,
+                self.scale.y * rhs.scale.y,
+                self.scale.z * rhs.scale.z,
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,7 +200,7 @@ mod tests {
     fn compose_transforms() {
         let a = Transform::from_translation(Vec3::new(5.0, 0.0, 0.0));
         let b = Transform::from_scale(Vec3::new(2.0, 2.0, 2.0));
-        let composed = a.mul(b);
+        let composed = a * b;
         let r = composed.transform_point(Vec3::X);
         assert!((r.x - 7.0).abs() < 1e-5);
     }

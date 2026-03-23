@@ -88,7 +88,7 @@ pub fn transform_propagation_system(world: &mut World) {
             .map(|lt| lt.0)
             .unwrap_or(euca_math::Transform::IDENTITY);
 
-        let global = parent_global.mul(local);
+        let global = parent_global * local;
 
         if needs_update && let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
             gt.0 = global;

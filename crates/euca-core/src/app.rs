@@ -3,6 +3,9 @@ use crate::time::Time;
 use euca_ecs::{IntoSystem, Schedule, World};
 
 /// The application — owns the ECS world, schedule, and runs the main loop.
+// clippy::type_complexity — `Box<dyn FnMut(&mut World)>` is the natural
+// type for an owned, polymorphic render callback. Extracting a type alias
+// would obscure meaning rather than clarify it.
 #[allow(clippy::type_complexity)]
 pub struct App {
     pub world: World,
@@ -91,6 +94,8 @@ impl App {
         use winit::event_loop::{ActiveEventLoop, EventLoop};
         use winit::window::{Window, WindowAttributes, WindowId};
 
+        // clippy::type_complexity — same render callback as `App`; this struct
+        // only lives inside `run_windowed` and mirrors App's fields.
         #[allow(clippy::type_complexity)]
         struct NovaApp {
             world: World,

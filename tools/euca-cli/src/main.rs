@@ -706,6 +706,9 @@ enum RuleCommands {
 }
 
 #[derive(Subcommand)]
+// clippy::large_enum_variant — `Create` carries all template fields for clap
+// parsing; this enum is constructed once per CLI invocation and boxing would
+// break the `#[derive(Subcommand)]` derive.
 #[allow(clippy::large_enum_variant)]
 enum TemplateCommands {
     /// Define a named entity template
@@ -1024,6 +1027,8 @@ fn parse_collider(s: &str) -> Option<Value> {
 }
 
 /// Build a spawn/create JSON body from friendly flags.
+// clippy::too_many_arguments — mirrors the CLI flags 1:1; a wrapper struct
+// would duplicate the clap-parsed fields without reducing complexity.
 #[allow(clippy::too_many_arguments)]
 fn build_create_body(
     mesh: &Option<String>,

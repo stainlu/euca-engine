@@ -1113,6 +1113,8 @@ impl Renderer {
         self.draw_with_lights(gpu, camera, light, ambient, commands, &[], &[]);
     }
 
+    // clippy::too_many_arguments — rendering requires camera, lights, and draw
+    // commands; these are separate concerns passed from distinct ECS queries.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_with_lights(
         &mut self,
@@ -1155,6 +1157,8 @@ impl Renderer {
         output.present();
     }
 
+    // clippy::too_many_arguments — thin wrapper forwarding to
+    // `render_to_view_with_lights` with empty light slices.
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view(
         &mut self,
@@ -1179,6 +1183,9 @@ impl Renderer {
         );
     }
 
+    // clippy::too_many_arguments — core render entry point: needs camera, all
+    // light types, draw commands, target view, and encoder. Bundling these
+    // into a struct would just move the fields one level deeper.
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view_with_lights(
         &mut self,
