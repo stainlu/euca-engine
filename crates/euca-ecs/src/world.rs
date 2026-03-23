@@ -132,12 +132,25 @@ impl World {
             None => return false,
         };
 
-        let swapped = self.archetypes[loc.archetype_id.0 as usize].swap_remove(loc.row);
+        let arch_idx = loc.archetype_id.0 as usize;
+        let swapped = self.archetypes[arch_idx].swap_remove(loc.row);
         if let Some(swapped_entity) = swapped {
             self.entity_locations[swapped_entity.index as usize] = Some(EntityLocation {
                 archetype_id: loc.archetype_id,
                 row: loc.row,
             });
+        }
+
+        // If the archetype is now empty, increment archetype_generation to
+        // force query cache invalidation. Without this, cached queries may
+        // continue to iterate an empty archetype and miss the fact that
+        // results have changed.
+        if self.archetypes[arch_idx].is_empty() {
+            self.archetype_generation += 1;
+            self.query_cache
+                .write()
+                .expect("query cache lock poisoned")
+                .increment_generation();
         }
 
         self.entity_locations[entity.index as usize] = None;
@@ -841,5 +854,33 @@ mod tests {
         // Spawned at tick 0, query since tick 0 → nothing changed (tick must be > since)
         let changed = world.changed_entities::<Position>(0);
         assert_eq!(changed.len(), 0);
+    }
+
+    #[test]
+    fn despawn_last_entity_invalidates_cache() {
+        use crate::Query;
+
+        let mut world = World::new();
+        let entity = world.spawn(Position { x: 1.0, y: 2.0 });
+
+        // Query should find the entity.
+        let results: Vec<_> = {
+            let q = Query::<&Position>::new(&world);
+            q.iter().collect()
+        };
+        assert_eq!(results.len(), 1);
+
+        // Despawn the only entity in its archetype, making it empty.
+        world.despawn(entity);
+
+        // A fresh query must reflect the empty world.
+        let results: Vec<_> = {
+            let q = Query::<&Position>::new(&world);
+            q.iter().collect()
+        };
+        assert!(
+            results.is_empty(),
+            "Query should return empty results after despawning the last entity"
+        );
     }
 }

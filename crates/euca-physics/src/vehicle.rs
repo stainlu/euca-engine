@@ -788,7 +788,33 @@ mod tests {
         );
     }
 
-    // ── Test 7: Zero dt is a no-op ──
+    // ── Test 7: prev_compression is updated each step ──
+
+    #[test]
+    fn suspension_prev_compression_updates() {
+        let mut world = world_no_gravity();
+        spawn_ground(&mut world);
+        let car = spawn_vehicle(&mut world, 1.0);
+
+        let dt = 1.0 / 60.0;
+        vehicle_physics_system(&mut world, dt);
+
+        let vehicle = world.get::<Vehicle>(car).unwrap();
+        // After one step, at least one grounded wheel should have updated
+        // prev_compression to match its current compression.
+        for ws in &vehicle.wheel_states {
+            if ws.is_grounded {
+                assert!(
+                    (ws.prev_compression - ws.compression).abs() < 1e-6,
+                    "prev_compression ({}) should equal compression ({}) after update",
+                    ws.prev_compression,
+                    ws.compression,
+                );
+            }
+        }
+    }
+
+    // ── Test 8: Zero dt is a no-op ──
 
     #[test]
     fn zero_dt_is_noop() {

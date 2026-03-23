@@ -67,12 +67,18 @@ impl SpatialIndex {
     }
 
     /// Compute the cell key for a world-space position.
+    ///
+    /// Components are clamped to `(i32::MIN / 2)..=(i32::MAX / 2)` after
+    /// flooring to prevent overflow at extreme coordinates, which would cause
+    /// unrelated positions to hash to the same cell.
     #[inline]
     fn cell_key(&self, pos: Vec3) -> (i32, i32, i32) {
+        const LO: i32 = i32::MIN / 2;
+        const HI: i32 = i32::MAX / 2;
         (
-            (pos.x * self.inv_cell_size).floor() as i32,
-            (pos.y * self.inv_cell_size).floor() as i32,
-            (pos.z * self.inv_cell_size).floor() as i32,
+            ((pos.x * self.inv_cell_size).floor() as i32).clamp(LO, HI),
+            ((pos.y * self.inv_cell_size).floor() as i32).clamp(LO, HI),
+            ((pos.z * self.inv_cell_size).floor() as i32).clamp(LO, HI),
         )
     }
 
@@ -261,6 +267,17 @@ mod tests {
         index.clear();
         assert_eq!(index.entity_count(), 0);
         assert_eq!(index.cell_count(), 0);
+    }
+
+    #[test]
+    fn negative_coordinate_cell_key() {
+        let index = SpatialIndex::new(1.0);
+        let key_neg = index.cell_key(Vec3::new(-1e6, -1e6, -1e6));
+        let key_pos = index.cell_key(Vec3::new(1e6, 1e6, 1e6));
+        assert_ne!(
+            key_neg, key_pos,
+            "Extreme negative and positive coordinates must not collide"
+        );
     }
 
     #[test]

@@ -252,11 +252,24 @@ pub fn streaming_update_system(world: &mut World) {
 
     // 5. Load: use ChunkLoader (or NullChunkLoader) to get data, spawn entities.
     //    We temporarily remove the loader to avoid borrow conflicts.
+    //    `catch_unwind` ensures the loader is always re-inserted even if a
+    //    load callback panics, preventing the resource from being lost.
     let loader_data: Vec<((i32, i32), Option<ChunkData>)> =
         if let Some(loader) = world.remove_resource::<Box<dyn ChunkLoader>>() {
-            let data: Vec<_> = to_load.iter().map(|&id| (id, loader.load(id))).collect();
-            world.insert_resource(loader);
-            data
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                to_load.iter().map(|&id| (id, loader.load(id))).collect()
+            }));
+            match result {
+                Ok(data) => {
+                    world.insert_resource(loader);
+                    data
+                }
+                Err(payload) => {
+                    // Always re-insert the loader before propagating.
+                    world.insert_resource(loader);
+                    std::panic::resume_unwind(payload);
+                }
+            }
         } else {
             // No loader registered: produce empty chunks.
             let null = NullChunkLoader;

@@ -154,7 +154,18 @@ pub fn raycast_capsule(ray: &Ray, center: Vec3, radius: f32, half_height: f32) -
                 let point = ray.at(t);
                 // Check if hit is within the cylinder segment (between bottom and top Y)
                 if point.y >= center.y - half_height && point.y <= center.y + half_height {
-                    let normal = Vec3::new(point.x - center.x, 0.0, point.z - center.z).normalize();
+                    // Use the hemisphere normal (from nearest hemisphere center) for
+                    // all cylinder hits. This eliminates the normal discontinuity at
+                    // the cylinder-hemisphere junction: the hemisphere normal smoothly
+                    // degenerates to the cylinder normal on the cylinder surface.
+                    let nearest_center = Vec3::new(
+                        center.x,
+                        point
+                            .y
+                            .clamp(center.y - half_height, center.y + half_height),
+                        center.z,
+                    );
+                    let normal = (point - nearest_center).normalize();
                     Some(RayHit { t, point, normal })
                 } else {
                     None

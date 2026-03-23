@@ -77,6 +77,11 @@ pub fn extract_root_motion(
     let idx = receiver.root_bone_index;
 
     if idx >= current_pose.joints.len() || idx >= previous_pose.joints.len() {
+        log::warn!(
+            "Root bone index {} out of bounds (joints: {})",
+            idx,
+            current_pose.joints.len()
+        );
         return RootMotionDelta::default();
     }
 

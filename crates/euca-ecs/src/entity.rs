@@ -186,7 +186,8 @@ mod tests {
         // Deallocate at gen u32::MAX-1 → generation saturates to u32::MAX
         assert!(alloc.deallocate(Entity::from_raw(0, u32::MAX - 1)));
         assert_eq!(
-            alloc.generations[0], u32::MAX,
+            alloc.generations[0],
+            u32::MAX,
             "Generation should saturate to u32::MAX, not wrap to zero"
         );
 

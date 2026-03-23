@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.8.2 (2026-03-23)
+
+### Medium-Severity Bug Fixes
+
+- **Scene**: Spatial index `cell_key` clamps coordinates to `i32::MIN/2..=i32::MAX/2` to prevent overflow hash collisions at extreme positions
+- **Scene**: Streaming loader wrapped in `catch_unwind` so the `ChunkLoader` resource is always re-inserted even if a load callback panics
+- **Render**: TAA neighborhood clamping now operates in YCoCg color space instead of linear RGB, reducing color-shift ghosting artifacts
+- **Physics**: Capsule raycast uses hemisphere normal for all cylinder hits, eliminating normal discontinuity at the cylinder-hemisphere junction
+- **Physics**: Vehicle suspension `prev_compression` correctly updated each frame (verified with test)
+- **Animation**: State machine suppresses transition evaluation on the frame a crossfade completes, preventing double-transitions through any-state rules
+- **Animation**: Root motion `extract_root_motion` logs a warning when the root bone index is out of bounds
+- **ECS**: Despawning the last entity in an archetype increments `archetype_generation` to invalidate query caches
+
 ## v0.8.1 (2026-03-23)
 
 ### Deep Logic Fixes

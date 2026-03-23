@@ -255,15 +255,20 @@ impl AnimStateMachine {
         let mut transitioned = false;
 
         // Advance crossfade if active
+        let mut just_completed_transition = false;
         if let Some(ref mut cf_state) = self.active_crossfade
             && cf_state.crossfade.advance(dt)
         {
-            // Crossfade complete -- fully in the new state
+            // Crossfade complete -- fully in the new state.
+            // Set flag to prevent a new transition from firing on the
+            // same frame the previous one finishes (double-transition).
             self.active_crossfade = None;
+            just_completed_transition = true;
         }
 
-        // Check transitions only if not already mid-crossfade
-        if self.active_crossfade.is_none() {
+        // Check transitions only if not already mid-crossfade and no
+        // transition just completed this frame.
+        if self.active_crossfade.is_none() && !just_completed_transition {
             // Check any-state transitions first (higher priority)
             let any_target = self
                 .any_state_transitions
@@ -454,6 +459,70 @@ mod tests {
             value: false,
         };
         assert!(!cond_false.evaluate(&params));
+    }
+
+    #[test]
+    fn no_double_transition_on_crossfade_complete() {
+        // States: A(0) -> B(1), with an any-state transition to C(2).
+        // When the A->B crossfade completes, the machine should land in B
+        // and NOT immediately fire the any-state transition to C on the
+        // same frame. This is the "double-transition" bug.
+        let mut sm = AnimStateMachine::new(0);
+        sm.add_state("A", 0);
+        sm.add_state("B", 1);
+        sm.add_state("C", 2);
+
+        // A -> B transition triggered by "go" bool
+        sm.add_transition(
+            0,
+            1,
+            vec![TransitionCondition::BoolEquals {
+                param: "go".into(),
+                value: true,
+            }],
+            0.1, // 100ms crossfade
+        );
+
+        // Any-state -> C triggered by "alert" bool.
+        // This will be set true DURING the crossfade, so it's ready to
+        // fire the moment the crossfade completes.
+        sm.add_any_state_transition(
+            2,
+            vec![TransitionCondition::BoolEquals {
+                param: "alert".into(),
+                value: true,
+            }],
+            0.1,
+        );
+
+        let durations = [1.0, 1.0, 1.0];
+
+        // Trigger A -> B
+        sm.set_bool("go", true);
+        sm.update(0.016, &durations);
+        assert_eq!(sm.current_state(), 1, "Should begin transitioning to B");
+        assert!(sm.is_transitioning());
+
+        // While mid-crossfade, enable the any-state condition.
+        sm.set_bool("alert", true);
+
+        // Advance frame-by-frame until the crossfade completes.
+        // On the exact frame it completes, the any-state transition to C
+        // should NOT fire (that would be a double-transition).
+        for _ in 0..20 {
+            sm.update(0.016, &durations);
+            if !sm.is_transitioning() {
+                // Crossfade just completed this frame.
+                // The machine should be in B, NOT C.
+                assert_eq!(
+                    sm.current_state(),
+                    1,
+                    "Should be in state B, NOT C (no double-transition on completion frame)"
+                );
+                return;
+            }
+        }
+        panic!("Crossfade did not complete within expected time");
     }
 
     #[test]

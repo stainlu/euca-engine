@@ -19,6 +19,20 @@ struct TaaParams {
 @group(0) @binding(4) var output: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(5) var linear_sampler: sampler;
 
+// Convert linear RGB to YCoCg for perceptually-correct neighborhood clamping.
+fn rgb_to_ycocg(rgb: vec3<f32>) -> vec3<f32> {
+    let y  = dot(rgb, vec3<f32>(0.25, 0.5, 0.25));
+    let co = dot(rgb, vec3<f32>(0.5, 0.0, -0.5));
+    let cg = dot(rgb, vec3<f32>(-0.25, 0.5, -0.25));
+    return vec3<f32>(y, co, cg);
+}
+
+// Convert YCoCg back to linear RGB.
+fn ycocg_to_rgb(ycocg: vec3<f32>) -> vec3<f32> {
+    let y = ycocg.x; let co = ycocg.y; let cg = ycocg.z;
+    return vec3<f32>(y + co - cg, y + cg, y - co - cg);
+}
+
 // Reconstruct world position from depth + inverse VP.
 fn reconstruct_world_pos(uv: vec2f, depth: f32) -> vec4f {
     let ndc = vec4f(uv * 2.0 - 1.0, depth, 1.0);
@@ -66,24 +80,24 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
 
-    // 5. Neighborhood clamping (3×3 min/max AABB of current frame)
-    //    Prevents ghosting by constraining history to plausible color range.
-    var neighborhood_min = current_color.rgb;
-    var neighborhood_max = current_color.rgb;
+    // 5. Neighborhood clamping (3×3 min/max AABB in YCoCg space)
+    //    Clamping in YCoCg is more perceptually correct than linear RGB and
+    //    reduces color-shift artifacts on saturated surfaces.
+    var neighborhood_min = rgb_to_ycocg(current_color.rgb);
+    var neighborhood_max = neighborhood_min;
     for (var dy = -1; dy <= 1; dy++) {
         for (var dx = -1; dx <= 1; dx++) {
             let neighbor = vec2i(pixel.x + dx, pixel.y + dy);
             if neighbor.x >= 0 && neighbor.x < dims.x && neighbor.y >= 0 && neighbor.y < dims.y {
-                let n = textureLoad(current_frame, neighbor, 0).rgb;
+                let n = rgb_to_ycocg(textureLoad(current_frame, neighbor, 0).rgb);
                 neighborhood_min = min(neighborhood_min, n);
                 neighborhood_max = max(neighborhood_max, n);
             }
         }
     }
-    let clamped_history = vec4f(
-        clamp(history_color.rgb, neighborhood_min, neighborhood_max),
-        history_color.a,
-    );
+    let history_ycocg = rgb_to_ycocg(history_color.rgb);
+    let clamped_ycocg = clamp(history_ycocg, neighborhood_min, neighborhood_max);
+    let clamped_history = vec4f(ycocg_to_rgb(clamped_ycocg), history_color.a);
 
     // 6. Blend: mostly history, small fraction of current
     let result = mix(clamped_history, current_color, params.blend_factor);
