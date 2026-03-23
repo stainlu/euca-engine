@@ -303,45 +303,53 @@ pub fn on_death_rule_system(world: &mut World) {
     }
 }
 
-/// Process TimerRule: tick elapsed, fire when ready.
+/// Process TimerRule: check-then-update to avoid large-dt ordering bugs.
+///
+/// Order of operations:
+/// 1. Collect timers whose elapsed >= interval (ready to fire NOW).
+/// 2. Execute fired timers' actions.
+/// 3. Reset fired timers (elapsed = 0 for repeating, despawn for one-shot).
+/// 4. Update elapsed += dt for ALL timers (accumulates toward next tick).
 pub fn timer_rule_system(world: &mut World, dt: f32) {
-    // Collect timers that fired
+    // 1. Collect timers that are ready to fire based on CURRENT elapsed time.
     let fired: Vec<(Entity, Arc<Vec<GameAction>>)> = {
         let query = Query::<(Entity, &TimerRule)>::new(world);
         query
             .iter()
-            .filter(|(_, t)| t.elapsed + dt >= t.interval)
+            .filter(|(_, t)| t.elapsed >= t.interval)
             .map(|(e, t)| (e, Arc::clone(&t.actions)))
             .collect()
     };
 
-    // Update all timer elapsed
-    {
-        let query = Query::<(Entity, &mut TimerRule)>::new(world);
-        for (_, timer) in query.iter() {
-            timer.elapsed += dt;
-        }
-    }
-
-    // Execute fired timers and reset
+    // 2. Execute fired timers' actions.
     let dummy = Entity::from_raw(0, 0);
-    for (entity, actions) in &fired {
+    for (_entity, actions) in &fired {
         for action in actions.iter() {
             execute_action(world, action, dummy, None);
         }
+    }
+
+    // 3. Reset fired timers (repeating) or despawn (one-shot).
+    for (entity, _) in &fired {
         if let Some(timer) = world.get_mut::<TimerRule>(*entity)
             && timer.repeat
         {
             timer.elapsed = 0.0;
         }
     }
-
-    // Despawn non-repeating fired timers
     for (entity, _) in &fired {
         if let Some(timer) = world.get::<TimerRule>(*entity)
             && !timer.repeat
         {
             world.despawn(*entity);
+        }
+    }
+
+    // 4. Update elapsed += dt for ALL surviving timers (for next tick).
+    {
+        let query = Query::<(Entity, &mut TimerRule)>::new(world);
+        for (_, timer) in query.iter() {
+            timer.elapsed += dt;
         }
     }
 }
@@ -903,12 +911,16 @@ mod tests {
 
         let count_before = world.entity_count();
 
-        // Not enough time
+        // Not enough time — elapsed goes from 0.0 to 0.5
         timer_rule_system(&mut world, 0.5);
         assert_eq!(world.entity_count(), count_before);
 
-        // Enough time
+        // Still not enough — elapsed goes from 0.5 to 1.1 (but check happens before update)
         timer_rule_system(&mut world, 0.6);
+        assert_eq!(world.entity_count(), count_before);
+
+        // Now elapsed=1.1 >= interval=1.0, so the timer fires on check phase.
+        timer_rule_system(&mut world, 0.0);
         assert!(world.entity_count() > count_before);
     }
 
@@ -972,6 +984,61 @@ mod tests {
 
         // Should have spawned exactly 3 new entities
         assert_eq!(world.entity_count() - count_before, 3);
+    }
+
+    /// Verifies the check-then-update timer ordering: timers must NOT fire
+    /// when elapsed < interval even if elapsed + dt >= interval in a single tick.
+    #[test]
+    fn timer_rule_check_then_update_ordering() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        // Timer with interval=1.0, elapsed=0.9 (not yet ready).
+        let _rule = world.spawn(TimerRule {
+            interval: 1.0,
+            elapsed: 0.9,
+            repeat: true,
+            actions: Arc::new(vec![GameAction::Spawn {
+                mesh: "sphere".to_string(),
+                position: [0.0, 0.0, 0.0],
+                color: None,
+                health: None,
+                team: None,
+                combat: None,
+                speed: None,
+                waypoints: None,
+                scale: None,
+                gold_bounty: None,
+                xp_bounty: None,
+                role: None,
+                count: None,
+            }]),
+        });
+
+        let count_before = world.entity_count();
+
+        // Tick with dt=0.05 → check: 0.9 < 1.0 (no fire), then elapsed becomes 0.95.
+        timer_rule_system(&mut world, 0.05);
+        assert_eq!(
+            world.entity_count(),
+            count_before,
+            "Timer should NOT fire when elapsed (0.9) < interval (1.0)"
+        );
+
+        // Tick with dt=0.1 → check: 0.95 < 1.0 (no fire), then elapsed becomes 1.05.
+        timer_rule_system(&mut world, 0.1);
+        assert_eq!(
+            world.entity_count(),
+            count_before,
+            "Timer should NOT fire yet — check sees 0.95 < 1.0, update brings to 1.05"
+        );
+
+        // Next tick → check: 1.05 >= 1.0, so timer fires.
+        timer_rule_system(&mut world, 0.0);
+        assert!(
+            world.entity_count() > count_before,
+            "Timer should fire when elapsed (1.05) >= interval (1.0)"
+        );
     }
 
     #[test]

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.8.1 (2026-03-23)
+
+### Deep Logic Fixes
+
+Critical bug fixes found during full foundation audit:
+
+- **ECS**: Entity generation overflow → saturating add prevents use-after-free
+- **ECS**: Parallel schedule panics on dependency cycles instead of silent fallback
+- **Math**: Slerp handles near-parallel quaternions without NaN
+- **Math**: Matrix inverse returns identity for singular matrices
+- **Math**: Transform inverse guards against degenerate (zero) scale
+- **Render**: TAA stores jittered VP for correct temporal reprojection
+- **Render**: Shadow bias scales with scene instead of fixed constant
+- **Physics**: Friction impulse sign corrected (clamp instead of max)
+- **Physics**: Raycast handles axis-aligned rays (zero direction components)
+- **Gameplay**: Timer rules check-then-update instead of update-then-check
+- **Net**: Prediction reconciliation uses nearest-tick tolerance (±2) instead of exact match
+
 ## v0.8.0 (2026-03-23)
 
 ### Consolidation — Architecture & Code Quality Review

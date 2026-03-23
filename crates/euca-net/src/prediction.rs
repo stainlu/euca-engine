@@ -66,8 +66,16 @@ impl ClientPrediction {
     /// Returns `Some((correction_x, correction_y, correction_z))` if correction needed.
     /// Returns `None` if prediction was accurate (within threshold).
     pub fn reconcile(&mut self, server_tick: u64, server_position: [f32; 3]) -> Option<[f32; 3]> {
-        // Find our prediction at the server's tick
-        let pred_idx = self.predictions.iter().position(|p| p.tick == server_tick);
+        // Find our prediction nearest to the server's tick (tolerance of ±2).
+        // Network jitter can cause server ticks to arrive slightly offset from
+        // the exact tick we predicted, so nearest-match avoids silent misses.
+        let pred_idx = self
+            .predictions
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| (p.tick as i64 - server_tick as i64).abs() <= 2)
+            .min_by_key(|(_, p)| (p.tick as i64 - server_tick as i64).unsigned_abs())
+            .map(|(i, _)| i);
 
         let pred_idx = pred_idx?;
 
@@ -79,11 +87,12 @@ impl ClientPrediction {
         let dz = server_position[2] - predicted.position[2];
         let error_sq = dx * dx + dy * dy + dz * dz;
 
-        // Discard old predictions up to this tick
+        // Discard predictions older than server_tick (not equal — keep the
+        // matched tick's peers so subsequent reconciliations can still find them).
         while self
             .predictions
             .front()
-            .is_some_and(|p| p.tick <= server_tick)
+            .is_some_and(|p| p.tick < server_tick)
         {
             self.predictions.pop_front();
         }
@@ -264,9 +273,10 @@ mod tests {
             pred.record_prediction(tick, [tick as f32, 0.0, 0.0], vec![]);
         }
 
-        // Reconcile at tick 5 — predictions 0-5 should be discarded
+        // Reconcile at tick 5 — predictions older than 5 (ticks 0-4) are discarded.
+        // Ticks 5,6,7,8,9 remain.
         let _ = pred.reconcile(5, [5.0, 0.0, 0.0]);
-        assert_eq!(pred.buffer_len(), 4); // ticks 6,7,8,9 remain
+        assert_eq!(pred.buffer_len(), 5); // ticks 5,6,7,8,9 remain
     }
 
     #[test]
@@ -300,5 +310,42 @@ mod tests {
         let correction = reconcile_entity(&mut world, e, 1, [7.0, 0.0, 0.0]);
         assert!(correction.is_some());
         assert!((correction.unwrap()[0] - 2.0).abs() < 1e-5);
+    }
+
+    /// Tests nearest-tick reconciliation tolerance (±2).
+    /// Exact match should work, and a server tick within ±2 of the nearest
+    /// recorded prediction should also match.
+    #[test]
+    fn reconcile_nearest_tick_tolerance() {
+        let mut pred = ClientPrediction::new();
+        // Record predictions at ticks 10, 11, 12, 13
+        pred.record_prediction(10, [10.0, 0.0, 0.0], vec![]);
+        pred.record_prediction(11, [11.0, 0.0, 0.0], vec![]);
+        pred.record_prediction(12, [12.0, 0.0, 0.0], vec![]);
+        pred.record_prediction(13, [13.0, 0.0, 0.0], vec![]);
+
+        // Exact match: reconcile with server_tick=11 → should match tick 11
+        let correction = pred.reconcile(11, [11.0, 0.0, 0.0]);
+        assert!(
+            correction.is_none(),
+            "Exact tick match with identical position should produce no correction"
+        );
+
+        // After reconcile at tick 11, predictions older than 11 are discarded.
+        // Remaining: 11, 12, 13 (discard < 11, so tick 10 removed).
+
+        // Near-miss: reconcile with server_tick=14 when only tick 13 exists.
+        // |13 - 14| = 1 ≤ 2, so tick 13 should match within tolerance.
+        let correction = pred.reconcile(14, [15.0, 0.0, 0.0]);
+        assert!(
+            correction.is_some(),
+            "server_tick=14 should match prediction at tick 13 (within ±2 tolerance)"
+        );
+        let c = correction.unwrap();
+        // Server says 15.0, we predicted 13.0 at tick 13 → correction = +2.0
+        assert!(
+            (c[0] - 2.0).abs() < 1e-5,
+            "Correction should be server(15) - predicted(13) = 2.0"
+        );
     }
 }
