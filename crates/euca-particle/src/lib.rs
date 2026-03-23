@@ -48,6 +48,7 @@ impl Particle {
         (self.age / self.lifetime).clamp(0.0, 1.0)
     }
 
+    /// Returns `true` when the particle has exceeded its lifetime.
     pub fn is_dead(&self) -> bool {
         self.age >= self.lifetime
     }
@@ -141,6 +142,7 @@ pub struct ParticleEmitter {
 }
 
 impl ParticleEmitter {
+    /// Create a new emitter with the given configuration (starts active, empty pool).
     pub fn new(config: EmitterConfig) -> Self {
         Self {
             config,

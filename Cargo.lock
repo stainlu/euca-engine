@@ -1201,7 +1201,7 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
 name = "euca-agent"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1234,7 +1234,7 @@ dependencies = [
 
 [[package]]
 name = "euca-ai"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
@@ -1243,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "euca-animation"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-asset",
  "euca-ecs",
@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "euca-asset"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "env_logger",
  "euca-core",
@@ -1269,7 +1269,7 @@ dependencies = [
 
 [[package]]
 name = "euca-audio"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "euca-cli"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "euca-asset",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "euca-core"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "env_logger",
  "euca-ecs",
@@ -1304,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "euca-ecs"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "bincode",
  "criterion",
@@ -1317,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "euca-editor"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "egui",
  "egui-wgpu",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "euca-game"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "bincode",
  "env_logger",
@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "euca-gameplay"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-core",
  "euca-ecs",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "euca-input"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1403,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "euca-math"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "criterion",
  "euca-reflect",
@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "euca-nav"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
@@ -1424,7 +1424,7 @@ dependencies = [
 
 [[package]]
 name = "euca-net"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "bincode",
  "euca-ecs",
@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "euca-particle"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "euca-physics"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "criterion",
  "euca-ecs",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "euca-reflect"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-reflect-derive",
  "serde_json",
@@ -1472,7 +1472,7 @@ dependencies = [
 
 [[package]]
 name = "euca-reflect-derive"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1481,7 +1481,7 @@ dependencies = [
 
 [[package]]
 name = "euca-render"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "bytemuck",
  "env_logger",
@@ -1500,7 +1500,7 @@ dependencies = [
 
 [[package]]
 name = "euca-scene"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
@@ -1510,7 +1510,7 @@ dependencies = [
 
 [[package]]
 name = "euca-script"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "env_logger",
  "euca-ecs",
@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "euca-terrain"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-ecs",
  "euca-math",
@@ -1533,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "euca-ui"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "euca-ecs",
  "euca-input",
