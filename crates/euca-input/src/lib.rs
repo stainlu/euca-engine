@@ -45,11 +45,15 @@ impl InputContextStack {
     }
 
     /// Pop the top context. Returns the popped context.
+    ///
+    /// If the stack has only one element the pop is refused and a warning is
+    /// logged — the engine always needs at least one active input context.
     pub fn pop(&mut self) -> Option<InputContext> {
         if self.stack.len() > 1 {
             self.stack.pop()
         } else {
-            None // Don't pop the last context
+            log::warn!("InputContextStack::pop() refused — cannot pop the last input context");
+            None
         }
     }
 

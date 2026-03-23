@@ -133,7 +133,16 @@ impl Default for EditorState {
     }
 }
 
-/// Try to find a living entity with the given index (checks generations 0..16).
+/// Try to find a living entity with the given index by scanning generations 0..16.
+///
+/// The ECS recycles entity slots: when an entity is despawned its index may be
+/// reused for a new entity with an incremented *generation*. The editor only
+/// stores the raw index (e.g. from a selection list or an undo record), so it
+/// does not know which generation is currently alive. Scanning a fixed window
+/// of 16 generations is the simplest correct approach — it is O(1) in the
+/// number of entities and covers all practical recycling depths. A direct
+/// `index → generation` lookup would require exposing ECS internals that are
+/// intentionally kept private.
 pub fn find_alive_entity(world: &euca_ecs::World, index: u32) -> Option<euca_ecs::Entity> {
     for g in 0..16 {
         let e = euca_ecs::Entity::from_raw(index, g);
