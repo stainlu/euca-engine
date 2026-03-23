@@ -1,5 +1,10 @@
+mod commands;
+
 use clap::{Parser, Subcommand};
 use serde_json::Value;
+
+use commands::asset::AssetCommands;
+use commands::entity::EntityCommands;
 
 #[derive(Parser)]
 #[command(
@@ -7,7 +12,8 @@ use serde_json::Value;
     about = "Euca Engine CLI — control the engine from the terminal",
     after_help = "Examples:\n  euca entity create --mesh cube --position 0,2,0 --health 100 --team 1 --color red\n  euca rule create --when death --filter team:2 --do-action \"score source +1\"\n  euca sim play\n  euca screenshot"
 )]
-struct Cli {
+// `pub(crate)` so that `commands::discover` can call `Cli::command()` via `CommandFactory`.
+pub(crate) struct Cli {
     /// Server URL
     #[arg(short, long, default_value = "http://localhost:3917")]
     server: String,
@@ -255,146 +261,6 @@ enum Commands {
     },
     #[command(hide = true)]
     Reset,
-}
-
-#[derive(Subcommand)]
-enum EntityCommands {
-    /// List all entities
-    List {
-        /// Filter by component type (e.g. "MeshRenderer")
-        #[arg(short, long)]
-        filter: Option<String>,
-    },
-    /// Get a single entity by ID
-    Get {
-        /// Entity ID
-        id: u32,
-    },
-    /// Create a new entity
-    Create {
-        /// Mesh: "cube", "sphere", "plane", "cylinder", "cone"
-        #[arg(short, long)]
-        mesh: Option<String>,
-        /// Color: name ("red", "gold") or RGB ("0.5,0.2,0.8")
-        #[arg(short, long)]
-        color: Option<String>,
-        /// Position as "x,y,z"
-        #[arg(short, long)]
-        position: Option<String>,
-        /// Scale as "x,y,z"
-        #[arg(long)]
-        scale: Option<String>,
-        /// Physics body type: Dynamic, Static, Kinematic
-        #[arg(long)]
-        physics: Option<String>,
-        /// Collider: "aabb:hx,hy,hz" or "sphere:radius" or "capsule:radius,half_height"
-        #[arg(long)]
-        collider: Option<String>,
-        /// Initial health (adds Health component)
-        #[arg(long)]
-        health: Option<f32>,
-        /// Team ID (adds Team component)
-        #[arg(long)]
-        team: Option<u8>,
-        /// Enable auto-combat (detect enemies, chase, attack)
-        #[arg(long)]
-        combat: bool,
-        /// Combat damage per hit
-        #[arg(long)]
-        combat_damage: Option<f32>,
-        /// Combat attack range
-        #[arg(long)]
-        combat_range: Option<f32>,
-        /// Combat chase speed (0 for stationary)
-        #[arg(long)]
-        combat_speed: Option<f32>,
-        /// Combat attack cooldown (seconds)
-        #[arg(long)]
-        combat_cooldown: Option<f32>,
-        /// Combat style: "melee" (default) or "stationary" (towers)
-        #[arg(long)]
-        combat_style: Option<String>,
-        /// AI patrol waypoints as "x,y,z:x,y,z:x,y,z"
-        #[arg(long)]
-        ai_patrol: Option<String>,
-        /// Starting gold
-        #[arg(long)]
-        gold: Option<i32>,
-        /// Gold bounty on death
-        #[arg(long)]
-        gold_bounty: Option<i32>,
-        /// XP bounty on death
-        #[arg(long)]
-        xp_bounty: Option<u32>,
-        /// Entity role: hero, minion, tower, structure
-        #[arg(long)]
-        role: Option<String>,
-        /// Spawn point for team (marks as respawn location)
-        #[arg(long)]
-        spawn_point: Option<u8>,
-        /// Mark as player-controlled hero
-        #[arg(long)]
-        player: bool,
-        /// Full JSON body (overrides other flags)
-        #[arg(long)]
-        json: Option<String>,
-        /// Preview without creating
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Update an entity's components
-    Update {
-        /// Entity ID
-        id: u32,
-        /// Color: name ("red", "gold") or RGB ("0.5,0.2,0.8")
-        #[arg(short, long)]
-        color: Option<String>,
-        /// Position as "x,y,z"
-        #[arg(short, long)]
-        position: Option<String>,
-        /// Scale as "x,y,z"
-        #[arg(long)]
-        scale: Option<String>,
-        /// Linear velocity as "x,y,z"
-        #[arg(long)]
-        velocity: Option<String>,
-        /// Physics body type: Dynamic, Static, Kinematic
-        #[arg(long)]
-        physics: Option<String>,
-        /// Collider: "aabb:hx,hy,hz" or "sphere:radius"
-        #[arg(long)]
-        collider: Option<String>,
-        /// Full JSON patch (overrides other flags)
-        #[arg(long)]
-        json: Option<String>,
-        /// Preview without updating
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Delete an entity
-    Delete {
-        /// Entity ID (omit with --all to delete everything)
-        id: Option<u32>,
-        /// Delete all entities
-        #[arg(long)]
-        all: bool,
-    },
-    /// Apply damage to an entity
-    Damage {
-        /// Entity ID
-        id: u32,
-        /// Damage amount
-        #[arg(long)]
-        amount: f32,
-    },
-    /// Heal an entity
-    Heal {
-        /// Entity ID
-        id: u32,
-        /// Heal amount
-        #[arg(long)]
-        amount: f32,
-    },
 }
 
 #[derive(Subcommand)]
@@ -958,37 +824,9 @@ enum FogCommands {
     },
 }
 
-#[derive(Subcommand)]
-enum AssetCommands {
-    /// Show metadata about a glTF/glb asset file
-    Info {
-        /// Path to the asset file (.gltf or .glb)
-        file: String,
-    },
-    /// Run mesh optimization: dedup vertices, compute tangents, reorder for GPU cache
-    Optimize {
-        /// Input asset file (.gltf or .glb)
-        input: String,
-        /// Output stats file (JSON)
-        #[arg(short, long)]
-        output: Option<String>,
-    },
-    /// Generate LOD (Level of Detail) chain from a mesh
-    Lod {
-        /// Input asset file (.gltf or .glb)
-        input: String,
-        /// Output stats file (JSON)
-        #[arg(short, long)]
-        output: Option<String>,
-        /// Number of LOD levels to generate
-        #[arg(short, long, default_value = "4")]
-        levels: usize,
-    },
-}
-
 // ── Helpers ──
 
-fn parse_vec3(s: &str) -> Option<[f32; 3]> {
+pub(crate) fn parse_vec3(s: &str) -> Option<[f32; 3]> {
     let parts: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
     if parts.len() == 3 {
         Some([parts[0], parts[1], parts[2]])
@@ -1030,7 +868,7 @@ fn parse_collider(s: &str) -> Option<Value> {
 // clippy::too_many_arguments — mirrors the CLI flags 1:1; a wrapper struct
 // would duplicate the clap-parsed fields without reducing complexity.
 #[allow(clippy::too_many_arguments)]
-fn build_create_body(
+pub(crate) fn build_create_body(
     mesh: &Option<String>,
     color: &Option<String>,
     position: &Option<String>,
@@ -1140,7 +978,7 @@ fn build_create_body(
 }
 
 /// Build an update/patch JSON body from friendly flags.
-fn build_update_body(
+pub(crate) fn build_update_body(
     color: &Option<String>,
     position: &Option<String>,
     scale: &Option<String>,
@@ -1183,7 +1021,7 @@ fn build_update_body(
 }
 
 /// Parse --json flag or exit.
-fn parse_json_flag(raw: &str) -> Value {
+pub(crate) fn parse_json_flag(raw: &str) -> Value {
     match serde_json::from_str::<Value>(raw) {
         Ok(v) => v,
         Err(e) => {
@@ -1210,6 +1048,9 @@ fn main() {
 
     let result = match cli.command {
         // ── Entity CRUD ──
+<<<<<<< HEAD
+        Commands::Entity { command } => commands::entity::run_entity(command, &client, server),
+=======
         Commands::Entity { command } => match command {
             EntityCommands::List { filter: _filter } => {
                 let resp = client
@@ -1345,6 +1186,7 @@ fn main() {
                 handle_response(resp)
             }
         },
+>>>>>>> origin/main
 
         // ── Simulation ──
         Commands::Sim { command } => match command {
@@ -1418,7 +1260,6 @@ fn main() {
             }
         },
 
-        // ── Auth ──
         // ── Gameplay ──
         Commands::Game { command } => match command {
             GameCommands::Create { mode, score_limit } => {
@@ -2069,17 +1910,17 @@ fn main() {
         }
 
         Commands::Package { project, output } => {
-            package_game(&project, &output);
+            commands::package::package_game(&project, &output);
             Ok(())
         }
 
         Commands::Discover { json, group } => {
-            run_discover(json, group.as_deref());
+            commands::discover::run_discover(json, group.as_deref());
             Ok(())
         }
 
         Commands::Asset { command } => {
-            run_asset(command);
+            commands::asset::run_asset(command);
             Ok(())
         }
 
@@ -2160,7 +2001,11 @@ fn main() {
 
 // ── Shared request helpers ──
 
-fn post_empty(client: &reqwest::blocking::Client, server: &str, path: &str) -> Result<(), String> {
+pub(crate) fn post_empty(
+    client: &reqwest::blocking::Client,
+    server: &str,
+    path: &str,
+) -> Result<(), String> {
     let resp = client
         .post(format!("{server}{path}"))
         .header("Content-Type", "application/json")
@@ -2169,7 +2014,7 @@ fn post_empty(client: &reqwest::blocking::Client, server: &str, path: &str) -> R
     handle_response(resp)
 }
 
-fn handle_response(
+pub(crate) fn handle_response(
     resp: Result<reqwest::blocking::Response, reqwest::Error>,
 ) -> Result<(), String> {
     let resp = resp.map_err(|e| e.to_string())?;
@@ -2310,6 +2155,8 @@ fn run_auth(
         }
     }
 }
+<<<<<<< HEAD
+=======
 
 /// Package a game project into a distributable folder.
 ///
@@ -2813,3 +2660,4 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
         }
     }
 }
+>>>>>>> origin/main
