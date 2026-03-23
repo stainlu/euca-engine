@@ -5,7 +5,9 @@ use crate::components::ColliderShape;
 /// A pair of colliding entities with contact info.
 #[derive(Clone, Debug)]
 pub struct CollisionPair {
+    /// First colliding entity.
     pub entity_a: euca_ecs::Entity,
+    /// Second colliding entity.
     pub entity_b: euca_ecs::Entity,
     /// Contact normal (from A to B).
     pub normal: Vec3,
@@ -226,7 +228,8 @@ pub fn intersect_capsule_aabb(
     intersect_aabb_sphere(aabb_pos, hx, hy, hz, closest_on_spine, cap_radius)
 }
 
-/// Test two collider shapes for overlap.
+/// Test two collider shapes for overlap. Dispatches to the correct narrow-phase
+/// test based on shape types. Returns `(normal_A_to_B, penetration_depth)` on overlap.
 pub fn intersect_shapes(
     pos_a: Vec3,
     shape_a: &ColliderShape,

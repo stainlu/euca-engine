@@ -20,22 +20,31 @@ pub struct PlayerHero;
 /// What a player command targets (for abilities).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AbilityTarget {
+    /// Cast on the caster itself.
     SelfCast,
+    /// Cast toward a world position.
     Point(Vec3),
+    /// Cast on a specific entity.
     Unit(Entity),
+    /// No target (self-buff or toggle).
     None,
 }
 
 /// A single player-issued command.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlayerCommand {
+    /// Walk toward a world position; clears on arrival.
     MoveTo(Vec3),
+    /// Chase and attack the target entity; clears when it dies.
     AttackTarget(Entity),
+    /// Activate an ability in the given slot with the given target.
     UseAbility {
         slot: AbilitySlot,
         target: AbilityTarget,
     },
+    /// Immediately halt movement and clear the command.
     Stop,
+    /// Stand still but auto-attack enemies in range. Persists until replaced.
     HoldPosition,
 }
 
@@ -43,11 +52,14 @@ pub enum PlayerCommand {
 /// then pops the next command from `commands` when `current` completes.
 #[derive(Clone, Debug)]
 pub struct PlayerCommandQueue {
+    /// Pending commands (FIFO). The front is popped into `current` when needed.
     pub commands: Vec<PlayerCommand>,
+    /// The command currently being executed, if any.
     pub current: Option<PlayerCommand>,
 }
 
 impl PlayerCommandQueue {
+    /// Create an empty command queue with no current command.
     pub fn new() -> Self {
         Self {
             commands: Vec::new(),
@@ -55,14 +67,17 @@ impl PlayerCommandQueue {
         }
     }
 
+    /// Append a command to the back of the queue.
     pub fn push(&mut self, command: PlayerCommand) {
         self.commands.push(command);
     }
 
+    /// Take all queued commands, leaving the queue empty.
     pub fn drain(&mut self) -> Vec<PlayerCommand> {
         std::mem::take(&mut self.commands)
     }
 
+    /// Returns `true` when there is no current or pending command.
     pub fn is_empty(&self) -> bool {
         self.current.is_none() && self.commands.is_empty()
     }

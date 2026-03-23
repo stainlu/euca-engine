@@ -15,6 +15,7 @@ pub struct Time {
 }
 
 impl Time {
+    /// Create a new time tracker starting from the current instant.
     pub fn new() -> Self {
         let now = Instant::now();
         Self {

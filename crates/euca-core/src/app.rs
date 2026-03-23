@@ -18,6 +18,7 @@ pub struct App {
 }
 
 impl App {
+    /// Create a new app with an empty ECS world and a [`Time`] resource.
     pub fn new() -> Self {
         let mut world = World::new();
         world.insert_resource(Time::new());

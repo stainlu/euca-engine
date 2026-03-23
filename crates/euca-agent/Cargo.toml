@@ -2,6 +2,9 @@
 name = "euca-agent"
 version.workspace = true
 edition.workspace = true
+description = "HTTP agent API with 72+ endpoints for remote engine control"
+keywords = ["gamedev", "game-engine", "http", "api", "remote-control"]
+categories = ["game-development", "web-programming::http-server"]
 
 [dependencies]
 euca-core = { path = "../euca-core" }

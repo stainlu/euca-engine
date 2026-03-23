@@ -1,3 +1,9 @@
+//! Scene graph, transform hierarchy, and prefab system.
+//!
+//! Provides [`LocalTransform`] / [`GlobalTransform`] components and a
+//! dirty-flag-optimised [`transform_propagation_system`] that computes
+//! world-space transforms via BFS over the parent-child hierarchy.
+
 mod hierarchy;
 mod prefab;
 mod spatial;

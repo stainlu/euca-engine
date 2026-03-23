@@ -20,26 +20,35 @@ mod templates;
 mod terrain;
 mod ui;
 
-pub use animation::*;
-pub use audio::*;
-pub use camera::*;
-pub use debug::*;
-pub use entity::*;
-pub use fog::*;
-pub use foliage::*;
-pub use gameplay::*;
-pub use input::*;
-pub use material::*;
-pub use nav::*;
-pub use particle::*;
-pub use postprocess::*;
-pub use prefab::*;
-pub use profile::*;
-pub use scene_auth::*;
-pub use sim::*;
-pub use templates::*;
-pub use terrain::*;
-pub use ui::*;
+pub use animation::{
+    animation_list, animation_load, animation_montage, animation_play, animation_state_machine,
+    animation_stop,
+};
+pub use audio::{audio_list, audio_play, audio_stop};
+pub use camera::{camera_focus, camera_get, camera_set, camera_view};
+pub use debug::{diagnose, events_list};
+pub use entity::{
+    despawn, entity_damage, entity_heal, get_entity, observe, patch_entity, reset, schema, spawn,
+    status,
+};
+pub use fog::{fog_get, fog_set};
+pub use foliage::{foliage_list, foliage_scatter};
+pub use gameplay::{
+    ability_list, ability_use, ai_set, game_create, game_state, projectile_spawn, rule_create,
+    rule_list, trigger_create,
+};
+pub use input::{input_bind, input_context_pop, input_context_push, input_list, input_unbind};
+pub use material::material_set;
+pub use nav::{navmesh_generate, path_compute, path_set};
+pub use particle::{particle_create, particle_list, particle_stop};
+pub use postprocess::{postprocess_get, postprocess_preset, postprocess_set};
+pub use prefab::{prefab_list, prefab_spawn};
+pub use profile::profile;
+pub use scene_auth::{auth_login, auth_status, scene_load, scene_save, screenshot};
+pub use sim::{pause, play, step};
+pub use templates::{template_create, template_list, template_spawn};
+pub use terrain::{terrain_create, terrain_edit};
+pub use ui::{ui_bar, ui_clear, ui_list, ui_text};
 
 use serde::{Deserialize, Serialize};
 

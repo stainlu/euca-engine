@@ -2,7 +2,11 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureHandle(pub u32);
 
-/// Stores GPU textures and their views.
+/// GPU texture storage, managing uploaded textures and their views.
+///
+/// A default 1x1 white texture is always available at index 0
+/// ([`TextureStore::default_white`]) and is used as the fallback when a
+/// material has no albedo texture assigned.
 pub struct TextureStore {
     textures: Vec<GpuTexture>,
 }
@@ -202,7 +206,11 @@ impl TextureStore {
         self.upload_rgba(device, queue, img.width(), img.height(), &img)
     }
 
-    /// Get the texture view for a handle.
+    /// Get the `wgpu::TextureView` for a previously uploaded texture.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `handle` does not correspond to a valid uploaded texture.
     pub fn view(&self, handle: TextureHandle) -> &wgpu::TextureView {
         &self.textures[handle.0 as usize].view
     }

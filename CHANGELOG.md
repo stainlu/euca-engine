@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.8.0 (2026-03-23)
+
+### Consolidation — Architecture & Code Quality Review
+
+- Cargo.toml metadata for all 24 crates (description, keywords, categories)
+- Split euca-cli/main.rs (2807 lines) into focused command modules
+- Split euca-audio/lib.rs (899 lines) into engine/source/reverb/systems modules
+- Replaced println!/eprintln! with proper log:: macros
+- Replaced 21 wildcard re-exports in euca-agent routes with explicit exports
+- Reviewed and documented all clippy suppressions
+- Added comprehensive doc comments to all public APIs across 24 crates
+- Version bump to 0.8.0
+
 ## v0.7.0 (2026-03-23)
 
 ### Quality Release — READMEs, Robustness, Architecture Review

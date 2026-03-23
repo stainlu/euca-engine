@@ -114,11 +114,20 @@ struct MaterialUniforms {
     _pad: f32,
 }
 
+/// A single draw request submitted each frame.
+///
+/// Pairs a mesh and material with a world-space transform. The renderer
+/// batches draw commands by mesh and material to minimize GPU state changes.
 pub struct DrawCommand {
+    /// Handle to the GPU mesh to draw.
     pub mesh: MeshHandle,
+    /// Handle to the GPU material to shade with.
     pub material: MaterialHandle,
+    /// Object-to-world transform matrix.
     pub model_matrix: Mat4,
-    /// Optional world-space AABB for occlusion culling.
+    /// Optional world-space AABB (center, half-extents) for occlusion culling.
+    /// When provided and occlusion culling is enabled, objects fully behind
+    /// previously rendered geometry are skipped.
     pub aabb: Option<(euca_math::Vec3, euca_math::Vec3)>,
 }
 
@@ -188,6 +197,24 @@ const SHADOW_MAP_SIZE: u32 = 2048;
 const NUM_SHADOW_CASCADES: u32 = 3;
 const CASCADE_ORTHO_SIZES: [f32; 3] = [8.0, 20.0, 50.0];
 
+/// The main PBR forward renderer.
+///
+/// Owns all GPU pipeline state, uploaded meshes, materials, textures, and
+/// optional subsystems (post-processing, TAA, volumetric fog, occlusion
+/// culling, decals, GPU particles).
+///
+/// # Rendering pipeline
+///
+/// Each frame proceeds through these stages:
+///
+/// 1. **Shadow pass** -- render cascaded shadow maps for the directional light.
+/// 2. **Opaque pass** -- draw all opaque [`DrawCommand`]s with PBR shading
+///    (4x MSAA, HDR).
+/// 3. **Decal pass** -- project deferred decals onto opaque surfaces.
+/// 4. **Transparent pass** -- draw alpha-blended commands back-to-front.
+/// 5. **Volumetric fog** -- ray-march scattering (if enabled).
+/// 6. **Post-processing** -- SSAO, bloom, color grading, FXAA.
+/// 7. **TAA resolve** -- temporal anti-aliasing jitter and history blending.
 #[allow(dead_code)]
 pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
@@ -250,6 +277,10 @@ pub struct Renderer {
 const MSAA_SAMPLE_COUNT: u32 = 4;
 
 impl Renderer {
+    /// Create a new renderer, allocating all GPU pipelines and buffers.
+    ///
+    /// The renderer is bound to the surface format and initial size reported
+    /// by `gpu`. Call [`resize`](Self::resize) when the window size changes.
     pub fn new(gpu: &GpuContext) -> Self {
         let instance_buf_size = (MAX_INSTANCES * std::mem::size_of::<InstanceData>()) as u64;
         let unified = gpu.unified_memory;
@@ -710,6 +741,8 @@ impl Renderer {
         }
     }
 
+    /// Upload CPU-side mesh data to the GPU and return a handle for use in
+    /// [`DrawCommand`]s.
     pub fn upload_mesh(&mut self, gpu: &GpuContext, mesh: &Mesh) -> MeshHandle {
         use wgpu::util::DeviceExt;
         let vb = gpu
@@ -734,6 +767,7 @@ impl Renderer {
         });
         handle
     }
+    /// Upload raw RGBA8 pixel data as a GPU texture with auto-generated mipmaps.
     pub fn upload_texture(
         &mut self,
         gpu: &GpuContext,
@@ -744,9 +778,13 @@ impl Renderer {
         self.textures
             .upload_rgba(&gpu.device, &gpu.queue, width, height, rgba)
     }
+
+    /// Decode an image file (PNG, JPEG, etc.) from memory and upload it as a texture.
     pub fn upload_texture_image(&mut self, gpu: &GpuContext, data: &[u8]) -> TextureHandle {
         self.textures.upload_image(&gpu.device, &gpu.queue, data)
     }
+
+    /// Generate and upload a checkerboard test pattern texture.
     pub fn checkerboard_texture(
         &mut self,
         gpu: &GpuContext,
@@ -757,6 +795,8 @@ impl Renderer {
             .checkerboard(&gpu.device, &gpu.queue, size, tile)
     }
 
+    /// Upload a PBR material (uniforms + texture bindings) to the GPU and
+    /// return a handle for use in [`DrawCommand`]s.
     pub fn upload_material(&mut self, gpu: &GpuContext, mat: &Material) -> MaterialHandle {
         use wgpu::util::DeviceExt;
         let handle = MaterialHandle(self.materials.len() as u32);
@@ -842,6 +882,8 @@ impl Renderer {
         handle
     }
 
+    /// Recreate size-dependent GPU resources (depth buffer, MSAA target, etc.)
+    /// after the window has been resized.
     pub fn resize(&mut self, gpu: &GpuContext) {
         self.depth_texture =
             Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
@@ -1102,6 +1144,12 @@ impl Renderer {
         (instances, batches)
     }
 
+    /// Execute the full rendering pipeline for one frame using only a
+    /// directional light and ambient light (no point/spot lights).
+    ///
+    /// Acquires the surface texture, renders, and presents. For off-screen
+    /// rendering or when additional lights are needed, use
+    /// [`render_to_view_with_lights`](Self::render_to_view_with_lights).
     pub fn draw(
         &mut self,
         gpu: &GpuContext,
@@ -1113,8 +1161,10 @@ impl Renderer {
         self.draw_with_lights(gpu, camera, light, ambient, commands, &[], &[]);
     }
 
-    // clippy::too_many_arguments — rendering requires camera, lights, and draw
-    // commands; these are separate concerns passed from distinct ECS queries.
+    /// Execute the full rendering pipeline for one frame with point and spot
+    /// lights in addition to the directional and ambient lights.
+    ///
+    /// Acquires the surface texture, renders, and presents.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_with_lights(
         &mut self,
@@ -1157,8 +1207,8 @@ impl Renderer {
         output.present();
     }
 
-    // clippy::too_many_arguments — thin wrapper forwarding to
-    // `render_to_view_with_lights` with empty light slices.
+    /// Render one frame into a caller-provided texture view (no point/spot
+    /// lights). Useful for off-screen rendering or editor viewports.
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view(
         &mut self,
@@ -1183,9 +1233,11 @@ impl Renderer {
         );
     }
 
-    // clippy::too_many_arguments — core render entry point: needs camera, all
-    // light types, draw commands, target view, and encoder. Bundling these
-    // into a struct would just move the fields one level deeper.
+    /// Render one frame into a caller-provided texture view with full light
+    /// support (directional, ambient, point, and spot lights).
+    ///
+    /// This is the most flexible entry point. The caller is responsible for
+    /// creating the command encoder and submitting / presenting afterward.
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view_with_lights(
         &mut self,

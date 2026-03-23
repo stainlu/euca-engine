@@ -2,6 +2,9 @@
 name = "euca-scene"
 version.workspace = true
 edition.workspace = true
+description = "Transform hierarchy, spatial indexing, and world streaming"
+keywords = ["gamedev", "game-engine", "scene", "transform", "spatial"]
+categories = ["game-development"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
