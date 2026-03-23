@@ -54,12 +54,12 @@ impl GltfViewerApp {
         let scene = match load_gltf(&self.gltf_path) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Error: {e}");
+                log::error!("Failed to load glTF: {e}");
                 std::process::exit(1);
             }
         };
 
-        println!(
+        log::info!(
             "Loaded {} mesh(es) from {}",
             scene.meshes.len(),
             self.gltf_path
@@ -73,7 +73,7 @@ impl GltfViewerApp {
             .collect();
 
         if !tex_handles.is_empty() {
-            println!("Uploaded {} texture(s) to GPU", tex_handles.len());
+            log::info!("Uploaded {} texture(s) to GPU", tex_handles.len());
         }
 
         // Wire texture handles into materials, then upload and spawn each mesh

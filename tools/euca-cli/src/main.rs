@@ -990,7 +990,7 @@ fn parse_vec3(s: &str) -> Option<[f32; 3]> {
     if parts.len() == 3 {
         Some([parts[0], parts[1], parts[2]])
     } else {
-        eprintln!("Warning: expected 'x,y,z' format, got '{s}'");
+        log::warn!("Expected 'x,y,z' format, got '{s}'");
         None
     }
 }
@@ -1012,12 +1012,12 @@ fn parse_collider(s: &str) -> Option<Value> {
                 serde_json::json!({"shape": "Capsule", "radius": parts[0], "half_height": parts[1]}),
             )
         } else {
-            eprintln!("Warning: capsule format is 'capsule:radius,half_height'");
+            log::warn!("Capsule format is 'capsule:radius,half_height'");
             None
         }
     } else {
-        eprintln!(
-            "Warning: collider format is 'aabb:hx,hy,hz' or 'sphere:radius' or 'capsule:radius,half_height'"
+        log::warn!(
+            "Collider format is 'aabb:hx,hy,hz' or 'sphere:radius' or 'capsule:radius,half_height'"
         );
         None
     }
@@ -1182,7 +1182,7 @@ fn parse_json_flag(raw: &str) -> Value {
     match serde_json::from_str::<Value>(raw) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("Invalid JSON: {e}");
+            log::error!("Invalid JSON: {e}");
             std::process::exit(1);
         }
     }
@@ -1191,6 +1191,11 @@ fn parse_json_flag(raw: &str) -> Value {
 // ── Execution ──
 
 fn main() {
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Warn)
+        .parse_default_env()
+        .init();
+
     let cli = Cli::parse();
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
@@ -1316,7 +1321,7 @@ fn main() {
                     let resp = client.post(format!("{server}/despawn")).json(&body).send();
                     handle_response(resp)
                 } else {
-                    eprintln!("Specify an entity ID or use --all");
+                    log::error!("Specify an entity ID or use --all");
                     std::process::exit(1);
                 }
             }
@@ -2142,8 +2147,8 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {e}");
-        eprintln!("Is the engine running? Start with: cargo run -p euca-editor --example editor");
+        log::error!("{}", e);
+        log::error!("Is the engine running? Start with: cargo run -p euca-editor --example editor");
         std::process::exit(1);
     }
 }
@@ -2218,7 +2223,7 @@ fn run_screenshot(
                 let server_path = json["path"].as_str().unwrap_or("");
                 if let Some(ref out) = output {
                     if let Err(e) = std::fs::copy(server_path, out) {
-                        eprintln!("Failed to copy screenshot: {e}");
+                        log::error!("Failed to copy screenshot: {e}");
                         std::process::exit(1);
                     }
                     println!("{out}");
@@ -2231,7 +2236,7 @@ fn run_screenshot(
         Ok(r) => {
             let status = r.status();
             let text = r.text().unwrap_or_default();
-            eprintln!("{text}");
+            log::error!("{}", text);
             Err(format!("HTTP {status}"))
         }
         Err(e) => Err(e.to_string()),
@@ -2253,11 +2258,11 @@ fn run_auth(
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
                 Ok(o) => {
                     let err = String::from_utf8_lossy(&o.stderr);
-                    eprintln!("nit sign --login failed: {err}");
+                    log::error!("nit sign --login failed: {err}");
                     std::process::exit(1);
                 }
                 Err(_) => {
-                    eprintln!("nit not found. Install nit: npm install -g @newtype-ai/nit");
+                    log::error!("nit not found. Install nit: npm install -g @newtype-ai/nit");
                     std::process::exit(1);
                 }
             };
@@ -2265,7 +2270,7 @@ fn run_auth(
             let nit_data: Value = match serde_json::from_str(nit_output.trim()) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("Failed to parse nit output: {e}");
+                    log::error!("Failed to parse nit output: {e}");
                     std::process::exit(1);
                 }
             };
@@ -2275,7 +2280,7 @@ fn run_auth(
             let public_key = match std::fs::read_to_string(&pub_key_path) {
                 Ok(k) => k,
                 Err(_) => {
-                    eprintln!("Cannot read {pub_key_path}. Run 'nit init' first.");
+                    log::error!("Cannot read {pub_key_path}. Run 'nit init' first.");
                     std::process::exit(1);
                 }
             };
@@ -2312,8 +2317,8 @@ fn package_game(project_dir: &str, output_dir: &str) {
     let project_data = match std::fs::read_to_string(&project_path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("Cannot read project file {}: {e}", project_path.display());
-            eprintln!("Make sure .eucaproject.json exists in the project directory.");
+            log::error!("Cannot read project file {}: {e}", project_path.display());
+            log::error!("Make sure .eucaproject.json exists in the project directory.");
             std::process::exit(1);
         }
     };
@@ -2321,7 +2326,7 @@ fn package_game(project_dir: &str, output_dir: &str) {
     let project: Value = match serde_json::from_str(&project_data) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("Invalid project JSON: {e}");
+            log::error!("Invalid project JSON: {e}");
             std::process::exit(1);
         }
     };
@@ -2362,7 +2367,7 @@ fn package_game(project_dir: &str, output_dir: &str) {
         std::fs::copy(&src_level, out.join(default_level)).expect("Failed to copy default level");
         println!("  Copied {default_level}");
     } else {
-        eprintln!("  Warning: default level {default_level} not found");
+        log::warn!("Default level {default_level} not found");
     }
 
     // Copy levels directory
@@ -2432,9 +2437,7 @@ fn package_game(project_dir: &str, output_dir: &str) {
     }
 
     if !binary_copied {
-        eprintln!(
-            "  Warning: game binary not found. Build first with: cargo build --release -p euca-game"
-        );
+        log::warn!("Game binary not found. Build first with: cargo build --release -p euca-game");
     }
 
     println!();
@@ -2463,7 +2466,7 @@ fn run_asset_info(file: &str) {
     let scene = match euca_asset::load_gltf(file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Failed to load asset: {e}");
+            log::error!("Failed to load asset: {e}");
             std::process::exit(1);
         }
     };
@@ -2518,7 +2521,7 @@ fn run_asset_optimize(input: &str, output: Option<&str>) {
     let scene = match euca_asset::load_gltf(input) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Failed to load asset: {e}");
+            log::error!("Failed to load asset: {e}");
             std::process::exit(1);
         }
     };
@@ -2572,7 +2575,7 @@ fn run_asset_lod(input: &str, output: Option<&str>, levels: usize) {
     let scene = match euca_asset::load_gltf(input) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Failed to load asset: {e}");
+            log::error!("Failed to load asset: {e}");
             std::process::exit(1);
         }
     };

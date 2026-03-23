@@ -1290,8 +1290,10 @@ name = "euca-cli"
 version = "0.8.0"
 dependencies = [
  "clap",
+ "env_logger",
  "euca-asset",
  "euca-render",
+ "log",
  "reqwest",
  "serde",
  "serde_json",

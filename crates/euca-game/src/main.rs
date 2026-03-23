@@ -30,8 +30,8 @@ fn main() {
         .unwrap_or_else(|| PROJECT_FILE_NAME.to_string());
 
     let project = ProjectConfig::load(&project_path).unwrap_or_else(|e| {
-        eprintln!("Failed to load project: {e}");
-        eprintln!("Usage: euca-game [path/to/.eucaproject.json]");
+        log::error!("Failed to load project: {e}");
+        log::error!("Usage: euca-game [path/to/.eucaproject.json]");
         std::process::exit(1);
     });
 
