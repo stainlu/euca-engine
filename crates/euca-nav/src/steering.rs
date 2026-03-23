@@ -18,6 +18,7 @@ pub struct NavAgent {
 }
 
 impl NavAgent {
+    /// Create a new nav agent with the given speed and a default radius of 0.5.
     pub fn new(speed: f32) -> Self {
         Self { speed, radius: 0.5 }
     }
@@ -37,6 +38,7 @@ pub struct PathGoal {
 }
 
 impl PathGoal {
+    /// Create a new goal targeting the given world position (path will be computed lazily).
     pub fn new(target: Vec3) -> Self {
         Self {
             target,

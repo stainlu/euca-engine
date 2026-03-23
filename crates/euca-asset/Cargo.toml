@@ -2,6 +2,9 @@
 name = "euca-asset"
 version.workspace = true
 edition.workspace = true
+description = "glTF loading, LOD generation, mesh optimization, and hot-reload"
+keywords = ["gamedev", "game-engine", "gltf", "asset", "mesh"]
+categories = ["game-development"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }

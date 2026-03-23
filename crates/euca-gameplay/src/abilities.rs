@@ -26,14 +26,20 @@ pub enum AbilityEffect {
 /// A single ability with cooldown and mana cost.
 #[derive(Clone, Debug)]
 pub struct Ability {
+    /// Display name (e.g. "Fireball").
     pub name: String,
+    /// Total cooldown duration in seconds.
     pub cooldown: f32,
+    /// Seconds remaining until the ability is ready again.
     pub cooldown_remaining: f32,
+    /// Mana consumed on activation.
     pub mana_cost: f32,
+    /// What happens when the ability fires.
     pub effect: AbilityEffect,
 }
 
 impl Ability {
+    /// Returns `true` when the cooldown has expired and the ability can be used.
     pub fn is_ready(&self) -> bool {
         self.cooldown_remaining <= 0.0
     }
@@ -51,18 +57,22 @@ pub enum AbilitySlot {
 /// Holds up to 4 abilities (Q/W/E/R).
 #[derive(Clone, Debug, Default)]
 pub struct AbilitySet {
+    /// Slot-ability pairs. Order is insertion order, not slot order.
     pub abilities: Vec<(AbilitySlot, Ability)>,
 }
 
 impl AbilitySet {
+    /// Create an empty ability set.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Bind an ability to a slot.
     pub fn add(&mut self, slot: AbilitySlot, ability: Ability) {
         self.abilities.push((slot, ability));
     }
 
+    /// Look up an ability by slot.
     pub fn get(&self, slot: AbilitySlot) -> Option<&Ability> {
         self.abilities
             .iter()
@@ -70,6 +80,7 @@ impl AbilitySet {
             .map(|(_, a)| a)
     }
 
+    /// Mutably look up an ability by slot (e.g. to reset cooldown).
     pub fn get_mut(&mut self, slot: AbilitySlot) -> Option<&mut Ability> {
         self.abilities
             .iter_mut()
@@ -81,12 +92,16 @@ impl AbilitySet {
 /// Mana resource for ability casting.
 #[derive(Clone, Debug)]
 pub struct Mana {
+    /// Current mana available.
     pub current: f32,
+    /// Maximum mana (caps regeneration).
     pub max: f32,
+    /// Mana regenerated per second.
     pub regen: f32,
 }
 
 impl Mana {
+    /// Create a full mana pool with the given cap and regen rate.
     pub fn new(max: f32, regen: f32) -> Self {
         Self {
             current: max,
@@ -99,15 +114,20 @@ impl Mana {
 /// Request to use an ability.
 #[derive(Clone, Debug)]
 pub struct UseAbilityEvent {
+    /// Entity that wants to cast.
     pub entity: Entity,
+    /// Which ability slot to activate.
     pub slot: AbilitySlot,
 }
 
 /// Active speed boost effect (temporary).
 #[derive(Clone, Debug)]
 pub struct SpeedBuff {
+    /// Speed multiplier applied while active.
     pub multiplier: f32,
+    /// Seconds remaining before the buff expires.
     pub remaining: f32,
+    /// Speed value to restore when the buff expires.
     pub original_speed: f32,
 }
 

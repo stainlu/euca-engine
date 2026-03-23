@@ -2,6 +2,9 @@
 name = "euca-gameplay"
 version.workspace = true
 edition.workspace = true
+description = "Health, combat, economy, abilities, rules engine, and AI behaviors"
+keywords = ["gamedev", "game-engine", "gameplay", "combat", "abilities"]
+categories = ["game-development"]
 
 [dependencies]
 euca-core = { path = "../euca-core" }

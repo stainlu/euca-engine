@@ -2,6 +2,9 @@
 name = "euca-net"
 version.workspace = true
 edition.workspace = true
+description = "UDP/QUIC transport, property replication, and client prediction"
+keywords = ["gamedev", "game-engine", "networking", "quic", "multiplayer"]
+categories = ["game-development", "network-programming"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }

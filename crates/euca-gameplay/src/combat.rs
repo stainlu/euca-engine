@@ -17,15 +17,22 @@ use crate::teams::Team;
 /// Entity that moves in a direction and damages what it hits.
 #[derive(Clone, Debug)]
 pub struct Projectile {
+    /// Normalized movement direction.
     pub direction: Vec3,
+    /// Movement speed in units per second.
     pub speed: f32,
+    /// Damage dealt on hit.
     pub damage: f32,
+    /// Maximum time alive in seconds before auto-despawn.
     pub lifetime: f32,
+    /// Entity that fired this projectile (excluded from hit detection).
     pub owner: Entity,
+    /// Time elapsed since spawn.
     pub elapsed: f32,
 }
 
 impl Projectile {
+    /// Create a projectile with the given trajectory, damage, and lifetime.
     pub fn new(direction: Vec3, speed: f32, damage: f32, lifetime: f32, owner: Entity) -> Self {
         Self {
             direction: direction.normalize(),
@@ -182,16 +189,24 @@ impl Default for AttackStyle {
 /// Just add this + Health + Team to make an entity fight.
 #[derive(Clone, Copy, Debug)]
 pub struct AutoCombat {
+    /// Damage dealt per attack.
     pub damage: f32,
+    /// Maximum distance at which this entity can attack.
     pub range: f32,
+    /// Seconds between attacks.
     pub cooldown: f32,
+    /// Time elapsed since last attack (attacks when `elapsed >= cooldown`).
     pub elapsed: f32,
+    /// Maximum distance to detect and acquire enemies.
     pub detect_range: f32,
+    /// Movement speed when chasing a target (units/s).
     pub speed: f32,
+    /// Whether the entity chases enemies or stays in place.
     pub attack_style: AttackStyle,
 }
 
 impl AutoCombat {
+    /// Create a melee combatant with sensible defaults.
     pub fn new() -> Self {
         Self {
             damage: 10.0,

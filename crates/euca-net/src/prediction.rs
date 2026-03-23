@@ -35,6 +35,7 @@ pub struct ClientPrediction {
 }
 
 impl ClientPrediction {
+    /// Create a new prediction buffer with default settings.
     pub fn new() -> Self {
         Self {
             predictions: VecDeque::new(),

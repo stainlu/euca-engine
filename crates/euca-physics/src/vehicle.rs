@@ -45,22 +45,26 @@ impl WheelConfig {
         }
     }
 
+    /// Override the wheel radius (meters).
     pub fn with_radius(mut self, radius: f32) -> Self {
         self.radius = radius;
         self
     }
 
+    /// Override the suspension spring constant and damping coefficient.
     pub fn with_spring(mut self, spring_constant: f32, damping: f32) -> Self {
         self.spring_constant = spring_constant;
         self.damping = damping;
         self
     }
 
+    /// Override the suspension rest length (meters).
     pub fn with_rest_length(mut self, rest_length: f32) -> Self {
         self.rest_length = rest_length;
         self
     }
 
+    /// Set the maximum steering angle (radians). Use 0.0 for rear wheels.
     pub fn with_max_steer_angle(mut self, angle: f32) -> Self {
         self.max_steer_angle = angle;
         self
@@ -169,7 +173,7 @@ impl EngineCurve {
         last.torque
     }
 
-    /// Current combined gear ratio (gear * final drive).
+    /// Current combined gear ratio (`gear_ratio * final_drive_ratio`).
     pub fn combined_ratio(&self) -> f32 {
         self.gear_ratios[self.current_gear] * self.final_drive_ratio
     }
@@ -246,16 +250,19 @@ impl Vehicle {
         }
     }
 
+    /// Override the default engine/drivetrain curve.
     pub fn with_engine(mut self, engine: EngineCurve) -> Self {
         self.engine = engine;
         self
     }
 
+    /// Set the collision mask for wheel raycasts (exclude the vehicle's own layer).
     pub fn with_query_mask(mut self, mask: u32) -> Self {
         self.query_mask = mask;
         self
     }
 
+    /// Override the maximum braking torque per wheel (Nm).
     pub fn with_max_brake_torque(mut self, torque: f32) -> Self {
         self.max_brake_torque = torque;
         self

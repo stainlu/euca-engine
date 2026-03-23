@@ -7,21 +7,29 @@
 use euca_ecs::{Entity, Events, Query, World};
 
 /// Entity has hit points that can be reduced by damage or restored by healing.
+///
+/// Damage pipeline: `DamageEvent` -> `apply_damage_system` reduces `current`
+/// -> `death_check_system` adds `Dead` marker + emits `DeathEvent` when `current <= 0`.
 #[derive(Clone, Debug)]
 pub struct Health {
+    /// Current hit points (clamped to `[0, max]` by systems).
     pub current: f32,
+    /// Maximum hit points. Healing cannot exceed this value.
     pub max: f32,
 }
 
 impl Health {
+    /// Create a fully healed entity with the given maximum HP.
     pub fn new(max: f32) -> Self {
         Self { current: max, max }
     }
 
+    /// Returns `true` when current HP is zero or below.
     pub fn is_dead(&self) -> bool {
         self.current <= 0.0
     }
 
+    /// Health as a fraction of max, clamped to `[0.0, 1.0]`.
     pub fn fraction(&self) -> f32 {
         if self.max > 0.0 {
             (self.current / self.max).clamp(0.0, 1.0)
@@ -40,18 +48,23 @@ pub struct Dead;
 #[derive(Clone, Copy, Debug)]
 pub struct LastAttacker(pub Option<Entity>);
 
-/// Request to apply damage to an entity.
+/// Request to apply damage to an entity. Consumed by `apply_damage_system`.
 #[derive(Clone, Debug)]
 pub struct DamageEvent {
+    /// Entity to receive damage.
     pub target: Entity,
+    /// Raw damage amount (before any future mitigation).
     pub amount: f32,
+    /// Who dealt the damage (used for kill attribution via `LastAttacker`).
     pub source: Option<Entity>,
 }
 
-/// Notification that an entity has died.
+/// Notification that an entity has died. Emitted by `death_check_system`.
 #[derive(Clone, Debug)]
 pub struct DeathEvent {
+    /// The entity that died.
     pub entity: Entity,
+    /// The entity that dealt the killing blow (from `LastAttacker`), if any.
     pub killer: Option<Entity>,
 }
 

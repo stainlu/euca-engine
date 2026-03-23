@@ -2,6 +2,9 @@
 name = "euca-editor"
 version.workspace = true
 edition.workspace = true
+description = "egui-based visual editor with gizmos, hierarchy, inspector, and undo/redo"
+keywords = ["gamedev", "game-engine", "editor", "egui", "inspector"]
+categories = ["game-development"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
