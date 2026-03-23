@@ -1,3 +1,9 @@
+//! Multiplayer server example.
+//!
+//! Run: cargo run -p euca-game --example server
+//! Then in another terminal: cargo run -p euca-game --example client
+//! Multiple clients can connect simultaneously.
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};

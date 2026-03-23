@@ -1,4 +1,7 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 /// Tracks time progression across frames.
 pub struct Time {

@@ -1307,6 +1307,7 @@ dependencies = [
  "euca-ecs",
  "euca-math",
  "log",
+ "web-time",
  "winit",
 ]
 
@@ -1464,11 +1465,15 @@ name = "euca-physics"
 version = "0.8.2"
 dependencies = [
  "criterion",
+ "env_logger",
+ "euca-core",
  "euca-ecs",
  "euca-math",
  "euca-reflect",
+ "euca-render",
  "euca-scene",
  "log",
+ "winit",
 ]
 
 [[package]]

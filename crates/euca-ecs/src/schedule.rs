@@ -160,6 +160,7 @@ impl SystemJob {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 unsafe fn run_batch_parallel(
     systems: &mut [Box<dyn System>],
     indices: &[usize],
@@ -180,6 +181,18 @@ unsafe fn run_batch_parallel(
             }
         }
     });
+}
+
+/// WASM fallback: no thread support, run systems sequentially.
+#[cfg(target_arch = "wasm32")]
+unsafe fn run_batch_parallel(
+    systems: &mut [Box<dyn System>],
+    indices: &[usize],
+    world: &mut World,
+) {
+    for &idx in indices {
+        systems[idx].run(world);
+    }
 }
 
 /// An ordered collection of stages, each containing systems.
@@ -631,6 +644,7 @@ impl ParallelSchedule {
     ///
     /// Caller must ensure that the systems at the given indices have
     /// non-conflicting accesses.
+    #[cfg(not(target_arch = "wasm32"))]
     unsafe fn run_batch_parallel(&mut self, indices: &[usize], world: &mut World) {
         let world_ptr = world as *mut World;
 
@@ -647,6 +661,14 @@ impl ParallelSchedule {
                 }
             }
         });
+    }
+
+    /// WASM fallback: no thread support, run systems sequentially.
+    #[cfg(target_arch = "wasm32")]
+    unsafe fn run_batch_parallel(&mut self, indices: &[usize], world: &mut World) {
+        for &idx in indices {
+            self.systems[idx].system.run(world);
+        }
     }
 }
 

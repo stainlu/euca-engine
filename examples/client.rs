@@ -1,10 +1,21 @@
+//! Multiplayer client example.
+//!
+//! Run: cargo run -p euca-game --example server
+//! Then in another terminal: cargo run -p euca-game --example client
+//! Multiple clients can connect simultaneously.
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use euca_math::Vec3;
-use euca_net::{ClientMessage, GameClient, NetworkId, PacketHeader, ServerMessage, UdpTransport};
+use euca_ecs::{Entity, Query, World};
+use euca_math::{Quat, Transform, Vec3};
+use euca_net::{
+    ClientMessage, ClientPrediction, GameClient, NetworkId, PacketHeader, ServerMessage,
+    UdpTransport, apply_prediction_system, reconcile_entity, record_prediction_for_entity,
+};
 use euca_render::*;
+use euca_scene::{GlobalTransform, LocalTransform};
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -14,10 +25,27 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 const SERVER_ADDR: &str = "127.0.0.1:7777";
 
+/// Maps network entity IDs to local ECS entities.
+struct NetworkEntityMap {
+    network_to_ecs: HashMap<NetworkId, Entity>,
+}
+
+impl NetworkEntityMap {
+    fn new() -> Self {
+        Self {
+            network_to_ecs: HashMap::new(),
+        }
+    }
+}
+
 struct ClientApp {
     transport: Option<UdpTransport>,
     client: GameClient,
     server_addr: SocketAddr,
+
+    // ECS world holds all entities (replicated from server)
+    world: World,
+    net_map: NetworkEntityMap,
 
     // Rendering
     survey: HardwareSurvey,
@@ -29,9 +57,7 @@ struct ClientApp {
     player_material: Option<MaterialHandle>,
     other_material: Option<MaterialHandle>,
 
-    // Local state
-    /// Maps NetworkId → local entity position
-    entity_positions: HashMap<NetworkId, [f32; 3]>,
+    // Input
     pressed_keys: Vec<euca_input::InputKey>,
     send_seq: u32,
 
@@ -47,6 +73,8 @@ impl ClientApp {
             transport: None,
             client: GameClient::new(),
             server_addr,
+            world: World::new(),
+            net_map: NetworkEntityMap::new(),
             survey,
             wgpu_instance,
             window: None,
@@ -55,7 +83,6 @@ impl ClientApp {
             cube_mesh: None,
             player_material: None,
             other_material: None,
-            entity_positions: HashMap::new(),
             pressed_keys: Vec::new(),
             send_seq: 0,
             window_attrs: WindowAttributes::default()
@@ -102,10 +129,100 @@ impl ClientApp {
             }
         }
 
-        // Update local entity positions from client state
-        self.entity_positions.clear();
-        for (nid, state) in &self.client.entities {
-            self.entity_positions.insert(*nid, state.position);
+        // Sync GameClient state into the ECS world.
+        self.sync_world_from_client();
+    }
+
+    /// Synchronise the ECS world with the authoritative state held by `GameClient`.
+    ///
+    /// For each entity the server knows about:
+    ///  - If it does not yet exist locally, spawn it with render components.
+    ///  - Update its `LocalTransform` from the server-reported position/rotation.
+    ///  - For the local player entity, reconcile predictions against the server.
+    ///
+    /// Entities that the server despawned are removed from the world.
+    fn sync_world_from_client(&mut self) {
+        let cube_mesh = match self.cube_mesh {
+            Some(m) => m,
+            None => return, // Renderer not ready yet
+        };
+        let player_mat = match self.player_material {
+            Some(m) => m,
+            None => return,
+        };
+        let other_mat = match self.other_material {
+            Some(m) => m,
+            None => return,
+        };
+
+        let my_nid = self.client.player_network_id;
+        let server_tick = self.client.server_tick;
+
+        // Spawn or update entities from the client's replicated state.
+        let entity_states: Vec<_> = self.client.entities.values().cloned().collect();
+
+        for state in &entity_states {
+            let is_local_player = my_nid == Some(state.network_id);
+            let material = if is_local_player {
+                player_mat
+            } else {
+                other_mat
+            };
+
+            let entity = if let Some(&existing) = self.net_map.network_to_ecs.get(&state.network_id)
+            {
+                existing
+            } else {
+                // Spawn a new ECS entity for this network entity.
+                let e = self
+                    .world
+                    .spawn(LocalTransform(Transform::from_translation(Vec3::new(
+                        state.position[0],
+                        state.position[1],
+                        state.position[2],
+                    ))));
+                self.world.insert(e, GlobalTransform::default());
+                self.world.insert(e, MeshRenderer { mesh: cube_mesh });
+                self.world.insert(e, MaterialRef { handle: material });
+                self.world.insert(e, state.network_id);
+
+                if is_local_player {
+                    self.world.insert(e, ClientPrediction::new());
+                }
+
+                self.net_map.network_to_ecs.insert(state.network_id, e);
+                e
+            };
+
+            // Update transform from server state.
+            if let Some(lt) = self.world.get_mut::<LocalTransform>(entity) {
+                lt.0.translation =
+                    Vec3::new(state.position[0], state.position[1], state.position[2]);
+                lt.0.rotation = Quat::from_xyzw(
+                    state.rotation[0],
+                    state.rotation[1],
+                    state.rotation[2],
+                    state.rotation[3],
+                );
+                lt.0.scale = Vec3::new(state.scale[0], state.scale[1], state.scale[2]);
+            }
+
+            // Ensure the material stays correct (player vs. other).
+            if let Some(mat_ref) = self.world.get_mut::<MaterialRef>(entity) {
+                mat_ref.handle = material;
+            }
+
+            // Reconcile prediction for the local player.
+            if is_local_player {
+                reconcile_entity(&mut self.world, entity, server_tick, state.position);
+            }
+        }
+
+        // Remove entities that the server despawned.
+        for nid in self.client.drain_despawned() {
+            if let Some(entity) = self.net_map.network_to_ecs.remove(&nid) {
+                self.world.despawn(entity);
+            }
         }
     }
 
@@ -132,6 +249,25 @@ impl ClientApp {
         let _ = transport.send_packet(&header, &payload, self.server_addr);
     }
 
+    /// Record a prediction for the local player entity, then apply pending
+    /// prediction corrections to all entities with `ClientPrediction`.
+    fn run_prediction(&mut self) {
+        let my_nid = match self.client.player_network_id {
+            Some(nid) => nid,
+            None => return,
+        };
+        let entity = match self.net_map.network_to_ecs.get(&my_nid) {
+            Some(&e) => e,
+            None => return,
+        };
+
+        let tick = self.client.server_tick;
+        let input_snapshot = bincode::serialize(&self.pressed_keys).unwrap_or_default();
+        record_prediction_for_entity(&mut self.world, entity, tick, input_snapshot);
+
+        apply_prediction_system(&mut self.world);
+    }
+
     fn render(&mut self) {
         let gpu = match &self.gpu {
             Some(g) => g,
@@ -141,39 +277,12 @@ impl ClientApp {
             Some(r) => r,
             None => return,
         };
-        let cube_mesh = match self.cube_mesh {
-            Some(m) => m,
-            None => return,
-        };
-        let player_mat = match self.player_material {
-            Some(m) => m,
-            None => return,
-        };
-        let other_mat = match self.other_material {
-            Some(m) => m,
-            None => return,
-        };
 
-        let my_nid = self.client.player_network_id;
+        // Propagate LocalTransform -> GlobalTransform.
+        euca_scene::transform_propagation_system(&mut self.world);
 
-        // Build draw commands from network state
-        let mut draw_commands: Vec<DrawCommand> = Vec::new();
-
-        // Ground plane (local, not networked)
-        // Just render entities from network state
-        for (nid, pos) in &self.entity_positions {
-            let mat = if Some(*nid) == my_nid {
-                player_mat
-            } else {
-                other_mat
-            };
-            draw_commands.push(DrawCommand {
-                mesh: cube_mesh,
-                material: mat,
-                model_matrix: euca_math::Mat4::from_translation(Vec3::new(pos[0], pos[1], pos[2])),
-                aabb: None,
-            });
-        }
+        // Collect draw commands from the ECS world (same pattern as hello_cubes / editor).
+        let draw_commands = collect_draw_commands(&self.world);
 
         // Camera looking at origin
         let camera = Camera::new(Vec3::new(0.0, 10.0, -15.0), Vec3::new(0.0, 1.0, 0.0));
@@ -185,6 +294,20 @@ impl ClientApp {
 
         renderer.draw(gpu, &camera, &light, &ambient, &draw_commands);
     }
+}
+
+/// Collect draw commands from all entities with GlobalTransform + MeshRenderer + MaterialRef.
+fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
+    let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
+    query
+        .iter()
+        .map(|(gt, mr, mat)| DrawCommand {
+            mesh: mr.mesh,
+            material: mat.handle,
+            model_matrix: gt.0.to_matrix(),
+            aabb: None,
+        })
+        .collect()
 }
 
 impl ApplicationHandler for ClientApp {
@@ -250,13 +373,16 @@ impl ApplicationHandler for ClientApp {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // Network: receive state from server
+                // 1. Receive authoritative state from server and sync into ECS world.
                 self.receive_packets();
 
-                // Network: send input to server
+                // 2. Send local input to server.
                 self.send_input();
 
-                // Render
+                // 3. Run client-side prediction (record + apply corrections).
+                self.run_prediction();
+
+                // 4. Render from the ECS world.
                 self.render();
 
                 if let Some(w) = &self.window {

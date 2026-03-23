@@ -12,3 +12,6 @@ euca-math = { path = "../euca-math" }
 winit = "0.30"
 log = "0.4"
 env_logger = "0.11"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"

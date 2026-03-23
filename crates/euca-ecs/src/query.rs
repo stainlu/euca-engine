@@ -510,8 +510,12 @@ impl_world_query_tuple!(A, B, C, D, E);
 impl_world_query_tuple!(A, B, C, D, E, F2);
 impl_world_query_tuple!(A, B, C, D, E, F2, G);
 impl_world_query_tuple!(A, B, C, D, E, F2, G, H);
+impl_world_query_tuple!(A, B, C, D, E, F2, G, H, I);
+impl_world_query_tuple!(A, B, C, D, E, F2, G, H, I, J);
+impl_world_query_tuple!(A, B, C, D, E, F2, G, H, I, J, K);
+impl_world_query_tuple!(A, B, C, D, E, F2, G, H, I, J, K, L);
 
-// ── QueryFilter: tuple impls (1 through 8) ──
+// ── QueryFilter: tuple impls (1 through 12) ──
 
 macro_rules! impl_query_filter_tuple {
     ($($name:ident),+) => {
@@ -532,6 +536,10 @@ impl_query_filter_tuple!(A, B, C, D, E);
 impl_query_filter_tuple!(A, B, C, D, E, F2);
 impl_query_filter_tuple!(A, B, C, D, E, F2, G);
 impl_query_filter_tuple!(A, B, C, D, E, F2, G, H);
+impl_query_filter_tuple!(A, B, C, D, E, F2, G, H, I);
+impl_query_filter_tuple!(A, B, C, D, E, F2, G, H, I, J);
+impl_query_filter_tuple!(A, B, C, D, E, F2, G, H, I, J, K);
+impl_query_filter_tuple!(A, B, C, D, E, F2, G, H, I, J, K, L);
 
 // ── Tests ──
 

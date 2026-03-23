@@ -15,7 +15,15 @@ log = "0.4"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+euca-core = { path = "../euca-core" }
+euca-render = { path = "../euca-render" }
+env_logger = "0.11"
+winit = "0.30"
 
 [[bench]]
 name = "physics_bench"
 harness = false
+
+[[example]]
+name = "stress_test"
+path = "../../examples/stress_test.rs"

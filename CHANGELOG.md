@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9.0 (2026-03-24)
+
+### Hard Problems — Tuples, Stress Test, Multiplayer, WASM Foundation
+
+- **ECS query tuples expanded to 12**: `Query<(&A, &B, ..., &L)>` now works with up to 12 component types. QueryFilter also expanded to 12.
+- **1000-entity stress test**: New `examples/stress_test.rs` — spawns 1000 physics entities with collision, renders at 60fps, prints FPS every 60 frames.
+- **Real multiplayer proof**: Rewrote `examples/client.rs` to use proper ECS world sync. Client spawns/updates/despawns entities from server state. Integrated ClientPrediction for the local player with smooth correction.
+- **WASM foundation**: Platform abstraction layers for future web export:
+  - `euca-core/time.rs`: `web-time` crate for WASM-compatible `Instant`
+  - `euca-ecs/schedule.rs`: Sequential fallback for `#[cfg(target_arch = "wasm32")]`
+
 ## v0.8.2 (2026-03-23)
 
 ### Medium-Severity Bug Fixes
