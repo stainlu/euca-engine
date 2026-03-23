@@ -138,6 +138,15 @@ struct InstanceData {
     normal_matrix: [[f32; 4]; 4],
 }
 
+/// Per-decal uniform data uploaded to the GPU before each decal draw call.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct DecalUniforms {
+    model_matrix: [[f32; 4]; 4],
+    opacity: f32,
+    _pad: [f32; 3],
+}
+
 const MAX_POINT_LIGHTS: usize = 4;
 const MAX_SPOT_LIGHTS: usize = 2;
 
@@ -268,6 +277,12 @@ pub struct Renderer {
     probe_enabled: bool,
     /// GPU resources for decal projection volumes.
     decal_renderer: DecalRenderer,
+    /// Per-decal uniform buffer (model_matrix + opacity), written before each draw.
+    decal_uniform_buffer: SmartBuffer,
+    /// Bind group layout for the per-decal uniform buffer.
+    decal_bgl: wgpu::BindGroupLayout,
+    /// Bind group exposing the per-decal uniform buffer to shaders.
+    decal_bind_group: wgpu::BindGroup,
     /// Decal draw commands staged by the caller for the current frame.
     pending_decals: Vec<DecalDrawCommand>,
     /// GPU compute particle systems.
@@ -693,6 +708,39 @@ impl Renderer {
         let decal_renderer = DecalRenderer::new(&gpu.device);
         decal_renderer.upload(&gpu.queue);
 
+        let decal_uniform_buffer = SmartBuffer::new(
+            &gpu.device,
+            std::mem::size_of::<DecalUniforms>() as u64,
+            BufferKind::Uniform,
+            unified,
+            "Decal UBO",
+        );
+        let decal_bgl = gpu
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Decal BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<DecalUniforms>() as u64,
+                        ),
+                    },
+                    count: None,
+                }],
+            });
+        let decal_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Decal BG"),
+            layout: &decal_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: decal_uniform_buffer.raw().as_entire_binding(),
+            }],
+        });
+
         Self {
             pipeline,
             transparent_pipeline,
@@ -736,6 +784,9 @@ impl Renderer {
             probe_sh: [[0.0; 4]; 9],
             probe_enabled: false,
             decal_renderer,
+            decal_uniform_buffer,
+            decal_bgl,
+            decal_bind_group,
             pending_decals: Vec::new(),
             gpu_particle_systems: Vec::new(),
         }
@@ -1430,12 +1481,15 @@ impl Renderer {
                     self.decal_renderer.index_buffer().slice(..),
                     wgpu::IndexFormat::Uint16,
                 );
+                pass.set_bind_group(0, &self.decal_bind_group, &[]);
                 for decal_cmd in &self.pending_decals {
-                    // TODO: bind per-decal uniforms (model_matrix, opacity) and
-                    // switch to a dedicated decal render pipeline once the decal
-                    // shader is authored. Priority is respected by draw order
-                    // (commands are pre-sorted ascending).
-                    let _ = decal_cmd;
+                    let uniforms = DecalUniforms {
+                        model_matrix: decal_cmd.model_matrix.to_cols_array_2d(),
+                        opacity: decal_cmd.opacity,
+                        _pad: [0.0; 3],
+                    };
+                    self.decal_uniform_buffer
+                        .write(&gpu.queue, std::slice::from_ref(&uniforms));
                     pass.draw_indexed(0..self.decal_renderer.index_count(), 0, 0..1);
                 }
             }
