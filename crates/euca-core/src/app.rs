@@ -10,10 +10,7 @@ use euca_ecs::{IntoSystem, Schedule, World};
 pub struct App {
     pub world: World,
     pub schedule: Schedule,
-    #[allow(dead_code)]
-    plugins: Vec<Box<dyn Plugin>>,
     /// Callback invoked each frame after schedule runs (for rendering, etc.)
-    #[allow(dead_code)]
     render_fn: Option<Box<dyn FnMut(&mut World)>>,
 }
 
@@ -26,7 +23,6 @@ impl App {
         Self {
             world,
             schedule: Schedule::new(),
-            plugins: Vec::new(),
             render_fn: None,
         }
     }
@@ -34,7 +30,6 @@ impl App {
     /// Add a plugin to the app.
     pub fn add_plugin(&mut self, plugin: impl Plugin) -> &mut Self {
         plugin.build(self);
-        self.plugins.push(Box::new(plugin));
         self
     }
 

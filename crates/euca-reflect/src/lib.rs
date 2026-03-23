@@ -110,46 +110,47 @@ impl_reflect_primitive!(String, "String");
 #[cfg(feature = "json")]
 pub mod json {
     use super::{Reflect, TypeRegistry};
-    pub fn reflect_to_json(value: &dyn Reflect) -> serde_json::Value {
+
+    /// Attempt to convert a leaf (field-less) [`Reflect`] value into a JSON
+    /// primitive by matching on the well-known type name returned by the
+    /// `Reflect::type_name` implementation for each built-in primitive.
+    fn primitive_to_json(value: &dyn Reflect) -> Result<serde_json::Value, String> {
+        let any = value.as_any();
+        match value.type_name() {
+            "f32" => Ok(any.downcast_ref::<f32>().copied().unwrap().into()),
+            "f64" => Ok(any.downcast_ref::<f64>().copied().unwrap().into()),
+            "i32" => Ok(any.downcast_ref::<i32>().copied().unwrap().into()),
+            "u32" => Ok(any.downcast_ref::<u32>().copied().unwrap().into()),
+            "i64" => Ok(any.downcast_ref::<i64>().copied().unwrap().into()),
+            "u64" => Ok(any.downcast_ref::<u64>().copied().unwrap().into()),
+            "bool" => Ok(any.downcast_ref::<bool>().copied().unwrap().into()),
+            "String" => Ok(any.downcast_ref::<String>().cloned().unwrap().into()),
+            other => Err(format!("unsupported reflect type: {other}")),
+        }
+    }
+
+    /// Serialize a [`Reflect`] value to [`serde_json::Value`].
+    ///
+    /// Leaf types (no fields) are converted via [`primitive_to_json`].
+    /// Struct-like types produce a JSON object with a `__type` discriminator.
+    ///
+    /// Returns `Err` if the value (or any nested field) is a leaf whose type
+    /// name is not a recognized primitive.
+    pub fn reflect_to_json(value: &dyn Reflect) -> Result<serde_json::Value, String> {
         let fields = value.fields();
         if fields.is_empty() {
-            let a = value.as_any();
-            if let Some(v) = a.downcast_ref::<f32>() {
-                return (*v).into();
-            }
-            if let Some(v) = a.downcast_ref::<f64>() {
-                return (*v).into();
-            }
-            if let Some(v) = a.downcast_ref::<i32>() {
-                return (*v).into();
-            }
-            if let Some(v) = a.downcast_ref::<u32>() {
-                return (*v).into();
-            }
-            if let Some(v) = a.downcast_ref::<i64>() {
-                return (*v).into();
-            }
-            if let Some(v) = a.downcast_ref::<u64>() {
-                return (*v).into();
-            }
-            if let Some(v) = a.downcast_ref::<bool>() {
-                return (*v).into();
-            }
-            if let Some(v) = a.downcast_ref::<String>() {
-                return v.clone().into();
-            }
-            serde_json::Value::String(format!("{:?}", value.type_name()))
+            primitive_to_json(value)
         } else {
             let mut map = serde_json::Map::new();
             map.insert("__type".into(), value.type_name().into());
             for (name, repr) in &fields {
-                let v = value
-                    .field_ref(name)
-                    .map(|fv| reflect_to_json(fv))
-                    .unwrap_or_else(|| serde_json::Value::String(repr.clone()));
+                let v = match value.field_ref(name) {
+                    Some(fv) => reflect_to_json(fv)?,
+                    None => serde_json::Value::String(repr.clone()),
+                };
                 map.insert(name.to_string(), v);
             }
-            serde_json::Value::Object(map)
+            Ok(serde_json::Value::Object(map))
         }
     }
     pub fn reflect_from_json(
