@@ -14,7 +14,11 @@ fn halton(mut index: u32, base: u32) -> f32 {
     r
 }
 
-/// Camera component with view + projection.
+/// Camera component defining the viewer's position and projection.
+///
+/// Uses a left-handed coordinate system (+X right, +Y up, +Z forward).
+/// Supports both perspective and orthographic projection modes, TAA jitter,
+/// and view-preset helpers for common viewpoints.
 #[derive(Clone, Debug)]
 pub struct Camera {
     /// Eye position in world space.
@@ -40,6 +44,9 @@ pub struct Camera {
 }
 
 impl Camera {
+    /// Create a perspective camera at `eye` looking toward `target`.
+    ///
+    /// Defaults: 45-degree vertical FOV, near = 0.1, far = 1000, Y-up.
     pub fn new(eye: Vec3, target: Vec3) -> Self {
         Self {
             eye,
