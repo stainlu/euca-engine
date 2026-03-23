@@ -56,11 +56,18 @@ impl GameApp {
     fn new(project: ProjectConfig) -> Self {
         let mut world = World::new();
         world.insert_resource(Time::new());
+        // KNOWN LIMITATION: Camera position and look-at target are hardcoded for a
+        // top-down isometric view. These should be loaded from the project config
+        // (e.g. `project.camera.position`, `project.camera.target`) to support
+        // different game perspectives (first-person, side-scroller, etc.).
         world.insert_resource(Camera::new(
             Vec3::new(0.0, 12.0, 8.0),
             Vec3::new(0.0, 0.5, 0.0),
         ));
         world.insert_resource(PhysicsConfig::new());
+        // KNOWN LIMITATION: Ambient light color and intensity are hardcoded.
+        // A project-level lighting config (or per-level override) would allow
+        // designers to set mood without code changes.
         world.insert_resource(AmbientLight {
             color: [1.0, 1.0, 1.0],
             intensity: 0.2,
@@ -98,17 +105,27 @@ impl GameApp {
         let gpu = self.gpu.as_ref().unwrap();
         let renderer = self.renderer.as_mut().unwrap();
 
+        // KNOWN LIMITATION: Default mesh set (plane, cube, sphere) and their
+        // parameters (plane size 20.0, sphere radius 0.5 / subdivisions 16x32)
+        // are hardcoded. A project config section for default assets or an asset
+        // manifest would let projects declare their own starter primitives.
         let plane = renderer.upload_mesh(gpu, &Mesh::plane(20.0));
         let cube = renderer.upload_mesh(gpu, &Mesh::cube());
         let sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.5, 16, 32));
 
+        // KNOWN LIMITATION: Grid texture resolution (512) and tile count (32) are
+        // hardcoded. Ground material color [0.45, 0.45, 0.45] and roughness 0.95
+        // are also fixed. These could be configurable per-level or per-project.
         let grid_tex = renderer.checkerboard_texture(gpu, 512, 32);
         let grid_mat = renderer.upload_material(
             gpu,
             &Material::new([0.45, 0.45, 0.45, 1.0], 0.0, 0.95).with_texture(grid_tex),
         );
 
-        // Material palette
+        // KNOWN LIMITATION: The material palette is a fixed set of 12 named
+        // colors. Projects cannot add custom named materials without code changes.
+        // A data-driven palette loaded from the project config (or per-level
+        // material definitions) would improve flexibility.
         let palette: &[(&str, Material)] = &[
             ("blue", Material::blue_plastic()),
             ("red", Material::red_plastic()),
@@ -146,7 +163,10 @@ impl GameApp {
                 default_material: blue,
             });
 
-        // Ground plane
+        // KNOWN LIMITATION: Ground plane position, collider half-extents
+        // (10.0, 0.01, 10.0), and mesh are hardcoded. Levels that need different
+        // ground geometry or no ground at all currently require code changes.
+        // A level-descriptor field for ground configuration would fix this.
         let g = self
             .world
             .spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
@@ -157,7 +177,10 @@ impl GameApp {
         self.world
             .insert(g, euca_physics::Collider::aabb(10.0, 0.01, 10.0));
 
-        // Light
+        // KNOWN LIMITATION: Directional light direction, color, and intensity are
+        // hardcoded. A warm-toned sun angle works for the default MOBA-style scene
+        // but other genres need different lighting. Per-level light configuration
+        // in the level file would be the proper solution.
         self.world.spawn(DirectionalLight {
             direction: [0.4, -0.9, 0.25],
             color: [1.0, 0.95, 0.88],
@@ -192,7 +215,13 @@ impl GameApp {
             cam.follow_entity = Some(hero);
         }
 
-        // Auto-init navmesh
+        // KNOWN LIMITATION: Navmesh grid bounds ([-12, -12] to [12, 12]),
+        // cell_size (0.5), ground_y (0.0), and agent radius (0.5) are all
+        // hardcoded. These should be derived from the level geometry or exposed
+        // in the project/level config. In particular:
+        //   - cell_size controls pathfinding resolution vs. performance trade-off
+        //   - grid bounds should match the actual playable area
+        //   - agent radius affects obstacle avoidance clearance
         if self.world.resource::<euca_nav::NavMesh>().is_none() {
             let config = euca_nav::GridConfig {
                 min: [-12.0, -12.0],
@@ -209,6 +238,9 @@ impl GameApp {
         self.world.resource_mut::<Time>().unwrap().update();
 
         // Run gameplay systems
+        // KNOWN LIMITATION: The fallback delta time 0.016 (~60 FPS) is hardcoded.
+        // This should come from a target-framerate project setting so games
+        // targeting 30 FPS or 120 FPS get correct first-frame behaviour.
         let dt = self
             .world
             .resource::<Time>()
