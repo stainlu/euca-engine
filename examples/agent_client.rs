@@ -12,13 +12,17 @@ use std::time::Duration;
 const SERVER: &str = "http://127.0.0.1:8080";
 
 fn main() {
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
         .build()
         .unwrap();
 
     // Join the game
-    println!("Joining game...");
+    log::info!("Joining game...");
     let join_resp: serde_json::Value = client
         .post(format!("{SERVER}/join"))
         .json(&serde_json::json!({"name": "AI Agent"}))
@@ -28,7 +32,7 @@ fn main() {
         .unwrap();
 
     let player_id = join_resp["player_id"].as_u64().unwrap();
-    println!("Joined as player {player_id} at tick {}", join_resp["tick"]);
+    log::info!("Joined as player {player_id} at tick {}", join_resp["tick"]);
 
     // Game loop: observe → decide → act
     for tick in 0..300 {
@@ -77,13 +81,16 @@ fn main() {
             }
 
             if tick % 60 == 0 {
-                println!(
+                log::info!(
                     "[tick {tick}] pos=({:.1}, {:.1}, {:.1}) keys={:?}",
-                    pos[0], pos[1], pos[2], keys
+                    pos[0],
+                    pos[1],
+                    pos[2],
+                    keys
                 );
             }
         } else if tick % 60 == 0 {
-            println!("[tick {tick}] waiting for state...");
+            log::info!("[tick {tick}] waiting for state...");
         }
 
         // Act
@@ -99,7 +106,7 @@ fn main() {
     }
 
     // Leave
-    println!("Agent leaving game.");
+    log::info!("Agent leaving game.");
     let _ = client
         .post(format!("{SERVER}/leave"))
         .json(&serde_json::json!({"player_id": player_id}))
