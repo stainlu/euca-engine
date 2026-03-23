@@ -1,26 +1,51 @@
 //! Capsule-based kinematic character controller.
+//!
+//! Provides ground detection via downward raycasts, gravity, jumping with
+//! coyote time, and slope angle limits. Attach a `CharacterController` to
+//! any entity with a `LocalTransform` to enable character movement.
+
 use crate::raycast::{Ray, WorldRayHit, raycast_world};
 use euca_ecs::{Entity, Query, World};
 use euca_math::Vec3;
 use euca_scene::LocalTransform;
+
+/// Vertical offset above the capsule bottom for the ground probe ray origin.
 const GROUND_PROBE_OFFSET: f32 = 0.05;
+/// Maximum downward distance the ground probe ray travels.
 const GROUND_PROBE_DISTANCE: f32 = 0.15;
+
 /// Kinematic character controller component.
+///
+/// Handles gravity, ground detection, jumping, and coyote time.
+/// Movement is driven by setting `velocity` externally; the system
+/// integrates position and probes for ground each tick.
 #[derive(Clone, Debug)]
 pub struct CharacterController {
+    /// Capsule collision radius.
     pub capsule_radius: f32,
+    /// Total capsule height (including hemispheres).
     pub capsule_height: f32,
+    /// Maximum walkable slope angle in radians.
     pub max_slope_angle: f32,
+    /// Maximum height of a step the character can auto-climb.
     pub step_height: f32,
+    /// Downward acceleration when airborne (m/s^2).
     pub gravity: f32,
+    /// Initial upward velocity applied on jump.
     pub jump_speed: f32,
+    /// Grace period (seconds) after leaving ground during which jumping is still allowed.
     pub coyote_time: f32,
+    /// Whether the character is currently touching walkable ground.
     pub is_grounded: bool,
+    /// Normal of the ground surface beneath the character.
     pub ground_normal: Vec3,
+    /// Current velocity (set externally for horizontal movement; Y managed by gravity/jump).
     pub velocity: Vec3,
+    /// Remaining coyote time (counts down when airborne after being grounded).
     pub coyote_timer: f32,
 }
 impl CharacterController {
+    /// Create a character controller with sensible defaults for the given capsule size.
     pub fn new(capsule_radius: f32, capsule_height: f32) -> Self {
         Self {
             capsule_radius,
@@ -36,6 +61,7 @@ impl CharacterController {
             coyote_timer: 0.0,
         }
     }
+    /// Attempt to jump. Succeeds if grounded or within coyote time.
     pub fn jump(&mut self) {
         if self.is_grounded || self.coyote_timer > 0.0 {
             self.velocity.y = self.jump_speed;
@@ -43,6 +69,8 @@ impl CharacterController {
         }
     }
 }
+/// Per-frame character controller system: applies gravity, integrates position,
+/// probes for ground contact, and manages coyote time.
 pub fn character_controller_system(world: &mut World, dt: f32) {
     let entities: Vec<Entity> = {
         let q = Query::<(Entity, &CharacterController, &LocalTransform)>::new(world);

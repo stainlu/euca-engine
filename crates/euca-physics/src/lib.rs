@@ -1,9 +1,12 @@
+/// Capsule-based kinematic character controller with ground detection and coyote time.
 pub mod character;
 mod collision;
 mod components;
+/// Joint constraints (distance, ball-and-socket, revolute) connecting physics bodies.
 pub mod joints;
 mod raycast;
 mod systems;
+/// Raycast-based vehicle physics: suspension, tire forces, and drivetrain.
 pub mod vehicle;
 mod world;
 

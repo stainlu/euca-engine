@@ -10,20 +10,35 @@
 //! = a deathmatch game
 //! ```
 
+/// Cooldown-based abilities (Q/W/E/R) with mana costs and effects.
 pub mod abilities;
+/// AI behaviors and goal-driven entity logic.
 pub mod ai;
+/// Camera modes and follow systems.
 pub mod camera;
+/// Timed corpse/entity cleanup after death.
 pub mod cleanup;
+/// Projectiles and auto-PvP melee combat.
 pub mod combat;
+/// Tabular game data loaded from config files.
 pub mod data_table;
+/// Gold currency, bounties, and kill rewards.
 pub mod economy;
+/// Match lifecycle: lobby, countdown, playing, post-match.
 pub mod game_state;
+/// Hit points, damage events, death detection, and healing.
 pub mod health;
+/// Experience points, levels, and XP bounties.
 pub mod leveling;
+/// Player hero marker, command queue, and command execution.
 pub mod player;
+/// Mouse/keyboard input translation to player commands.
 pub mod player_input;
+/// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
+/// Team assignment, spawn points, and respawn timers.
 pub mod teams;
+/// Spatial trigger zones that fire actions on overlap.
 pub mod triggers;
 
 // Re-export key types at crate root for convenience
