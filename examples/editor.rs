@@ -1597,20 +1597,21 @@ impl ApplicationHandler for EditorApp {
                             let collider = world.get::<Collider>(e).cloned();
                             elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
                             world.despawn(e);
-                            despawned.push((*idx, transform, mesh, material, collider));
-                        }
-                    }
-                    if despawned.len() == 1 {
-                        let (idx, transform, mesh, material, collider) = despawned.remove(0);
-                        self.editor_state
-                            .undo
-                            .push(euca_editor::undo::UndoAction::DespawnEntity {
-                                entity_index: idx,
+                            despawned.push(euca_editor::undo::EntitySnapshot {
+                                entity_index: *idx,
                                 transform,
                                 mesh,
                                 material,
                                 collider,
                             });
+                        }
+                    }
+                    if despawned.len() == 1 {
+                        self.editor_state
+                            .undo
+                            .push(euca_editor::undo::UndoAction::DespawnEntity(
+                                despawned.remove(0),
+                            ));
                     } else if !despawned.is_empty() {
                         self.editor_state.undo.push(
                             euca_editor::undo::UndoAction::DespawnMultiple {

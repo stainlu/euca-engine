@@ -467,7 +467,7 @@ fn compute_world_positions(
             None => *entity_transform,
         };
 
-        world_transforms[i] = parent_transform.mul(local);
+        world_transforms[i] = parent_transform * local;
     }
 
     world_transforms.iter().map(|t| t.translation).collect()

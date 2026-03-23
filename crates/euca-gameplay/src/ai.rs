@@ -70,58 +70,64 @@ impl AiGoal {
 
 /// Evaluate AI goals and set velocity accordingly.
 pub fn ai_system(world: &mut World, _dt: f32) {
-    // Collect AI entities
-    #[allow(clippy::type_complexity)]
-    let ai_entities: Vec<(Entity, AiBehavior, Option<Entity>, Vec<Vec3>, usize, f32)> = {
+    // Collect AI entities — snapshot to release borrow on `world`.
+    struct AiSnapshot {
+        entity: Entity,
+        behavior: AiBehavior,
+        target: Option<Entity>,
+        waypoints: Vec<Vec3>,
+        waypoint_index: usize,
+        speed: f32,
+    }
+
+    let ai_entities: Vec<AiSnapshot> = {
         let query = Query::<(Entity, &AiGoal)>::new(world);
         query
             .iter()
-            .map(|(e, g)| {
-                (
-                    e,
-                    g.behavior.clone(),
-                    g.target,
-                    g.waypoints.clone(),
-                    g.waypoint_index,
-                    g.speed,
-                )
+            .map(|(e, g)| AiSnapshot {
+                entity: e,
+                behavior: g.behavior.clone(),
+                target: g.target,
+                waypoints: g.waypoints.clone(),
+                waypoint_index: g.waypoint_index,
+                speed: g.speed,
             })
             .collect()
     };
 
-    for (entity, behavior, target, waypoints, wp_idx, speed) in ai_entities {
-        let my_pos = match world.get::<LocalTransform>(entity) {
+    for ai in ai_entities {
+        let my_pos = match world.get::<LocalTransform>(ai.entity) {
             Some(lt) => lt.0.translation,
             None => continue,
         };
 
-        let desired_velocity = match behavior {
+        let desired_velocity = match ai.behavior {
             AiBehavior::Idle => Vec3::ZERO,
             AiBehavior::Patrol => {
-                if waypoints.is_empty() {
+                if ai.waypoints.is_empty() {
                     Vec3::ZERO
                 } else {
-                    let target_pos = waypoints[wp_idx % waypoints.len()];
+                    let target_pos = ai.waypoints[ai.waypoint_index % ai.waypoints.len()];
                     let to_target = target_pos - my_pos;
                     let dist = to_target.length();
                     if dist < 0.5 {
                         // Advance to next waypoint
-                        if let Some(goal) = world.get_mut::<AiGoal>(entity) {
-                            goal.waypoint_index = (wp_idx + 1) % waypoints.len();
+                        if let Some(goal) = world.get_mut::<AiGoal>(ai.entity) {
+                            goal.waypoint_index = (ai.waypoint_index + 1) % ai.waypoints.len();
                         }
                         Vec3::ZERO
                     } else {
-                        to_target.normalize() * speed
+                        to_target.normalize() * ai.speed
                     }
                 }
             }
             AiBehavior::Chase => {
-                if let Some(target_entity) = target
+                if let Some(target_entity) = ai.target
                     && let Some(target_lt) = world.get::<LocalTransform>(target_entity)
                 {
                     let to_target = target_lt.0.translation - my_pos;
                     if to_target.length() > 1.0 {
-                        to_target.normalize() * speed
+                        to_target.normalize() * ai.speed
                     } else {
                         Vec3::ZERO
                     }
@@ -130,12 +136,12 @@ pub fn ai_system(world: &mut World, _dt: f32) {
                 }
             }
             AiBehavior::Flee => {
-                if let Some(target_entity) = target
+                if let Some(target_entity) = ai.target
                     && let Some(target_lt) = world.get::<LocalTransform>(target_entity)
                 {
                     let away = my_pos - target_lt.0.translation;
                     if away.length() < 10.0 {
-                        away.normalize() * speed
+                        away.normalize() * ai.speed
                     } else {
                         Vec3::ZERO
                     }
@@ -146,7 +152,7 @@ pub fn ai_system(world: &mut World, _dt: f32) {
         };
 
         // Set velocity (horizontal only, preserve Y for gravity)
-        if let Some(vel) = world.get_mut::<Velocity>(entity) {
+        if let Some(vel) = world.get_mut::<Velocity>(ai.entity) {
             vel.linear.x = desired_velocity.x;
             vel.linear.z = desired_velocity.z;
         }

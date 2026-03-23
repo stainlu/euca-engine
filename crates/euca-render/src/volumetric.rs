@@ -419,7 +419,11 @@ impl VolumetricFogPass {
         &self.fog_texture_sample_view
     }
 
-    /// The fog texture view (for external compositing).
+    /// The fog texture view for external compositing (sampling/filtering).
+    ///
+    /// Returns `fog_texture_sample_view` (the filterable view) rather than
+    /// the identically-named field `fog_texture_view` (the storage/render-target
+    /// view), because external consumers always need the sampling view.
     #[allow(clippy::misnamed_getters)]
     pub fn fog_texture_view(&self) -> &wgpu::TextureView {
         &self.fog_texture_sample_view
