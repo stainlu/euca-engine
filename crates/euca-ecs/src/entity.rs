@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 /// Uses generational indices to detect stale references:
 /// - `index`: slot in the entity array (reused after despawn)
 /// - `generation`: incremented each time the slot is recycled
+///
+/// # Examples
+///
+/// ```
+/// # use euca_ecs::{World, Entity};
+/// let mut world = World::new();
+/// let entity = world.spawn(42u32);
+///
+/// assert!(world.is_alive(entity));
+/// assert_eq!(entity.generation(), 0);
+///
+/// world.despawn(entity);
+/// assert!(!world.is_alive(entity));
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Entity {
     pub(crate) index: u32,

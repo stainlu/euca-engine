@@ -28,17 +28,25 @@ impl ComponentId {
     }
 }
 
-/// Runtime metadata about a component type.
+/// Runtime metadata about a registered component type.
+///
+/// Stored in [`ComponentStorage`] and indexed by [`ComponentId`]. Contains
+/// the type's memory layout, drop function, and storage strategy.
 #[derive(Clone, Debug)]
 pub struct ComponentInfo {
+    /// The unique identifier assigned to this component type.
     pub id: ComponentId,
+    /// The fully-qualified Rust type name (from `std::any::type_name`).
     pub name: &'static str,
+    /// Memory layout (size and alignment) of the component type.
     pub layout: Layout,
+    /// The `TypeId` of the component's Rust type.
     pub type_id: TypeId,
     /// Function pointer to drop a component value in place.
     pub(crate) drop_fn: Option<unsafe fn(*mut u8)>,
-    /// If true, this component is stored in a SparseSet instead of archetype columns.
-    /// Avoids archetype explosion for rarely-used components.
+    /// If `true`, this component is stored in a [`SparseSet`](crate::sparse::SparseSet)
+    /// instead of archetype columns, avoiding archetype explosion for
+    /// rarely-attached components.
     pub sparse: bool,
 }
 
@@ -47,7 +55,10 @@ unsafe fn drop_in_place<T>(ptr: *mut u8) {
     unsafe { std::ptr::drop_in_place(ptr as *mut T) };
 }
 
-/// Registry mapping Rust types to ComponentIds and metadata.
+/// Registry mapping Rust types to [`ComponentId`]s and their metadata.
+///
+/// Manages component registration and provides O(1) lookup from `TypeId`
+/// to `ComponentId`. Shared by all archetypes in a [`World`](crate::World).
 #[derive(Default)]
 pub struct ComponentStorage {
     /// Map from TypeId to ComponentId for fast lookup.

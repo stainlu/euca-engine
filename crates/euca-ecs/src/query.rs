@@ -10,9 +10,14 @@ use crate::world::World;
 // ── Component access tracking ──
 
 /// Describes how a query element accesses a specific component.
+///
+/// Used internally to validate that a query does not contain conflicting
+/// accesses (e.g., both `&T` and `&mut T` for the same component type).
 #[derive(Clone, Debug)]
 pub struct ComponentAccess {
+    /// The component type being accessed.
     pub component_id: ComponentId,
+    /// `true` if the access is mutable (`&mut T`), `false` for shared (`&T`).
     pub mutable: bool,
 }
 
@@ -97,23 +102,40 @@ pub(crate) fn new_query_cache_lock() -> RwLock<QueryCache> {
 
 // ── Query filters ──
 
-/// A filter that requires an entity to have a specific component.
+/// Query filter that requires an entity to have component `T`.
+///
+/// The component data is not fetched -- only its presence is checked.
+/// Use this when you need to filter by a component without reading it.
+///
+/// ```ignore
+/// // Iterate only entities that have both Position and Velocity
+/// let query = Query::<&Position, With<Velocity>>::new(&world);
+/// ```
 pub struct With<T: Component>(PhantomData<T>);
 
-/// A filter that requires an entity to NOT have a specific component.
+/// Query filter that excludes entities with component `T`.
+///
+/// ```ignore
+/// // Iterate entities with Position but without the Static marker
+/// let query = Query::<&Position, Without<Static>>::new(&world);
+/// ```
 pub struct Without<T: Component>(PhantomData<T>);
 
-/// Marker for change-detection queries. Use with `World::changed_entities::<T>(since_tick)`
-/// for efficient iteration of only modified entities.
+/// Marker type for change-detection queries (reserved for future use).
 ///
-/// Per-entity change detection is available via `world.get_change_tick::<T>(entity)`.
-/// Field-level granularity requires wrapper types (future work).
+/// Currently, change detection is done via [`World::changed_entities`] and
+/// [`World::get_change_tick`]. This marker exists as a placeholder for
+/// future integration as a query filter.
 #[allow(dead_code)]
 pub struct Changed<T: Component>(PhantomData<T>);
 
-/// Trait for query filters.
+/// Trait for query filters that restrict which archetypes a query matches.
+///
+/// Implemented for `()` (no filter), [`With<T>`], [`Without<T>`], and
+/// tuples of up to 8 filters. All filters in a tuple must match for the
+/// archetype to be included.
 pub trait QueryFilter {
-    /// Check if an archetype matches this filter.
+    /// Returns `true` if the given archetype passes this filter.
     fn matches(world: &World, archetype: &Archetype) -> bool;
 }
 
@@ -142,10 +164,38 @@ impl<T: Component> QueryFilter for Without<T> {
 
 // ── Query ──
 
-/// Type-safe query over the world.
+/// Type-safe query over the world's entities and components.
 ///
-/// Supports both immutable (`&T`) and mutable (`&mut T`) component access.
-/// Panics at creation time if the same component is accessed both mutably and immutably.
+/// Supports both immutable (`&T`) and mutable (`&mut T`) component access,
+/// optional filters (`With<T>`, `Without<T>`), and tuple queries for
+/// accessing multiple components simultaneously.
+///
+/// Panics at creation time if the same component is accessed both mutably
+/// and immutably (aliasing violation).
+///
+/// # Examples
+///
+/// ```
+/// # use euca_ecs::{World, Query, Entity, With, Without};
+/// # #[derive(Debug, Clone, PartialEq)] struct Position { x: f32, y: f32 }
+/// # #[derive(Debug, Clone, PartialEq)] struct Velocity { dx: f32, dy: f32 }
+/// # #[derive(Debug, Clone, PartialEq)] struct Static;
+/// let mut world = World::new();
+/// let e = world.spawn(Position { x: 0.0, y: 0.0 });
+/// world.insert(e, Velocity { dx: 1.0, dy: 2.0 });
+///
+/// // Query a single component
+/// let query = Query::<&Position>::new(&world);
+/// for pos in query.iter() {
+///     println!("pos: ({}, {})", pos.x, pos.y);
+/// }
+///
+/// // Query multiple components with a filter
+/// let query = Query::<(Entity, &Position, &Velocity)>::new(&world);
+/// for (entity, pos, vel) in query.iter() {
+///     println!("{entity}: pos=({}, {}), vel=({}, {})", pos.x, pos.y, vel.dx, vel.dy);
+/// }
+/// ```
 pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
     world: &'w World,
     /// Cached matching archetype indices, valid when `cache_generation` matches world.
@@ -272,7 +322,11 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     }
 }
 
-/// Iterator over query results. Uses cached archetype indices to skip non-matching archetypes.
+/// Iterator over query results.
+///
+/// Produced by [`Query::iter`]. Walks matching archetypes in order,
+/// yielding one item per entity. Uses cached archetype indices to skip
+/// non-matching archetypes.
 pub struct QueryIter<'w, Q: WorldQuery, F: QueryFilter> {
     world: &'w World,
     matching_archetypes: Vec<usize>,
@@ -314,12 +368,18 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
 
 /// Trait for query fetch parameters (what data to extract from matching archetypes).
 ///
+/// Implemented for `Entity`, `&T`, `&mut T`, and tuples of up to 8 elements.
+/// Each implementation defines how to check archetype compatibility, declare
+/// access patterns, and fetch data from a matched archetype row.
+///
 /// # Safety
 /// Implementations must correctly fetch data matching the component type and
 /// respect aliasing rules (no overlapping mutable references).
 pub unsafe trait WorldQuery {
+    /// The type yielded for each matched entity.
     type Item<'w>;
 
+    /// Returns `true` if the given archetype contains the required components.
     fn matches_archetype(world: &World, archetype: &Archetype) -> bool;
 
     /// Return the component accesses for this query element.
