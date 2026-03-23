@@ -1,5 +1,10 @@
+mod commands;
+
 use clap::{Parser, Subcommand};
 use serde_json::Value;
+
+use commands::asset::AssetCommands;
+use commands::entity::EntityCommands;
 
 #[derive(Parser)]
 #[command(
@@ -7,7 +12,8 @@ use serde_json::Value;
     about = "Euca Engine CLI — control the engine from the terminal",
     after_help = "Examples:\n  euca entity create --mesh cube --position 0,2,0 --health 100 --team 1 --color red\n  euca rule create --when death --filter team:2 --do-action \"score source +1\"\n  euca sim play\n  euca screenshot"
 )]
-struct Cli {
+// `pub(crate)` so that `commands::discover` can call `Cli::command()` via `CommandFactory`.
+pub(crate) struct Cli {
     /// Server URL
     #[arg(short, long, default_value = "http://localhost:3917")]
     server: String,
@@ -255,146 +261,6 @@ enum Commands {
     },
     #[command(hide = true)]
     Reset,
-}
-
-#[derive(Subcommand)]
-enum EntityCommands {
-    /// List all entities
-    List {
-        /// Filter by component type (e.g. "MeshRenderer")
-        #[arg(short, long)]
-        filter: Option<String>,
-    },
-    /// Get a single entity by ID
-    Get {
-        /// Entity ID
-        id: u32,
-    },
-    /// Create a new entity
-    Create {
-        /// Mesh: "cube", "sphere", "plane", "cylinder", "cone"
-        #[arg(short, long)]
-        mesh: Option<String>,
-        /// Color: name ("red", "gold") or RGB ("0.5,0.2,0.8")
-        #[arg(short, long)]
-        color: Option<String>,
-        /// Position as "x,y,z"
-        #[arg(short, long)]
-        position: Option<String>,
-        /// Scale as "x,y,z"
-        #[arg(long)]
-        scale: Option<String>,
-        /// Physics body type: Dynamic, Static, Kinematic
-        #[arg(long)]
-        physics: Option<String>,
-        /// Collider: "aabb:hx,hy,hz" or "sphere:radius" or "capsule:radius,half_height"
-        #[arg(long)]
-        collider: Option<String>,
-        /// Initial health (adds Health component)
-        #[arg(long)]
-        health: Option<f32>,
-        /// Team ID (adds Team component)
-        #[arg(long)]
-        team: Option<u8>,
-        /// Enable auto-combat (detect enemies, chase, attack)
-        #[arg(long)]
-        combat: bool,
-        /// Combat damage per hit
-        #[arg(long)]
-        combat_damage: Option<f32>,
-        /// Combat attack range
-        #[arg(long)]
-        combat_range: Option<f32>,
-        /// Combat chase speed (0 for stationary)
-        #[arg(long)]
-        combat_speed: Option<f32>,
-        /// Combat attack cooldown (seconds)
-        #[arg(long)]
-        combat_cooldown: Option<f32>,
-        /// Combat style: "melee" (default) or "stationary" (towers)
-        #[arg(long)]
-        combat_style: Option<String>,
-        /// AI patrol waypoints as "x,y,z:x,y,z:x,y,z"
-        #[arg(long)]
-        ai_patrol: Option<String>,
-        /// Starting gold
-        #[arg(long)]
-        gold: Option<i32>,
-        /// Gold bounty on death
-        #[arg(long)]
-        gold_bounty: Option<i32>,
-        /// XP bounty on death
-        #[arg(long)]
-        xp_bounty: Option<u32>,
-        /// Entity role: hero, minion, tower, structure
-        #[arg(long)]
-        role: Option<String>,
-        /// Spawn point for team (marks as respawn location)
-        #[arg(long)]
-        spawn_point: Option<u8>,
-        /// Mark as player-controlled hero
-        #[arg(long)]
-        player: bool,
-        /// Full JSON body (overrides other flags)
-        #[arg(long)]
-        json: Option<String>,
-        /// Preview without creating
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Update an entity's components
-    Update {
-        /// Entity ID
-        id: u32,
-        /// Color: name ("red", "gold") or RGB ("0.5,0.2,0.8")
-        #[arg(short, long)]
-        color: Option<String>,
-        /// Position as "x,y,z"
-        #[arg(short, long)]
-        position: Option<String>,
-        /// Scale as "x,y,z"
-        #[arg(long)]
-        scale: Option<String>,
-        /// Linear velocity as "x,y,z"
-        #[arg(long)]
-        velocity: Option<String>,
-        /// Physics body type: Dynamic, Static, Kinematic
-        #[arg(long)]
-        physics: Option<String>,
-        /// Collider: "aabb:hx,hy,hz" or "sphere:radius"
-        #[arg(long)]
-        collider: Option<String>,
-        /// Full JSON patch (overrides other flags)
-        #[arg(long)]
-        json: Option<String>,
-        /// Preview without updating
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Delete an entity
-    Delete {
-        /// Entity ID (omit with --all to delete everything)
-        id: Option<u32>,
-        /// Delete all entities
-        #[arg(long)]
-        all: bool,
-    },
-    /// Apply damage to an entity
-    Damage {
-        /// Entity ID
-        id: u32,
-        /// Damage amount
-        #[arg(long)]
-        amount: f32,
-    },
-    /// Heal an entity
-    Heal {
-        /// Entity ID
-        id: u32,
-        /// Heal amount
-        #[arg(long)]
-        amount: f32,
-    },
 }
 
 #[derive(Subcommand)]
@@ -955,37 +821,9 @@ enum FogCommands {
     },
 }
 
-#[derive(Subcommand)]
-enum AssetCommands {
-    /// Show metadata about a glTF/glb asset file
-    Info {
-        /// Path to the asset file (.gltf or .glb)
-        file: String,
-    },
-    /// Run mesh optimization: dedup vertices, compute tangents, reorder for GPU cache
-    Optimize {
-        /// Input asset file (.gltf or .glb)
-        input: String,
-        /// Output stats file (JSON)
-        #[arg(short, long)]
-        output: Option<String>,
-    },
-    /// Generate LOD (Level of Detail) chain from a mesh
-    Lod {
-        /// Input asset file (.gltf or .glb)
-        input: String,
-        /// Output stats file (JSON)
-        #[arg(short, long)]
-        output: Option<String>,
-        /// Number of LOD levels to generate
-        #[arg(short, long, default_value = "4")]
-        levels: usize,
-    },
-}
-
 // ── Helpers ──
 
-fn parse_vec3(s: &str) -> Option<[f32; 3]> {
+pub(crate) fn parse_vec3(s: &str) -> Option<[f32; 3]> {
     let parts: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
     if parts.len() == 3 {
         Some([parts[0], parts[1], parts[2]])
@@ -1025,7 +863,7 @@ fn parse_collider(s: &str) -> Option<Value> {
 
 /// Build a spawn/create JSON body from friendly flags.
 #[allow(clippy::too_many_arguments)]
-fn build_create_body(
+pub(crate) fn build_create_body(
     mesh: &Option<String>,
     color: &Option<String>,
     position: &Option<String>,
@@ -1135,7 +973,7 @@ fn build_create_body(
 }
 
 /// Build an update/patch JSON body from friendly flags.
-fn build_update_body(
+pub(crate) fn build_update_body(
     color: &Option<String>,
     position: &Option<String>,
     scale: &Option<String>,
@@ -1178,7 +1016,7 @@ fn build_update_body(
 }
 
 /// Parse --json flag or exit.
-fn parse_json_flag(raw: &str) -> Value {
+pub(crate) fn parse_json_flag(raw: &str) -> Value {
     match serde_json::from_str::<Value>(raw) {
         Ok(v) => v,
         Err(e) => {
@@ -1200,141 +1038,7 @@ fn main() {
 
     let result = match cli.command {
         // ── Entity CRUD ──
-        Commands::Entity { command } => match command {
-            EntityCommands::List { filter: _filter } => {
-                let resp = client
-                    .post(format!("{server}/observe"))
-                    .header("Content-Type", "application/json")
-                    .body("{}")
-                    .send();
-                handle_response(resp)
-            }
-            EntityCommands::Get { id } => {
-                let resp = client.get(format!("{server}/entities/{id}")).send();
-                handle_response(resp)
-            }
-            EntityCommands::Create {
-                mesh,
-                color,
-                position,
-                scale,
-                physics,
-                collider,
-                health,
-                team,
-                combat,
-                combat_damage,
-                combat_range,
-                combat_speed,
-                combat_cooldown,
-                combat_style,
-                ai_patrol,
-                gold,
-                gold_bounty,
-                xp_bounty,
-                role,
-                spawn_point,
-                player,
-                json,
-                dry_run,
-            } => {
-                let body = if let Some(ref raw) = json {
-                    parse_json_flag(raw)
-                } else {
-                    build_create_body(
-                        &mesh,
-                        &color,
-                        &position,
-                        &scale,
-                        &physics,
-                        &collider,
-                        health,
-                        team,
-                        combat,
-                        combat_damage,
-                        combat_range,
-                        combat_speed,
-                        combat_cooldown,
-                        &combat_style,
-                        &ai_patrol,
-                        gold,
-                        gold_bounty,
-                        xp_bounty,
-                        &role,
-                        spawn_point,
-                        player,
-                    )
-                };
-                if dry_run {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&body).expect("JSON serialization failed")
-                    );
-                    println!("(dry-run: not created)");
-                    Ok(())
-                } else {
-                    let resp = client.post(format!("{server}/spawn")).json(&body).send();
-                    handle_response(resp)
-                }
-            }
-            EntityCommands::Update {
-                id,
-                color,
-                position,
-                scale,
-                velocity,
-                physics,
-                collider,
-                json,
-                dry_run,
-            } => {
-                let body = if let Some(ref raw) = json {
-                    parse_json_flag(raw)
-                } else {
-                    build_update_body(&color, &position, &scale, &velocity, &physics, &collider)
-                };
-                if dry_run {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&body).expect("JSON serialization failed")
-                    );
-                    println!("(dry-run: entity {id} not updated)");
-                    Ok(())
-                } else {
-                    let resp = client
-                        .post(format!("{server}/entities/{id}/components"))
-                        .json(&body)
-                        .send();
-                    handle_response(resp)
-                }
-            }
-            EntityCommands::Delete { id, all } => {
-                if all {
-                    post_empty(&client, server, "/reset")
-                } else if let Some(id) = id {
-                    let body = serde_json::json!({"entity_id": id, "entity_generation": 0});
-                    let resp = client.post(format!("{server}/despawn")).json(&body).send();
-                    handle_response(resp)
-                } else {
-                    eprintln!("Specify an entity ID or use --all");
-                    std::process::exit(1);
-                }
-            }
-            EntityCommands::Damage { id, amount } => {
-                let resp = client
-                    .post(format!("{server}/entity/damage"))
-                    .json(&serde_json::json!({"entity_id": id, "amount": amount}))
-                    .send();
-                handle_response(resp)
-            }
-            EntityCommands::Heal { id, amount } => {
-                let resp = client
-                    .post(format!("{server}/entity/heal"))
-                    .json(&serde_json::json!({"entity_id": id, "amount": amount}))
-                    .send();
-                handle_response(resp)
-            }
-        },
+        Commands::Entity { command } => commands::entity::run_entity(command, &client, server),
 
         // ── Simulation ──
         Commands::Sim { command } => match command {
@@ -1408,7 +1112,6 @@ fn main() {
             }
         },
 
-        // ── Auth ──
         // ── Gameplay ──
         Commands::Game { command } => match command {
             GameCommands::Create { mode, score_limit } => {
@@ -2059,17 +1762,17 @@ fn main() {
         }
 
         Commands::Package { project, output } => {
-            package_game(&project, &output);
+            commands::package::package_game(&project, &output);
             Ok(())
         }
 
         Commands::Discover { json, group } => {
-            run_discover(json, group.as_deref());
+            commands::discover::run_discover(json, group.as_deref());
             Ok(())
         }
 
         Commands::Asset { command } => {
-            run_asset(command);
+            commands::asset::run_asset(command);
             Ok(())
         }
 
@@ -2150,7 +1853,11 @@ fn main() {
 
 // ── Shared request helpers ──
 
-fn post_empty(client: &reqwest::blocking::Client, server: &str, path: &str) -> Result<(), String> {
+pub(crate) fn post_empty(
+    client: &reqwest::blocking::Client,
+    server: &str,
+    path: &str,
+) -> Result<(), String> {
     let resp = client
         .post(format!("{server}{path}"))
         .header("Content-Type", "application/json")
@@ -2159,7 +1866,7 @@ fn post_empty(client: &reqwest::blocking::Client, server: &str, path: &str) -> R
     handle_response(resp)
 }
 
-fn handle_response(
+pub(crate) fn handle_response(
     resp: Result<reqwest::blocking::Response, reqwest::Error>,
 ) -> Result<(), String> {
     let resp = resp.map_err(|e| e.to_string())?;
@@ -2297,511 +2004,6 @@ fn run_auth(
         AuthCommands::Status => {
             let resp = client.get(format!("{server}/auth/status")).send();
             handle_response(resp)
-        }
-    }
-}
-
-/// Package a game project into a distributable folder.
-///
-/// Reads `.eucaproject.json`, copies the game binary, level files, and assets
-/// into the output directory.
-fn package_game(project_dir: &str, output_dir: &str) {
-    use std::path::Path;
-
-    let project_path = Path::new(project_dir).join(".eucaproject.json");
-    let project_data = match std::fs::read_to_string(&project_path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Cannot read project file {}: {e}", project_path.display());
-            eprintln!("Make sure .eucaproject.json exists in the project directory.");
-            std::process::exit(1);
-        }
-    };
-
-    let project: Value = match serde_json::from_str(&project_data) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Invalid project JSON: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let name = project
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("game");
-    let default_level = project
-        .get("default_level")
-        .and_then(|v| v.as_str())
-        .unwrap_or("level.json");
-    let levels_dir = project
-        .get("levels_dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("levels");
-    let assets_dir = project
-        .get("assets_dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("assets");
-
-    println!("Packaging: {name}");
-    println!("  Project: {}", project_path.display());
-    println!("  Output:  {output_dir}/");
-
-    // Create output directory
-    let out = Path::new(output_dir);
-    std::fs::create_dir_all(out).expect("Failed to create output directory");
-
-    // Copy project file
-    let dest_project = out.join(".eucaproject.json");
-    std::fs::copy(&project_path, &dest_project).expect("Failed to copy project file");
-    println!("  Copied .eucaproject.json");
-
-    // Copy default level
-    let src_level = Path::new(project_dir).join(default_level);
-    if src_level.exists() {
-        std::fs::copy(&src_level, out.join(default_level)).expect("Failed to copy default level");
-        println!("  Copied {default_level}");
-    } else {
-        eprintln!("  Warning: default level {default_level} not found");
-    }
-
-    // Copy levels directory
-    let src_levels = Path::new(project_dir).join(levels_dir);
-    if src_levels.is_dir() {
-        let dest_levels = out.join(levels_dir);
-        copy_dir_recursive(&src_levels, &dest_levels);
-        println!("  Copied {levels_dir}/");
-    }
-
-    // Copy assets directory
-    let src_assets = Path::new(project_dir).join(assets_dir);
-    if src_assets.is_dir() {
-        let dest_assets = out.join(assets_dir);
-        copy_dir_recursive(&src_assets, &dest_assets);
-        println!("  Copied {assets_dir}/");
-    }
-
-    // Find the game binary
-    let binary_name = if cfg!(target_os = "windows") {
-        "euca-game.exe"
-    } else {
-        "euca-game"
-    };
-
-    // Look for the binary in common cargo output locations
-    let binary_candidates = [
-        Path::new(project_dir)
-            .join("target/release")
-            .join(binary_name),
-        Path::new(project_dir)
-            .join("target/debug")
-            .join(binary_name),
-        Path::new("target/release").join(binary_name),
-        Path::new("target/debug").join(binary_name),
-    ];
-
-    let mut binary_copied = false;
-    for candidate in &binary_candidates {
-        if candidate.exists() {
-            let dest_name = if cfg!(target_os = "windows") {
-                format!("{name}.exe")
-            } else {
-                name.replace(' ', "-").to_lowercase()
-            };
-            let dest_binary = out.join(&dest_name);
-            std::fs::copy(candidate, &dest_binary).expect("Failed to copy game binary");
-
-            // Make executable on Unix
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&dest_binary)
-                    .expect("metadata")
-                    .permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&dest_binary, perms).expect("set permissions");
-            }
-
-            println!(
-                "  Copied binary: {dest_name} (from {})",
-                candidate.display()
-            );
-            binary_copied = true;
-            break;
-        }
-    }
-
-    if !binary_copied {
-        eprintln!(
-            "  Warning: game binary not found. Build first with: cargo build --release -p euca-game"
-        );
-    }
-
-    println!();
-    println!("Package complete: {}/", out.display());
-    if binary_copied {
-        let run_name = name.replace(' ', "-").to_lowercase();
-        println!("Run with: cd {} && ./{}", out.display(), run_name);
-    }
-}
-
-// ── Asset Pipeline: offline file-processing tools ──
-
-fn run_asset(command: AssetCommands) {
-    match command {
-        AssetCommands::Info { file } => run_asset_info(&file),
-        AssetCommands::Optimize { input, output } => run_asset_optimize(&input, output.as_deref()),
-        AssetCommands::Lod {
-            input,
-            output,
-            levels,
-        } => run_asset_lod(&input, output.as_deref(), levels),
-    }
-}
-
-fn run_asset_info(file: &str) {
-    let scene = match euca_asset::load_gltf(file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to load asset: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut total_vertices: usize = 0;
-    let mut total_triangles: usize = 0;
-    let mut mesh_details = Vec::new();
-
-    for gm in &scene.meshes {
-        let verts = gm.mesh.vertices.len();
-        let tris = gm.mesh.indices.len() / 3;
-        total_vertices += verts;
-        total_triangles += tris;
-        mesh_details.push(serde_json::json!({
-            "name": gm.name.as_deref().unwrap_or("unnamed"),
-            "vertices": verts,
-            "triangles": tris,
-            "has_skin": gm.joint_indices.is_some(),
-        }));
-    }
-
-    let image_details: Vec<_> = scene
-        .images
-        .iter()
-        .enumerate()
-        .map(|(i, img)| {
-            serde_json::json!({
-                "index": i,
-                "width": img.width,
-                "height": img.height,
-                "size_bytes": img.pixels.len(),
-            })
-        })
-        .collect();
-
-    let info = serde_json::json!({
-        "file": file,
-        "mesh_count": scene.meshes.len(),
-        "total_vertices": total_vertices,
-        "total_triangles": total_triangles,
-        "has_skeleton": scene.skeleton.is_some(),
-        "animation_count": scene.animations.len(),
-        "texture_count": scene.images.len(),
-        "meshes": mesh_details,
-        "textures": image_details,
-    });
-
-    println!("{}", serde_json::to_string_pretty(&info).unwrap());
-}
-
-fn run_asset_optimize(input: &str, output: Option<&str>) {
-    let scene = match euca_asset::load_gltf(input) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to load asset: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut results = Vec::new();
-
-    for (i, gm) in scene.meshes.iter().enumerate() {
-        let name = gm.name.as_deref().unwrap_or("unnamed").to_string();
-        let before_verts = gm.mesh.vertices.len();
-        let before_tris = gm.mesh.indices.len() / 3;
-
-        let optimized = euca_asset::optimize_mesh(&gm.mesh);
-        let after_verts = optimized.vertices.len();
-        let after_tris = optimized.indices.len() / 3;
-
-        let dedup_ratio = if before_verts > 0 {
-            1.0 - (after_verts as f64 / before_verts as f64)
-        } else {
-            0.0
-        };
-
-        println!(
-            "  Mesh {i} \"{name}\": {before_verts} → {after_verts} vertices ({:.1}% reduction), {before_tris} → {after_tris} triangles",
-            dedup_ratio * 100.0,
-        );
-
-        results.push(serde_json::json!({
-            "name": name,
-            "vertices_before": before_verts,
-            "vertices_after": after_verts,
-            "triangles_before": before_tris,
-            "triangles_after": after_tris,
-            "dedup_ratio": format!("{:.3}", dedup_ratio),
-        }));
-    }
-
-    let stats = serde_json::json!({
-        "file": input,
-        "operation": "optimize",
-        "meshes": results,
-    });
-
-    if let Some(out_path) = output {
-        let json = serde_json::to_string_pretty(&stats).unwrap();
-        std::fs::write(out_path, json).expect("Failed to write stats file");
-        println!("  Stats written to {out_path}");
-    }
-}
-
-fn run_asset_lod(input: &str, output: Option<&str>, levels: usize) {
-    let scene = match euca_asset::load_gltf(input) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to load asset: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    // Generate LOD ratios: 1.0, 0.5, 0.25, 0.125, ... for `levels` levels
-    let ratios: Vec<f32> = (0..levels).map(|i| 1.0 / (1 << i) as f32).collect();
-
-    let mut results = Vec::new();
-
-    for (i, gm) in scene.meshes.iter().enumerate() {
-        let name = gm.name.as_deref().unwrap_or("unnamed").to_string();
-
-        let lod_chain = euca_asset::generate_lod_chain(&gm.mesh, &ratios);
-
-        println!("  Mesh {i} \"{name}\":");
-        let mut lod_details = Vec::new();
-        for (level, lod_mesh) in lod_chain.iter().enumerate() {
-            let verts = lod_mesh.vertices.len();
-            let tris = lod_mesh.indices.len() / 3;
-            let ratio = ratios[level];
-            println!(
-                "    LOD {level}: {verts} vertices, {tris} triangles (target {:.0}%)",
-                ratio * 100.0
-            );
-            lod_details.push(serde_json::json!({
-                "level": level,
-                "target_ratio": ratio,
-                "vertices": verts,
-                "triangles": tris,
-            }));
-        }
-
-        results.push(serde_json::json!({
-            "name": name,
-            "lod_levels": lod_details,
-        }));
-    }
-
-    let stats = serde_json::json!({
-        "file": input,
-        "operation": "lod",
-        "levels": levels,
-        "ratios": ratios,
-        "meshes": results,
-    });
-
-    if let Some(out_path) = output {
-        let json = serde_json::to_string_pretty(&stats).unwrap();
-        std::fs::write(out_path, json).expect("Failed to write stats file");
-        println!("  Stats written to {out_path}");
-    }
-}
-
-// ── Discover: self-describing CLI for AI agents ──
-
-/// Commands that work offline (no engine running).
-const OFFLINE_COMMANDS: &[&str] = &["package", "asset", "discover"];
-
-#[derive(serde::Serialize)]
-struct CommandManifest {
-    version: String,
-    groups: Vec<GroupEntry>,
-}
-
-#[derive(serde::Serialize)]
-struct GroupEntry {
-    name: String,
-    description: String,
-    requires_engine: bool,
-    commands: Vec<CommandEntry>,
-}
-
-#[derive(serde::Serialize)]
-struct CommandEntry {
-    name: String,
-    description: String,
-    args: Vec<ArgEntry>,
-}
-
-#[derive(serde::Serialize)]
-struct ArgEntry {
-    name: String,
-    #[serde(rename = "type")]
-    arg_type: String,
-    required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    default: Option<String>,
-    description: String,
-}
-
-fn run_discover(json: bool, group_filter: Option<&str>) {
-    use clap::CommandFactory;
-    let cmd = Cli::command();
-    let version = cmd.get_version().unwrap_or("0.4.0");
-
-    let mut groups: Vec<GroupEntry> = Vec::new();
-
-    for sub in cmd.get_subcommands() {
-        let name = sub.get_name().to_string();
-
-        // Skip hidden commands
-        if sub.is_hide_set() {
-            continue;
-        }
-
-        // Apply group filter
-        if let Some(filter) = group_filter
-            && !name.contains(filter)
-        {
-            continue;
-        }
-
-        let description = sub.get_about().map(|s| s.to_string()).unwrap_or_default();
-        let requires_engine = !OFFLINE_COMMANDS.contains(&name.as_str());
-
-        let mut commands = Vec::new();
-        let sub_subs: Vec<_> = sub.get_subcommands().collect();
-        if sub_subs.is_empty() {
-            // Leaf command (e.g., profile, status)
-            commands.push(CommandEntry {
-                name: name.clone(),
-                description: description.clone(),
-                args: collect_args(sub),
-            });
-        } else {
-            for child in sub_subs {
-                if child.is_hide_set() {
-                    continue;
-                }
-                commands.push(CommandEntry {
-                    name: child.get_name().to_string(),
-                    description: child.get_about().map(|s| s.to_string()).unwrap_or_default(),
-                    args: collect_args(child),
-                });
-            }
-        }
-
-        groups.push(GroupEntry {
-            name,
-            description,
-            requires_engine,
-            commands,
-        });
-    }
-
-    if json {
-        let manifest = CommandManifest {
-            version: version.to_string(),
-            groups,
-        };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&manifest).expect("JSON serialization failed")
-        );
-    } else {
-        println!("Euca Engine CLI v{version}\n");
-        if group_filter.is_some() && groups.len() == 1 {
-            // Detailed view for a single group
-            let g = &groups[0];
-            let online = if g.requires_engine {
-                "requires engine"
-            } else {
-                "offline"
-            };
-            println!("  {} — {} ({})\n", g.name, g.description, online);
-            for cmd in &g.commands {
-                println!("    {} — {}", cmd.name, cmd.description);
-                for arg in &cmd.args {
-                    let req = if arg.required { " (required)" } else { "" };
-                    let def = arg
-                        .default
-                        .as_ref()
-                        .map(|d| format!(" [default: {d}]"))
-                        .unwrap_or_default();
-                    println!("      --{}: {}{}{}", arg.name, arg.arg_type, req, def);
-                }
-            }
-        } else {
-            // Overview of all groups
-            for g in &groups {
-                let online = if g.requires_engine { "" } else { " (offline)" };
-                println!("  {:<14} {}{}", g.name, g.description, online);
-            }
-            println!();
-            println!("Use --json for machine-readable output.");
-            println!("Use `euca discover <group>` to see group details.");
-        }
-    }
-}
-
-fn collect_args(cmd: &clap::Command) -> Vec<ArgEntry> {
-    cmd.get_arguments()
-        .filter(|a| a.get_id() != "help" && a.get_id() != "version")
-        .map(|a| {
-            let name = a.get_id().to_string();
-            let arg_type = if a.get_action().takes_values() {
-                "string".to_string()
-            } else {
-                "flag".to_string()
-            };
-            let required = a.is_required_set();
-            let default = a
-                .get_default_values()
-                .first()
-                .map(|v| v.to_string_lossy().to_string());
-            let description = a.get_help().map(|s| s.to_string()).unwrap_or_default();
-            ArgEntry {
-                name,
-                arg_type,
-                required,
-                default,
-                description,
-            }
-        })
-        .collect()
-}
-
-/// Recursively copy a directory.
-fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
-    std::fs::create_dir_all(dst).expect("Failed to create directory");
-    if let Ok(entries) = std::fs::read_dir(src) {
-        for entry in entries.flatten() {
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-            if src_path.is_dir() {
-                copy_dir_recursive(&src_path, &dst_path);
-            } else {
-                std::fs::copy(&src_path, &dst_path).expect("Failed to copy file");
-            }
         }
     }
 }
