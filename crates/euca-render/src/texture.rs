@@ -143,6 +143,9 @@ impl TextureStore {
     /// For compressed formats, the data must already be block-compressed.
     /// No mip generation is performed — provide all mip levels in `data`.
     /// `bytes_per_row` must account for block size (e.g., BC7 = ceil(w/4)*16).
+    // clippy::too_many_arguments — GPU texture upload requires device, queue,
+    // dimensions, format, data, and bytes_per_row; all are independent
+    // parameters dictated by the wgpu API.
     #[allow(clippy::too_many_arguments)]
     pub fn upload_compressed(
         &mut self,

@@ -119,8 +119,8 @@ impl Stage {
                 .filter(|i| !order.contains(i))
                 .map(|i| self.systems[i].name().to_string())
                 .collect();
-            eprintln!(
-                "[WARN] System dependency cycle detected involving: {:?}. \
+            log::warn!(
+                "System dependency cycle detected involving: {:?}. \
                  These systems will run in declaration order.",
                 unresolved
             );
@@ -591,8 +591,8 @@ impl ParallelSchedule {
                 .filter(|i| !order.contains(i))
                 .map(|i| self.systems[i].name.clone())
                 .collect();
-            eprintln!(
-                "[WARN] ParallelSchedule: dependency cycle detected involving: {:?}. \
+            log::warn!(
+                "ParallelSchedule: dependency cycle detected involving: {:?}. \
                  Falling back to declaration order for these systems.",
                 unresolved
             );

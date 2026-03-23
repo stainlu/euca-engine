@@ -14,7 +14,33 @@ pub(crate) struct EntityLocation {
     pub row: usize,
 }
 
-/// The ECS world: owns all entities, components, and archetypes.
+/// The ECS world: owns all entities, components, archetypes, resources, and events.
+///
+/// The `World` is the central data structure of the ECS. All entity and
+/// component operations go through it. Supports change detection via
+/// per-component tick tracking and both dense (archetype) and sparse
+/// (`SparseSet`) component storage.
+///
+/// # Examples
+///
+/// ```
+/// # use euca_ecs::World;
+/// # #[derive(Debug, PartialEq)] struct Position { x: f32, y: f32 }
+/// # #[derive(Debug, PartialEq)] struct Velocity { dx: f32, dy: f32 }
+/// let mut world = World::new();
+///
+/// // Spawn entities with components
+/// let entity = world.spawn(Position { x: 0.0, y: 0.0 });
+/// world.insert(entity, Velocity { dx: 1.0, dy: 2.0 });
+///
+/// // Read and modify components
+/// assert_eq!(world.get::<Position>(entity).unwrap().x, 0.0);
+/// world.get_mut::<Position>(entity).unwrap().x = 10.0;
+///
+/// // Use resources for global state
+/// world.insert_resource(42u32);
+/// assert_eq!(*world.resource::<u32>().unwrap(), 42);
+/// ```
 pub struct World {
     pub(crate) entities: EntityAllocator,
     pub(crate) components: ComponentStorage,

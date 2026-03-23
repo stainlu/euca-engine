@@ -454,6 +454,9 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
 
 /// Apply impulse-based velocity response between two colliding bodies.
 /// Uses mass-weighted impulse distribution.
+// clippy::too_many_arguments — all parameters come from the two colliding
+// bodies and the contact manifold; bundling them into a struct would add
+// a throwaway allocation per collision pair with no clarity gain.
 #[allow(clippy::too_many_arguments)]
 fn apply_velocity_response(
     world: &mut World,

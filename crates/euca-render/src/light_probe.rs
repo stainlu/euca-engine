@@ -54,6 +54,17 @@ impl LightProbe {
     }
 }
 
+/// GPU-ready packed probe data returned by [`LightProbeGrid::pack_nearest`].
+#[derive(Clone, Debug)]
+pub struct PackedProbes {
+    /// Probe positions (xyz + padding).
+    pub positions: Vec<[f32; 4]>,
+    /// SH coefficients per probe, padded to `[f32; 4]` per band.
+    pub sh_coefficients: Vec<[[f32; 4]; 9]>,
+    /// Inverse-distance interpolation weights (normalized).
+    pub weights: Vec<f32>,
+}
+
 /// Grid of baked light probes for a region of the scene.
 #[derive(Clone, Debug)]
 pub struct LightProbeGrid {
@@ -84,15 +95,13 @@ impl LightProbeGrid {
     }
 
     /// Pack the N nearest probes into GPU-ready format.
-    /// Returns (positions, sh_coefficients, weights, count).
-    #[allow(clippy::type_complexity)]
-    pub fn pack_nearest(
-        &self,
-        world_pos: Vec3,
-        max_probes: usize,
-    ) -> (Vec<[f32; 4]>, Vec<[[f32; 4]; 9]>, Vec<f32>) {
+    pub fn pack_nearest(&self, world_pos: Vec3, max_probes: usize) -> PackedProbes {
         if self.probes.is_empty() {
-            return (Vec::new(), Vec::new(), Vec::new());
+            return PackedProbes {
+                positions: Vec::new(),
+                sh_coefficients: Vec::new(),
+                weights: Vec::new(),
+            };
         }
 
         // Sort by distance
@@ -130,7 +139,11 @@ impl LightProbeGrid {
             weights.push(w);
         }
 
-        (positions, sh_data, weights)
+        PackedProbes {
+            positions,
+            sh_coefficients: sh_data,
+            weights,
+        }
     }
 }
 

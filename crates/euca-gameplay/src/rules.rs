@@ -358,42 +358,41 @@ pub fn health_below_rule_system(world: &mut World) {
             .collect()
     };
 
-    // Collect rules
-    #[allow(clippy::type_complexity)]
-    let rules: Vec<(
-        Entity,
-        RuleFilter,
-        f32,
-        std::collections::HashSet<u32>,
-        Arc<Vec<GameAction>>,
-    )> = {
+    // Collect rules — snapshot into a vec to release the borrow on `world`.
+    struct RuleSnapshot {
+        entity: Entity,
+        filter: RuleFilter,
+        threshold: f32,
+        triggered: std::collections::HashSet<u32>,
+        actions: Arc<Vec<GameAction>>,
+    }
+
+    let rules: Vec<RuleSnapshot> = {
         let query = Query::<(Entity, &HealthBelowRule)>::new(world);
         query
             .iter()
-            .map(|(e, r)| {
-                (
-                    e,
-                    r.filter,
-                    r.threshold,
-                    r.triggered_entities.clone(),
-                    Arc::clone(&r.actions),
-                )
+            .map(|(e, r)| RuleSnapshot {
+                entity: e,
+                filter: r.filter,
+                threshold: r.threshold,
+                triggered: r.triggered_entities.clone(),
+                actions: Arc::clone(&r.actions),
             })
             .collect()
     };
 
-    for (rule_entity, filter, threshold, triggered, actions) in &rules {
+    for rule in &rules {
         for (entity, current_health) in &low_health {
-            if *current_health < *threshold
-                && !triggered.contains(&entity.index())
-                && filter.matches(*entity, world)
+            if *current_health < rule.threshold
+                && !rule.triggered.contains(&entity.index())
+                && rule.filter.matches(*entity, world)
             {
-                for action in actions.iter() {
+                for action in rule.actions.iter() {
                     execute_action(world, action, *entity, None);
                 }
                 // Mark as triggered
-                if let Some(rule) = world.get_mut::<HealthBelowRule>(*rule_entity) {
-                    rule.triggered_entities.insert(entity.index());
+                if let Some(health_rule) = world.get_mut::<HealthBelowRule>(rule.entity) {
+                    health_rule.triggered_entities.insert(entity.index());
                 }
             }
         }

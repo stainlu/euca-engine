@@ -585,6 +585,9 @@ impl PostProcessStack {
     ///
     /// Assumes the scene has been rendered with MSAA resolved into `self.ping_view()`,
     /// and if SSAO is enabled, `self.depth_resolve_view` contains the resolved depth.
+    // clippy::too_many_arguments — post-processing requires GPU context,
+    // encoder, output view, settings, and camera matrices; all are distinct
+    // per-frame parameters from different ECS resources.
     #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &self,

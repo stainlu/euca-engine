@@ -4,6 +4,16 @@ use euca_physics::Collider;
 use euca_render::{MaterialHandle, MaterialRef, MeshHandle, MeshRenderer};
 use euca_scene::{GlobalTransform, LocalTransform};
 
+/// Snapshot of an entity's components, stored for undo/redo respawn.
+#[derive(Clone, Debug)]
+pub struct EntitySnapshot {
+    pub entity_index: u32,
+    pub transform: Transform,
+    pub mesh: Option<MeshHandle>,
+    pub material: Option<MaterialHandle>,
+    pub collider: Option<Collider>,
+}
+
 /// A reversible editor action.
 #[derive(Clone, Debug)]
 pub enum UndoAction {
@@ -16,26 +26,11 @@ pub enum UndoAction {
     /// An entity was spawned.
     SpawnEntity { entity_index: u32 },
     /// An entity was despawned — stores data to re-create it.
-    DespawnEntity {
-        entity_index: u32,
-        transform: Transform,
-        mesh: Option<MeshHandle>,
-        material: Option<MaterialHandle>,
-        collider: Option<Collider>,
-    },
+    DespawnEntity(EntitySnapshot),
     /// Multiple entities were spawned at once (e.g. paste).
     SpawnMultiple { entity_indices: Vec<u32> },
     /// Multiple entities were despawned at once.
-    #[allow(clippy::type_complexity)]
-    DespawnMultiple {
-        entities: Vec<(
-            u32,
-            Transform,
-            Option<MeshHandle>,
-            Option<MaterialHandle>,
-            Option<Collider>,
-        )>,
-    },
+    DespawnMultiple { entities: Vec<EntitySnapshot> },
 }
 
 /// Stack-based undo/redo history with drag debouncing.
@@ -122,6 +117,40 @@ impl Default for UndoHistory {
     }
 }
 
+/// Capture the restorable state of an entity as an [`EntitySnapshot`].
+fn capture_entity_snapshot(
+    world: &World,
+    entity_index: u32,
+    entity: euca_ecs::Entity,
+) -> EntitySnapshot {
+    EntitySnapshot {
+        entity_index,
+        transform: world
+            .get::<LocalTransform>(entity)
+            .map(|lt| lt.0)
+            .unwrap_or_default(),
+        mesh: world.get::<MeshRenderer>(entity).map(|mr| mr.mesh),
+        material: world.get::<MaterialRef>(entity).map(|mr| mr.handle),
+        collider: world.get::<Collider>(entity).cloned(),
+    }
+}
+
+/// Respawn an entity from a snapshot. Returns the new entity.
+fn respawn_from_snapshot(world: &mut World, snapshot: &EntitySnapshot) -> euca_ecs::Entity {
+    let e = world.spawn(LocalTransform(snapshot.transform));
+    world.insert(e, GlobalTransform::default());
+    if let Some(m) = snapshot.mesh {
+        world.insert(e, MeshRenderer { mesh: m });
+    }
+    if let Some(m) = snapshot.material {
+        world.insert(e, MaterialRef { handle: m });
+    }
+    if let Some(c) = &snapshot.collider {
+        world.insert(e, c.clone());
+    }
+    e
+}
+
 /// Apply the inverse of an action to the world. Returns the action needed to reverse this inverse.
 fn apply_inverse(world: &mut World, action: &UndoAction) -> UndoAction {
     match action {
@@ -145,44 +174,16 @@ fn apply_inverse(world: &mut World, action: &UndoAction) -> UndoAction {
         UndoAction::SpawnEntity { entity_index } => {
             // Reverse of spawn = despawn. Capture state first.
             if let Some(entity) = crate::find_alive_entity(world, *entity_index) {
-                let transform = world
-                    .get::<LocalTransform>(entity)
-                    .map(|lt| lt.0)
-                    .unwrap_or_default();
-                let mesh = world.get::<MeshRenderer>(entity).map(|mr| mr.mesh);
-                let material = world.get::<MaterialRef>(entity).map(|mr| mr.handle);
-                let collider = world.get::<Collider>(entity).cloned();
+                let snapshot = capture_entity_snapshot(world, *entity_index, entity);
                 world.despawn(entity);
-                UndoAction::DespawnEntity {
-                    entity_index: *entity_index,
-                    transform,
-                    mesh,
-                    material,
-                    collider,
-                }
+                UndoAction::DespawnEntity(snapshot)
             } else {
                 action.clone()
             }
         }
-        UndoAction::DespawnEntity {
-            entity_index: _,
-            transform,
-            mesh,
-            material,
-            collider,
-        } => {
+        UndoAction::DespawnEntity(snapshot) => {
             // Reverse of despawn = respawn with stored data
-            let e = world.spawn(LocalTransform(*transform));
-            world.insert(e, GlobalTransform::default());
-            if let Some(m) = mesh {
-                world.insert(e, MeshRenderer { mesh: *m });
-            }
-            if let Some(m) = material {
-                world.insert(e, MaterialRef { handle: *m });
-            }
-            if let Some(c) = collider {
-                world.insert(e, c.clone());
-            }
+            let e = respawn_from_snapshot(world, snapshot);
             UndoAction::SpawnEntity {
                 entity_index: e.index(),
             }
@@ -192,36 +193,18 @@ fn apply_inverse(world: &mut World, action: &UndoAction) -> UndoAction {
             let mut captured = Vec::new();
             for idx in entity_indices {
                 if let Some(entity) = crate::find_alive_entity(world, *idx) {
-                    let transform = world
-                        .get::<LocalTransform>(entity)
-                        .map(|lt| lt.0)
-                        .unwrap_or_default();
-                    let mesh = world.get::<MeshRenderer>(entity).map(|mr| mr.mesh);
-                    let material = world.get::<MaterialRef>(entity).map(|mr| mr.handle);
-                    let collider = world.get::<Collider>(entity).cloned();
+                    captured.push(capture_entity_snapshot(world, *idx, entity));
                     world.despawn(entity);
-                    captured.push((*idx, transform, mesh, material, collider));
                 }
             }
             UndoAction::DespawnMultiple { entities: captured }
         }
         UndoAction::DespawnMultiple { entities } => {
             // Reverse of despawn-multiple = respawn all with stored data
-            let mut spawned_indices = Vec::with_capacity(entities.len());
-            for (_idx, transform, mesh, material, collider) in entities {
-                let e = world.spawn(LocalTransform(*transform));
-                world.insert(e, GlobalTransform::default());
-                if let Some(m) = mesh {
-                    world.insert(e, MeshRenderer { mesh: *m });
-                }
-                if let Some(m) = material {
-                    world.insert(e, MaterialRef { handle: *m });
-                }
-                if let Some(c) = collider {
-                    world.insert(e, c.clone());
-                }
-                spawned_indices.push(e.index());
-            }
+            let spawned_indices = entities
+                .iter()
+                .map(|snapshot| respawn_from_snapshot(world, snapshot).index())
+                .collect();
             UndoAction::SpawnMultiple {
                 entity_indices: spawned_indices,
             }

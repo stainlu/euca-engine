@@ -13,7 +13,11 @@ use std::ptr;
 use crate::component::{ComponentId, ComponentInfo};
 use crate::entity::Entity;
 
-/// Unique identifier for an archetype.
+/// Unique identifier for an archetype within a [`World`](crate::World).
+///
+/// Archetype IDs are sequential integers assigned as new component-set
+/// combinations are encountered. They are stable for the lifetime of
+/// the world.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct ArchetypeId(pub(crate) u32);
 
@@ -217,8 +221,13 @@ impl Drop for Column {
     }
 }
 
-/// An archetype stores all entities that have the exact same set of component types.
-/// Components are stored in struct-of-arrays (SoA) layout for cache-friendly iteration.
+/// An archetype stores all entities that share the exact same set of component types.
+///
+/// Components are stored in struct-of-arrays (SoA) layout: one contiguous
+/// column per component type, with entities in parallel arrays. This
+/// layout is cache-friendly for system iteration over dense component data.
+///
+/// Entities move between archetypes when components are added or removed.
 pub struct Archetype {
     #[allow(dead_code)] // Used for debugging/logging
     pub(crate) id: ArchetypeId,
@@ -349,6 +358,9 @@ impl Archetype {
     /// # Safety
     /// `T` must match the component type for `component_id`.
     /// Interior mutability via raw pointers — caller must ensure exclusive access.
+    // clippy::mut_from_ref — intentional: returns `&mut T` from `&self` using
+    // raw pointers for ECS interior mutability. Safety is enforced by the
+    // query system which guarantees exclusive component access at runtime.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) unsafe fn get_mut<T: 'static>(

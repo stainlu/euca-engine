@@ -16,6 +16,8 @@ pub struct CollisionPair {
 }
 
 /// Test if two AABBs overlap given their centers and half-extents.
+// clippy::too_many_arguments — separating position and per-axis half-extents
+// avoids allocating intermediate AABB structs in the hot collision loop.
 #[allow(clippy::too_many_arguments)]
 pub fn intersect_aabb(
     pos_a: Vec3,

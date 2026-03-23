@@ -1,0 +1,134 @@
+{
+  "entities": [
+    {
+      "position": [-7, 0.5, 0],
+      "spawn_point": 1
+    },
+    {
+      "position": [7, 0.5, 0],
+      "spawn_point": 2
+    },
+    {
+      "mesh": "cube",
+      "position": [-8, 0.5, 0],
+      "scale": [1.5, 1.5, 1.5],
+      "color": "blue",
+      "health": 2000,
+      "team": 1,
+      "physics_body": "Static",
+      "role": "structure"
+    },
+    {
+      "mesh": "cube",
+      "position": [8, 0.5, 0],
+      "scale": [1.5, 1.5, 1.5],
+      "color": "red",
+      "health": 2000,
+      "team": 2,
+      "physics_body": "Static",
+      "role": "structure"
+    },
+    {
+      "mesh": "cube",
+      "position": [-4, 1, 0],
+      "scale": [0.4, 2.5, 0.4],
+      "color": "cyan",
+      "health": 800,
+      "team": 1,
+      "physics_body": "Static",
+      "combat": true,
+      "combat_damage": 40,
+      "combat_range": 5,
+      "combat_cooldown": 1.5,
+      "combat_style": "stationary",
+      "role": "tower",
+      "gold_bounty": 150,
+      "xp_bounty": 100
+    },
+    {
+      "mesh": "cube",
+      "position": [4, 1, 0],
+      "scale": [0.4, 2.5, 0.4],
+      "color": "orange",
+      "health": 800,
+      "team": 2,
+      "physics_body": "Static",
+      "combat": true,
+      "combat_damage": 40,
+      "combat_range": 5,
+      "combat_cooldown": 1.5,
+      "combat_style": "stationary",
+      "role": "tower",
+      "gold_bounty": 150,
+      "xp_bounty": 100
+    },
+    {
+      "mesh": "sphere",
+      "position": [-7, 0.5, 0],
+      "scale": [1.2, 1.2, 1.2],
+      "color": "cyan",
+      "health": 500,
+      "team": 1,
+      "physics_body": "Kinematic",
+      "collider": {"shape": "Sphere", "radius": 0.6},
+      "combat": true,
+      "combat_damage": 30,
+      "combat_range": 2,
+      "combat_speed": 4,
+      "combat_cooldown": 0.8,
+      "role": "hero",
+      "gold": 0,
+      "gold_bounty": 300,
+      "xp_bounty": 200,
+      "player": true
+    },
+    {
+      "mesh": "sphere",
+      "position": [7, 0.5, 0],
+      "scale": [1.2, 1.2, 1.2],
+      "color": "orange",
+      "health": 500,
+      "team": 2,
+      "physics_body": "Kinematic",
+      "collider": {"shape": "Sphere", "radius": 0.6},
+      "combat": true,
+      "combat_damage": 30,
+      "combat_range": 2,
+      "combat_speed": 4,
+      "combat_cooldown": 0.8,
+      "role": "hero",
+      "gold": 0,
+      "gold_bounty": 300,
+      "xp_bounty": 200
+    }
+  ],
+  "rules": [
+    {
+      "when": "timer:20",
+      "actions": ["spawn cube -7,0.5,0 blue 80 1 true -7,0,0:0,0,0:7,0,0 3 0.5,0.5,0.5 20 30 minion 3"]
+    },
+    {
+      "when": "timer:20",
+      "actions": ["spawn cube 7,0.5,0 red 80 2 true 7,0,0:0,0,0:-7,0,0 3 0.5,0.5,0.5 20 30 minion 3"]
+    },
+    {
+      "when": "death",
+      "filter": "team:2",
+      "actions": ["score source +1"]
+    },
+    {
+      "when": "death",
+      "filter": "team:1",
+      "actions": ["score source +1"]
+    }
+  ],
+  "camera": {
+    "eye": [0, 12, 8],
+    "target": [0, 0.5, 0]
+  },
+  "game": {
+    "mode": "deathmatch",
+    "score_limit": 100,
+    "auto_start": true
+  }
+}
