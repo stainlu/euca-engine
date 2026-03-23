@@ -20,9 +20,13 @@ use crate::teams::Team;
 /// The rendering layer listens for these and attaches MeshRenderer + MaterialRef.
 #[derive(Clone, Debug)]
 pub struct RuleSpawnEvent {
+    /// The newly spawned entity.
     pub entity: Entity,
+    /// Mesh name to attach (e.g. "cube", "sphere").
     pub mesh: String,
+    /// Optional material color name.
     pub color: Option<String>,
+    /// Optional non-uniform scale override.
     pub scale: Option<[f32; 3]>,
 }
 
@@ -112,12 +116,16 @@ pub enum ActionTarget {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleFilter {
+    /// Matches every entity.
     Any,
+    /// Matches a single entity by its index.
     Entity(u32),
+    /// Matches all entities on the given team.
     Team(u8),
 }
 
 impl RuleFilter {
+    /// Returns `true` if the given entity satisfies this filter.
     pub fn matches(&self, entity: Entity, world: &World) -> bool {
         match self {
             RuleFilter::Any => true,
@@ -129,44 +137,60 @@ impl RuleFilter {
 
 // ── Rule conditions (each is a component) ──
 
-/// Fire actions when an entity matching the filter dies.
+/// When an entity matching `filter` dies, execute `actions`.
 #[derive(Clone, Debug)]
 pub struct OnDeathRule {
+    /// Which deaths trigger this rule.
     pub filter: RuleFilter,
+    /// Actions to run when the condition fires.
     pub actions: Arc<Vec<GameAction>>,
 }
 
-/// Fire actions periodically.
+/// When `interval` seconds elapse, execute `actions`. Repeats if `repeat` is true.
 #[derive(Clone, Debug)]
 pub struct TimerRule {
+    /// Seconds between firings.
     pub interval: f32,
+    /// Time accumulated toward the next firing.
     pub elapsed: f32,
+    /// If `false`, the rule entity is despawned after firing once.
     pub repeat: bool,
+    /// Actions to run when the timer fires.
     pub actions: Arc<Vec<GameAction>>,
 }
 
-/// Fire actions once when a watched entity's health drops below threshold.
+/// When a matching entity's health drops below `threshold`, execute `actions` (once per entity).
 #[derive(Clone, Debug)]
 pub struct HealthBelowRule {
+    /// Which entities to watch.
     pub filter: RuleFilter,
+    /// HP value that triggers the rule.
     pub threshold: f32,
+    /// Entity indices already triggered (prevents re-firing).
     pub triggered_entities: std::collections::HashSet<u32>,
+    /// Actions to run when the condition fires.
     pub actions: Arc<Vec<GameAction>>,
 }
 
-/// Fire actions when any player's score reaches threshold.
+/// When any player's score reaches `score_threshold`, execute `actions` (once).
 #[derive(Clone, Debug)]
 pub struct OnScoreRule {
+    /// Score value that triggers the rule.
     pub score_threshold: i32,
+    /// Whether this rule has already fired.
     pub triggered: bool,
+    /// Actions to run when the threshold is reached.
     pub actions: Arc<Vec<GameAction>>,
 }
 
-/// Fire actions when game phase changes to a specific phase.
+/// When the game enters the named `phase`, execute `actions` (once).
 #[derive(Clone, Debug)]
 pub struct OnPhaseRule {
-    pub phase: String, // "playing", "post_match", "lobby"
+    /// Phase name to match: `"playing"`, `"post_match"`, `"lobby"`, or `"countdown"`.
+    pub phase: String,
+    /// Whether this rule has already fired.
     pub triggered: bool,
+    /// Actions to run when the phase matches.
     pub actions: Arc<Vec<GameAction>>,
 }
 
@@ -378,7 +402,10 @@ pub fn health_below_rule_system(world: &mut World) {
 
 // ── Action execution ──
 
-/// Execute a single GameAction in the world.
+/// Execute a single `GameAction` in the world.
+///
+/// `trigger_entity` is the entity that caused the rule to fire (resolved as `ActionTarget::This`).
+/// `source` is the causal entity (e.g. killer), resolved as `ActionTarget::Source`.
 pub fn execute_action(
     world: &mut World,
     action: &GameAction,
@@ -720,10 +747,15 @@ pub fn parse_filter(s: &str) -> Option<RuleFilter> {
 /// Parsed condition type (used by HTTP/CLI to create rule entities).
 #[derive(Clone, Debug)]
 pub enum RuleCondition {
+    /// Trigger when a matching entity dies.
     Death,
+    /// Trigger every N seconds.
     Timer(f32),
+    /// Trigger when health drops below the threshold.
     HealthBelow(f32),
+    /// Trigger when any player reaches the score value.
     Score(i32),
+    /// Trigger when the game enters the named phase.
     Phase(String),
 }
 
