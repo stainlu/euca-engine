@@ -8,6 +8,13 @@ use euca_gameplay::{
     DamageEvent, Dead, DeathEvent, GamePhase, GameState, Health, MatchConfig, SpawnPoint, Team,
     apply_damage_system, death_check_system, game_state_system, respawn_system,
     start_respawn_on_death,
+    // v0.9.3/v0.9.4 systems
+    BaseStats, DamageResistance, Equipment, ItemDef, ItemRegistry, ResolvedStats, StatModifiers,
+    equipment_stat_system, stat_resolution_system,
+    ModifierOp, StackPolicy, StatModifier, StatusEffect, StatusEffects,
+    status_effect_tick_system,
+    ViewFilter, VisibilityRule, VisibleTo, visibility_system,
+    Zone, ZoneEffect, ZoneShape, zone_system,
 };
 use euca_math::{Transform, Vec3};
 use euca_scene::{GlobalTransform, LocalTransform};
@@ -377,5 +384,218 @@ fn headless_moba_respawn_flow() {
         world.get::<Health>(hero).unwrap().current,
         500.0,
         "Health should be full after respawn"
+    );
+}
+
+// ─── v0.9.3/v0.9.4 pipeline integration tests ─────────────────────────
+
+#[test]
+fn stat_pipeline_base_equipment_status_effects() {
+    let mut world = test_world();
+
+    // Register an item that adds +20 attack_damage.
+    let mut registry = ItemRegistry::new();
+    registry.register(ItemDef {
+        id: 1,
+        name: "Long Sword".into(),
+        properties: [("attack_damage".into(), 20.0)].into_iter().collect(),
+    });
+    world.insert_resource(registry);
+
+    // Entity with base stats.
+    let entity = world.spawn(BaseStats(
+        [
+            ("attack_damage".into(), 50.0),
+            ("speed".into(), 100.0),
+        ]
+        .into_iter()
+        .collect(),
+    ));
+
+    // Equip the sword via Equipment component.
+    world.insert(
+        entity,
+        Equipment {
+            equipped: [("weapon".into(), 1)].into_iter().collect(),
+        },
+    );
+    world.insert(entity, StatModifiers::default());
+
+    // Apply a status effect: speed × 0.5 (slow).
+    world.insert(
+        entity,
+        StatusEffects {
+            effects: vec![StatusEffect {
+                tag: "slow".into(),
+                modifiers: vec![StatModifier {
+                    stat: "speed".into(),
+                    op: ModifierOp::Multiply,
+                    value: 0.5,
+                }],
+                duration: 10.0,
+                remaining: 10.0,
+                source: None,
+                stack_policy: StackPolicy::Replace,
+                tick_effect: None,
+            }],
+        },
+    );
+
+    // Run the full stat pipeline.
+    equipment_stat_system(&mut world);
+    stat_resolution_system(&mut world);
+
+    let resolved = world.get::<ResolvedStats>(entity).unwrap();
+    assert_eq!(
+        resolved.0.get("attack_damage"),
+        Some(&70.0),
+        "base 50 + equipment 20 = 70"
+    );
+    assert_eq!(
+        resolved.0.get("speed"),
+        Some(&50.0),
+        "base 100 * 0.5 slow = 50"
+    );
+}
+
+#[test]
+fn visibility_observer_with_radius_filter() {
+    let mut world = World::new();
+
+    // Observer at origin with WithinRadius(10) filter.
+    let observer = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+    world.insert(
+        observer,
+        ViewFilter::new(vec![VisibilityRule::WithinRadius { radius: 10.0 }]),
+    );
+
+    // Near entity at distance 5 — should be visible.
+    let near = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+        5.0, 0.0, 0.0,
+    ))));
+
+    // Far entity at distance 20 — should NOT be visible.
+    let far = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+        20.0, 0.0, 0.0,
+    ))));
+
+    visibility_system(&mut world);
+
+    // Near entity should have VisibleTo containing the observer.
+    let near_vt = world.get::<VisibleTo>(near).expect("near should have VisibleTo");
+    assert!(
+        near_vt.0.contains(&observer),
+        "near entity should be visible to observer"
+    );
+
+    // Far entity should NOT be visible to the observer.
+    let far_visible = world
+        .get::<VisibleTo>(far)
+        .map(|vt| vt.0.contains(&observer))
+        .unwrap_or(false);
+    assert!(
+        !far_visible,
+        "far entity should not be visible to observer"
+    );
+}
+
+#[test]
+fn zone_status_effect_stat_compose() {
+    let mut world = test_world();
+
+    // Create a zone that applies a "slow" status effect (speed × 0.5).
+    let zone_entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+    world.insert(
+        zone_entity,
+        Zone::new(
+            ZoneShape::Circle { radius: 10.0 },
+            vec![ZoneEffect::ApplyStatusEffect {
+                tag: "slow".into(),
+                modifiers: vec![("speed".into(), ModifierOp::Multiply, 0.5)],
+                duration: 5.0,
+            }],
+        ),
+    );
+
+    // Place entity inside the zone with base stats.
+    let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+        3.0, 0.0, 0.0,
+    ))));
+    world.insert(
+        entity,
+        BaseStats([("speed".into(), 100.0)].into_iter().collect()),
+    );
+
+    let dt = 1.0 / 60.0;
+
+    // Pipeline: zone → status effect tick → stat resolution.
+    zone_system(&mut world, dt);
+    status_effect_tick_system(&mut world, dt);
+    stat_resolution_system(&mut world);
+
+    // The entity should have received the "slow" status effect from the zone.
+    let effects = world
+        .get::<StatusEffects>(entity)
+        .expect("entity should have StatusEffects after entering zone");
+    assert!(
+        effects.effects.iter().any(|e| e.tag == "slow"),
+        "entity should have the 'slow' effect"
+    );
+
+    // ResolvedStats should show speed halved.
+    let resolved = world
+        .get::<ResolvedStats>(entity)
+        .expect("entity should have ResolvedStats after resolution");
+    assert_eq!(
+        resolved.0.get("speed"),
+        Some(&50.0),
+        "base 100 * 0.5 slow = 50"
+    );
+}
+
+#[test]
+fn damage_resistance_with_category() {
+    let mut world = test_world();
+
+    let target = world.spawn(Health::new(100.0));
+    // 50 physical resistance.
+    world.insert(
+        target,
+        DamageResistance(
+            [("physical".into(), 50.0_f64)]
+                .into_iter()
+                .collect(),
+        ),
+    );
+
+    // Deal 100 physical damage. Effective = 100 * (100 / 150) ≈ 66.67.
+    // Health: 100 - 66.67 ≈ 33.33.
+    world
+        .resource_mut::<Events>()
+        .unwrap()
+        .send(DamageEvent::new(target, 100.0, None));
+    apply_damage_system(&mut world);
+
+    let health_after_physical = world.get::<Health>(target).unwrap().current;
+    let expected_remaining = 100.0 - 100.0 * (100.0_f32 / 150.0);
+    assert!(
+        (health_after_physical - expected_remaining).abs() < 0.01,
+        "After physical damage with 50 resistance: expected ~{expected_remaining}, got {health_after_physical}"
+    );
+
+    // Clear events for next tick, then deal 50 "true" damage (bypasses resistance).
+    world.resource_mut::<Events>().unwrap().update();
+    world.tick();
+    world
+        .resource_mut::<Events>()
+        .unwrap()
+        .send(DamageEvent::with_category(target, 50.0, None, "true"));
+    apply_damage_system(&mut world);
+
+    let health_after_true = world.get::<Health>(target).unwrap().current;
+    // ~33.33 - 50.0, clamped to 0.
+    assert_eq!(
+        health_after_true, 0.0,
+        "True damage should bypass resistance and clamp health to 0"
     );
 }
