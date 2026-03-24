@@ -329,3 +329,54 @@ fn ten_entity_battle_runs_stable() {
     // Some entities should have died (5 damage per tick for 100 ticks on 100hp entities)
     assert!(alive_count < 10, "Some entities should have died");
 }
+
+const DT: f32 = 1.0 / 60.0;
+
+#[test]
+fn headless_moba_respawn_flow() {
+    let mut world = test_world();
+    let config = MatchConfig {
+        respawn_delay: 3.0,
+        score_limit: 100,
+        ..Default::default()
+    };
+    let mut state = GameState::new(config);
+    state.start();
+    world.insert_resource(state);
+
+    // Spawn points (like moba.sh)
+    let sp1 = world.spawn(SpawnPoint { team: 1 });
+    world.insert(
+        sp1,
+        LocalTransform(Transform::from_translation(Vec3::new(-7.0, 0.5, 0.0))),
+    );
+    let sp2 = world.spawn(SpawnPoint { team: 2 });
+    world.insert(
+        sp2,
+        LocalTransform(Transform::from_translation(Vec3::new(7.0, 0.5, 0.0))),
+    );
+
+    // Hero team 2
+    let hero = spawn_fighter(&mut world, 500.0, 2, Vec3::new(3.0, 0.5, 0.0));
+
+    // Deal lethal damage
+    deal_damage(&mut world, hero, 500.0, None);
+    step_gameplay(&mut world, DT);
+
+    assert!(world.get::<Dead>(hero).is_some(), "Hero should be dead");
+
+    // Step through respawn delay (3.0s = 180 ticks at 60fps) + margin
+    for _ in 0..250 {
+        step_gameplay(&mut world, DT);
+    }
+
+    assert!(
+        world.get::<Dead>(hero).is_none(),
+        "Hero should have respawned after 250 ticks (~4.2s > 3.0s delay)"
+    );
+    assert_eq!(
+        world.get::<Health>(hero).unwrap().current,
+        500.0,
+        "Health should be full after respawn"
+    );
+}

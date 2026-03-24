@@ -1,6 +1,7 @@
 use std::any::TypeId;
 use std::collections::HashSet;
 
+use crate::event::Events;
 use crate::system::{IntoSystem, System};
 use crate::system_param::validate_no_conflicts;
 use crate::world::World;
@@ -285,6 +286,10 @@ impl Schedule {
             stage.run(world);
         }
         world.update_events();
+        // Also update the Events resource if present (gameplay systems use this)
+        if let Some(events) = world.resource_mut::<Events>() {
+            events.update();
+        }
         world.tick();
     }
 
