@@ -2,6 +2,7 @@ use crate::buffer::{BufferKind, SmartBuffer};
 use crate::camera::Camera;
 use crate::decal::{DecalDrawCommand, DecalRenderer};
 use crate::gpu::GpuContext;
+use crate::ibl::IblResources;
 use crate::light::{AmbientLight, DirectionalLight};
 use crate::material::{Material, MaterialHandle};
 use crate::mesh::{Mesh, MeshHandle};
@@ -190,6 +191,8 @@ struct SceneUniforms {
     /// y=normal_bias_scale (default 0.01), z=slope_bias_scale (default 0.03),
     /// w=cascade_bias_scale — extra bias multiplier per cascade index (default 0.5).
     shadow_params: [f32; 4],
+    /// IBL parameters: x=enabled (0.0 or 1.0), y=intensity, z=unused, w=unused.
+    ibl_params: [f32; 4],
 }
 
 struct GpuMaterial {
@@ -294,6 +297,19 @@ pub struct Renderer {
     gpu_particle_systems: Vec<crate::gpu_particles::GpuParticleSystem>,
     /// Velocity buffer textures for TAA / motion blur / DoF.
     velocity_textures: crate::velocity::VelocityTextures,
+    /// Fallback 1x1 black cubemap view (used when no IBL resources are set).
+    ibl_dummy_cube_view: wgpu::TextureView,
+    /// Fallback 1x1 black BRDF LUT view (used when no IBL resources are set).
+    ibl_dummy_brdf_view: wgpu::TextureView,
+    /// Fallback trilinear sampler for IBL textures.
+    ibl_sampler: wgpu::Sampler,
+    /// Active IBL resources (set via `set_ibl`, cleared via `clear_ibl`).
+    ibl_resources: Option<IblResources>,
+    /// IBL intensity multiplier (default 1.0).
+    ibl_intensity: f32,
+    // Keep fallback textures alive so their views remain valid.
+    _ibl_dummy_cube: wgpu::Texture,
+    _ibl_dummy_brdf: wgpu::Texture,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -434,6 +450,46 @@ impl Renderer {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
+                    // IBL: irradiance cubemap
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::Cube,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // IBL: specular pre-filtered cubemap
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::Cube,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // IBL: BRDF integration LUT
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // IBL: trilinear sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
                 ],
             });
 
@@ -495,6 +551,102 @@ impl Renderer {
                 resource: shadow_instance_buffer.raw().as_entire_binding(),
             }],
         });
+        // --- IBL fallback textures (1x1 black) ---
+        let ibl_dummy_cube = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("IBL Dummy Cubemap"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 6,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        // Write black (all-zero) pixels to each face.
+        let zero_pixel = [0u8; 8]; // 4 x f16 = 8 bytes, all zeros = black
+        for face in 0..6u32 {
+            gpu.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &ibl_dummy_cube,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: face,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &zero_pixel,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(8),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        let ibl_dummy_cube_view = ibl_dummy_cube.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("IBL Dummy Cubemap View"),
+            dimension: Some(wgpu::TextureViewDimension::Cube),
+            ..Default::default()
+        });
+
+        // The BRDF LUT uses Rg32Float (matching ibl.rs create_brdf_lut_texture).
+        let ibl_dummy_brdf = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("IBL Dummy BRDF LUT"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rg32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &ibl_dummy_brdf,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[0u8; 8], // 2 x f32 = 8 bytes, all zeros
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(8),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let ibl_dummy_brdf_view =
+            ibl_dummy_brdf.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let ibl_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("IBL Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+
         let scene_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Scene BG"),
             layout: &scene_bgl,
@@ -514,6 +666,22 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(&shadow_depth_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&ibl_dummy_cube_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&ibl_dummy_cube_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&ibl_dummy_brdf_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&ibl_sampler),
                 },
             ],
         });
@@ -818,6 +986,13 @@ impl Renderer {
                 gpu.surface_config.width,
                 gpu.surface_config.height,
             ),
+            ibl_dummy_cube_view,
+            ibl_dummy_brdf_view,
+            ibl_sampler,
+            ibl_resources: None,
+            ibl_intensity: 1.0,
+            _ibl_dummy_cube: ibl_dummy_cube,
+            _ibl_dummy_brdf: ibl_dummy_brdf,
         }
     }
 
@@ -1008,6 +1183,94 @@ impl Renderer {
     /// Disable probe-based ambient lighting (fall back to flat ambient_color).
     pub fn clear_probe(&mut self) {
         self.probe_enabled = false;
+    }
+
+    /// Activate IBL (Image-Based Lighting) with pre-computed resources.
+    ///
+    /// The `IblResources` should be generated via [`IblResources::generate`] or
+    /// [`IblResources::from_uniform_color`]. Once set, the PBR shader will
+    /// sample the irradiance and specular cubemaps for indirect lighting.
+    pub fn set_ibl(&mut self, gpu: &GpuContext, resources: IblResources, intensity: f32) {
+        self.ibl_resources = Some(resources);
+        self.ibl_intensity = intensity;
+        self.rebuild_scene_bind_group(&gpu.device);
+    }
+
+    /// Disable IBL (fall back to SH probes or flat ambient color).
+    pub fn clear_ibl(&mut self, gpu: &GpuContext) {
+        self.ibl_resources = None;
+        self.ibl_intensity = 1.0;
+        self.rebuild_scene_bind_group(&gpu.device);
+    }
+
+    /// Set the IBL intensity multiplier without changing the bound resources.
+    pub fn set_ibl_intensity(&mut self, intensity: f32) {
+        self.ibl_intensity = intensity;
+    }
+
+    /// Whether IBL resources are currently active.
+    pub fn ibl_active(&self) -> bool {
+        self.ibl_resources.is_some()
+    }
+
+    /// Rebuild the scene bind group, picking real IBL texture views when
+    /// `ibl_resources` is `Some`, or dummy (black) views otherwise.
+    fn rebuild_scene_bind_group(&mut self, device: &wgpu::Device) {
+        let (irradiance_view, specular_view, brdf_view, sampler) =
+            if let Some(ref ibl) = self.ibl_resources {
+                (
+                    &ibl.irradiance_view,
+                    &ibl.specular_view,
+                    &ibl.brdf_lut_view,
+                    &ibl.cubemap_sampler,
+                )
+            } else {
+                (
+                    &self.ibl_dummy_cube_view,
+                    &self.ibl_dummy_cube_view,
+                    &self.ibl_dummy_brdf_view,
+                    &self.ibl_sampler,
+                )
+            };
+
+        self.scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Scene BG"),
+            layout: &self.scene_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.scene_buffer.raw().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.shadow_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.shadow_depth_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(irradiance_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(specular_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(brdf_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
     }
 
     /// Stage decal draw commands for the current frame.
@@ -1452,6 +1715,16 @@ impl Renderer {
             probe_sh: self.probe_sh,
             probe_enabled: [if self.probe_enabled { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             shadow_params: [light.light_size, 0.01, 0.03, 0.5],
+            ibl_params: [
+                if self.ibl_resources.is_some() {
+                    1.0
+                } else {
+                    0.0
+                },
+                self.ibl_intensity,
+                0.0,
+                0.0,
+            ],
         };
         self.scene_buffer
             .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
@@ -1945,5 +2218,45 @@ mod tests {
             0,
             "SceneUniforms size ({size}) must be 16-byte aligned for GPU uniform buffers"
         );
+    }
+
+    /// IBL params default to disabled (x=0.0) with intensity 1.0.
+    #[test]
+    fn ibl_params_defaults() {
+        let ibl_params = [0.0_f32, 1.0_f32, 0.0_f32, 0.0_f32];
+        assert!(
+            ibl_params[0] < 0.5,
+            "IBL should default to disabled (x < 0.5)"
+        );
+        assert!(
+            (ibl_params[1] - 1.0).abs() < 1e-6,
+            "IBL intensity should default to 1.0"
+        );
+    }
+
+    /// `SceneUniforms` must include the `ibl_params` field as the last vec4.
+    #[test]
+    fn scene_uniforms_contains_ibl_params() {
+        let uniforms = SceneUniforms {
+            camera_pos: [0.0; 4],
+            light_direction: [0.0; 4],
+            light_color: [0.0; 4],
+            ambient_color: [0.0; 4],
+            camera_vp: [[0.0; 4]; 4],
+            light_vp: [[0.0; 4]; 4],
+            inv_vp: [[0.0; 4]; 4],
+            cascade_vps: [[[0.0; 4]; 4]; 3],
+            cascade_splits: [0.0; 4],
+            point_lights: [GpuPointLight::default(); MAX_POINT_LIGHTS],
+            spot_lights: [GpuSpotLight::default(); MAX_SPOT_LIGHTS],
+            num_point_lights: [0.0; 4],
+            num_spot_lights: [0.0; 4],
+            probe_sh: [[0.0; 4]; 9],
+            probe_enabled: [0.0; 4],
+            shadow_params: [1.0, 0.01, 0.03, 0.5],
+            ibl_params: [1.0, 0.8, 0.0, 0.0],
+        };
+        assert_eq!(uniforms.ibl_params[0], 1.0, "ibl enabled flag");
+        assert!((uniforms.ibl_params[1] - 0.8).abs() < 1e-6, "ibl intensity");
     }
 }

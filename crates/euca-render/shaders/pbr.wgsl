@@ -41,6 +41,7 @@ struct SceneUniforms {
     probe_sh: array<vec4<f32>, 9>,
     probe_enabled: vec4<f32>,
     shadow_params: vec4<f32>,
+    ibl_params: vec4<f32>,
 }
 
 struct MaterialUniforms {
@@ -66,6 +67,10 @@ struct MaterialUniforms {
 @group(1) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(2) var shadow_sampler: sampler_comparison;
 @group(1) @binding(3) var shadow_depth_sampler: sampler;
+@group(1) @binding(4) var ibl_irradiance_map: texture_cube<f32>;
+@group(1) @binding(5) var ibl_specular_map: texture_cube<f32>;
+@group(1) @binding(6) var ibl_brdf_lut: texture_2d<f32>;
+@group(1) @binding(7) var ibl_sampler: sampler;
 
 @group(2) @binding(0) var<uniform> material: MaterialUniforms;
 @group(2) @binding(1) var albedo_tex: texture_2d<f32>;
@@ -141,6 +146,15 @@ fn geometry_smith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f
 // Schlick approximation for Fresnel reflectance.
 fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Schlick Fresnel with roughness correction for IBL.
+// At grazing angles on rough surfaces, reflections are attenuated compared
+// to the standard Fresnel term. This variant clamps the max reflectance
+// to (1 - roughness), producing more physically plausible results when
+// integrating over the hemisphere.
+fn fresnel_schlick_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    return f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +469,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         ambient = ambient * ao;
     }
     var color = ambient + Lo;
+
+    // --- IBL (Image-Based Lighting) ---
+    let n_dot_v = max(dot(N, V), 0.0);
+    if (scene.ibl_params.x > 0.5) {
+        let ibl_intensity = scene.ibl_params.y;
+
+        // Fresnel with roughness correction for IBL (attenuates grazing reflections on rough surfaces).
+        let F_ibl = fresnel_schlick_roughness(n_dot_v, F0, roughness);
+        let kS_ibl = F_ibl;
+        let kD_ibl = (1.0 - kS_ibl) * (1.0 - metallic);
+
+        // Diffuse IBL: sample irradiance cubemap with the surface normal.
+        let irradiance = textureSample(ibl_irradiance_map, ibl_sampler, N).rgb;
+        let diffuse_ibl = irradiance * albedo * kD_ibl;
+
+        // Specular IBL: sample pre-filtered environment map at the reflection direction.
+        let R = reflect(-V, N);
+        let max_mip = 4.0; // 5 mip levels (0..4)
+        let specular_color = textureSampleLevel(ibl_specular_map, ibl_sampler, R, roughness * max_mip).rgb;
+
+        // BRDF LUT: lookup Fresnel scale and bias for the split-sum approximation.
+        let brdf = textureSample(ibl_brdf_lut, ibl_sampler, vec2(n_dot_v, roughness)).rg;
+        let specular_ibl = specular_color * (F_ibl * brdf.x + brdf.y);
+
+        // Add IBL contribution, scaled by intensity.
+        color += (diffuse_ibl + specular_ibl) * ibl_intensity;
+    }
 
     // --- Emissive ---
     var emissive_color = material.emissive;
