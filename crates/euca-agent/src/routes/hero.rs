@@ -1,11 +1,134 @@
-//! Hero selection and listing endpoints.
+//! Hero definition, selection, and listing endpoints.
 
 use axum::Json;
 use axum::extract::State;
+use serde::Deserialize;
 
 use crate::state::SharedWorld;
 
 use super::{MessageResponse, find_entity};
+
+// ── Request types ──
+
+/// Request body for `POST /hero/define`.
+#[derive(Deserialize)]
+pub struct HeroDefRequest {
+    /// Hero name (e.g. "Juggernaut").
+    pub name: String,
+    /// Starting health.
+    #[serde(default = "default_health")]
+    pub health: f32,
+    /// Starting mana.
+    #[serde(default = "default_mana")]
+    pub mana: f32,
+    /// Starting gold.
+    #[serde(default = "default_gold")]
+    pub gold: i32,
+    /// Base attack damage.
+    #[serde(default = "default_damage")]
+    pub damage: f32,
+    /// Attack range.
+    #[serde(default = "default_range")]
+    pub range: f32,
+    /// Base stats at level 1 (e.g. {"max_health": 600, "attack_damage": 55}).
+    #[serde(default)]
+    pub base_stats: std::collections::HashMap<String, f64>,
+    /// Stat growth per level (e.g. {"max_health": 80, "attack_damage": 3}).
+    #[serde(default)]
+    pub stat_growth: std::collections::HashMap<String, f64>,
+    /// Ability definitions (Q/W/E/R).
+    #[serde(default)]
+    pub abilities: Vec<AbilityDefRequest>,
+}
+
+fn default_health() -> f32 {
+    600.0
+}
+fn default_mana() -> f32 {
+    300.0
+}
+fn default_gold() -> i32 {
+    625
+}
+fn default_damage() -> f32 {
+    50.0
+}
+fn default_range() -> f32 {
+    1.5
+}
+
+/// A single ability definition within a hero define request.
+#[derive(Deserialize)]
+pub struct AbilityDefRequest {
+    /// Slot: "Q", "W", "E", or "R".
+    pub slot: euca_gameplay::AbilitySlot,
+    /// Ability display name.
+    pub name: String,
+    /// Cooldown in seconds.
+    #[serde(default = "default_cooldown")]
+    pub cooldown: f32,
+    /// Mana cost per use.
+    #[serde(default = "default_mana_cost")]
+    pub mana_cost: f32,
+    /// What the ability does when activated.
+    pub effect: euca_gameplay::AbilityEffect,
+}
+
+fn default_cooldown() -> f32 {
+    10.0
+}
+fn default_mana_cost() -> f32 {
+    100.0
+}
+
+// ── Handlers ──
+
+/// POST /hero/define — register a hero definition in the HeroRegistry.
+///
+/// If the registry resource doesn't exist yet, creates it. If a hero with
+/// the same name already exists, overwrites it.
+pub async fn hero_define(
+    State(world): State<SharedWorld>,
+    Json(req): Json<HeroDefRequest>,
+) -> Json<MessageResponse> {
+    let name = req.name.clone();
+    world.with(|w, _| {
+        let def = euca_gameplay::HeroDef {
+            name: req.name,
+            base_stats: req.base_stats,
+            growth: req.stat_growth,
+            health: req.health,
+            mana: req.mana,
+            gold: req.gold,
+            damage: req.damage,
+            range: req.range,
+            abilities: req
+                .abilities
+                .into_iter()
+                .map(|a| euca_gameplay::AbilityDef {
+                    slot: a.slot,
+                    name: a.name,
+                    cooldown: a.cooldown,
+                    mana_cost: a.mana_cost,
+                    effect: a.effect,
+                })
+                .collect(),
+        };
+
+        if let Some(registry) = w.resource_mut::<euca_gameplay::HeroRegistry>() {
+            registry.register(def);
+        } else {
+            let mut registry = euca_gameplay::HeroRegistry::new();
+            registry.register(def);
+            w.insert_resource(registry);
+        }
+    });
+
+    Json(MessageResponse {
+        ok: true,
+        message: Some(format!("Hero '{name}' registered")),
+    })
+}
 
 /// POST /hero/select — apply a hero template to an existing entity.
 ///

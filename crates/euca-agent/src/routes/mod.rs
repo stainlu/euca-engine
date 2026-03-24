@@ -43,7 +43,7 @@ pub use gameplay::{
     ability_list, ability_use, ai_set, game_create, game_state, projectile_spawn, rule_create,
     rule_list, trigger_create,
 };
-pub use hero::{hero_list, hero_select};
+pub use hero::{hero_define, hero_list, hero_select};
 pub use input::{input_bind, input_context_pop, input_context_push, input_list, input_unbind};
 pub use inventory::{item_define, item_equip, item_give, item_list};
 pub use material::material_set;
