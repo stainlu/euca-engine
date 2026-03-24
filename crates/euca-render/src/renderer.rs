@@ -186,7 +186,9 @@ struct SceneUniforms {
     probe_sh: [[f32; 4]; 9],
     /// x=1.0 if probe data is valid, 0.0 otherwise. yzw=padding.
     probe_enabled: [f32; 4],
-    /// x=light_size for PCSS soft shadow penumbra. yzw=padding.
+    /// x=light_size for PCSS soft shadow penumbra.
+    /// y=normal_bias_scale (default 0.01), z=slope_bias_scale (default 0.03),
+    /// w=cascade_bias_scale — extra bias multiplier per cascade index (default 0.5).
     shadow_params: [f32; 4],
 }
 
@@ -1437,7 +1439,7 @@ impl Renderer {
             num_spot_lights: [spot_lights.len().min(MAX_SPOT_LIGHTS) as f32, 0.0, 0.0, 0.0],
             probe_sh: self.probe_sh,
             probe_enabled: [if self.probe_enabled { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-            shadow_params: [light.light_size, 0.0, 0.0, 0.0],
+            shadow_params: [light.light_size, 0.01, 0.03, 0.5],
         };
         self.scene_buffer
             .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
@@ -1869,7 +1871,8 @@ mod tests {
     /// blocker search finds no blockers and the function returns 1.0 (fully lit).
     /// This effectively produces hard shadows since only the PCF path with a
     /// minimum radius is used. Verify `shadow_params` propagation at the uniform
-    /// level: zero `light_size` ⟹ `shadow_params.x == 0.0`.
+    /// level: zero `light_size` => `shadow_params.x == 0.0`, while bias
+    /// defaults are still present.
     #[test]
     fn pcss_zero_light_size_produces_zero_search_radius() {
         use crate::light::DirectionalLight;
@@ -1878,7 +1881,7 @@ mod tests {
             ..Default::default()
         };
         // The uniform would be populated as:
-        let shadow_params = [light.light_size, 0.0, 0.0, 0.0];
+        let shadow_params = [light.light_size, 0.01, 0.03, 0.5];
         assert_eq!(
             shadow_params[0], 0.0,
             "zero light_size must yield zero search radius"
@@ -1891,5 +1894,43 @@ mod tests {
         use crate::light::DirectionalLight;
         let light = DirectionalLight::default();
         assert_eq!(light.light_size, 1.0);
+    }
+
+    /// Verify default shadow bias parameters packed in `shadow_params`.
+    #[test]
+    fn shadow_bias_defaults() {
+        use crate::light::DirectionalLight;
+        let light = DirectionalLight::default();
+        let shadow_params = [light.light_size, 0.01_f32, 0.03_f32, 0.5_f32];
+        // y = normal_bias_scale
+        assert!(
+            (shadow_params[1] - 0.01).abs() < 1e-6,
+            "normal_bias_scale default"
+        );
+        // z = slope_bias_scale
+        assert!(
+            (shadow_params[2] - 0.03).abs() < 1e-6,
+            "slope_bias_scale default"
+        );
+        // w = cascade_bias_scale
+        assert!(
+            (shadow_params[3] - 0.5).abs() < 1e-6,
+            "cascade_bias_scale default"
+        );
+    }
+
+    /// `SceneUniforms` size must not change unexpectedly. Adding fields without
+    /// updating all dependent code (bind group layout, shader struct) would
+    /// cause GPU validation errors. This pins the expected size.
+    #[test]
+    fn scene_uniforms_size_is_stable() {
+        let size = std::mem::size_of::<SceneUniforms>();
+        // The struct is tightly packed via repr(C) with vec4/mat4 members.
+        // Any accidental addition or removal will break this assertion.
+        assert_eq!(
+            size % 16,
+            0,
+            "SceneUniforms size ({size}) must be 16-byte aligned for GPU uniform buffers"
+        );
     }
 }

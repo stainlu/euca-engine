@@ -244,37 +244,88 @@ fn pcss_shadow(shadow_uv: vec2<f32>, receiver_depth: f32, cascade_index: i32,
     return shadow / 16.0;
 }
 
+/// Compute a normal-offset bias position for shadow sampling.
+/// Uses slope-scaled bias (steeper surfaces get more bias) and per-cascade
+/// scaling (far cascades cover more world-space per texel).
+fn shadow_bias_position(world_pos: vec3<f32>, world_normal: vec3<f32>,
+                        light_dir: vec3<f32>, cascade_idx: i32) -> vec3<f32> {
+    let normal_bias_scale = scene.shadow_params.y;  // default 0.01
+    let slope_bias_scale = scene.shadow_params.z;    // default 0.03
+    let cascade_bias_scale = scene.shadow_params.w;  // default 0.5
+
+    let NdotL = max(dot(world_normal, light_dir), 0.001);
+    // tan(acos(NdotL)) = sqrt(1 - NdotL^2) / NdotL — slope factor
+    let slope_factor = sqrt(1.0 - NdotL * NdotL) / NdotL;
+    let base_bias = normal_bias_scale + slope_bias_scale * slope_factor;
+    // Far cascades need proportionally more bias.
+    let effective_bias = base_bias * (1.0 + f32(cascade_idx) * cascade_bias_scale);
+
+    return world_pos + world_normal * effective_bias;
+}
+
+/// Project a world-space position into a cascade's shadow UV and depth.
+/// Returns vec3(uv.x, uv.y, depth). UVs outside [0,1] indicate the position
+/// is outside that cascade.
+fn cascade_project(world_pos: vec3<f32>, cascade_idx: i32) -> vec3<f32> {
+    let vp = scene.cascade_vps[cascade_idx];
+    let clip = vp * vec4<f32>(world_pos, 1.0);
+    let ndc = clip.xyz / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+    return vec3<f32>(uv.x, uv.y, ndc.z);
+}
+
+const CASCADE_COUNT: i32 = 3;
+const CASCADE_TRANSITION_WIDTH: f32 = 0.1;
+
 fn shadow_factor_biased(world_pos: vec3<f32>, world_normal: vec3<f32>,
                         pixel_pos: vec2<f32>) -> f32 {
     let light_dir = normalize(-scene.light_direction.xyz);
-    let normal_bias = 0.01 + 0.03 * (1.0 - max(dot(world_normal, light_dir), 0.0));
-    let biased_pos = world_pos + world_normal * normal_bias;
+    let light_size = scene.shadow_params.x;
 
     // Select the tightest cascade that contains this fragment.
     var cascade_idx = 0i;
-    for (var ci = 0i; ci < 3; ci++) {
-        let vp = scene.cascade_vps[ci];
-        let clip = vp * vec4<f32>(biased_pos, 1.0);
-        let ndc = clip.xyz / clip.w;
-        let uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
-        if uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 {
+    for (var ci = 0i; ci < CASCADE_COUNT; ci++) {
+        let biased = shadow_bias_position(world_pos, world_normal, light_dir, ci);
+        let proj = cascade_project(biased, ci);
+        if proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0 {
             cascade_idx = ci;
             break;
         }
     }
 
-    let vp = scene.cascade_vps[cascade_idx];
-    let light_clip = vp * vec4<f32>(biased_pos, 1.0);
-    let ndc = light_clip.xyz / light_clip.w;
-    let shadow_uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
-    let current_depth = ndc.z;
+    // Compute primary cascade shadow.
+    let biased_primary = shadow_bias_position(world_pos, world_normal, light_dir, cascade_idx);
+    let proj_primary = cascade_project(biased_primary, cascade_idx);
+    let uv_primary = vec2<f32>(proj_primary.x, proj_primary.y);
 
-    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
+    if uv_primary.x < 0.0 || uv_primary.x > 1.0 || uv_primary.y < 0.0 || uv_primary.y > 1.0 {
         return 1.0;
     }
 
-    let light_size = scene.shadow_params.x;
-    return pcss_shadow(shadow_uv, current_depth, cascade_idx, pixel_pos, light_size);
+    let shadow_primary = pcss_shadow(uv_primary, proj_primary.z, cascade_idx, pixel_pos, light_size);
+
+    // Cascade blending: smooth transition near the boundary of the current cascade.
+    let edge_dist = min(
+        min(uv_primary.x, 1.0 - uv_primary.x),
+        min(uv_primary.y, 1.0 - uv_primary.y)
+    );
+
+    let next_idx = cascade_idx + 1;
+    if edge_dist < CASCADE_TRANSITION_WIDTH && next_idx < CASCADE_COUNT {
+        let biased_next = shadow_bias_position(world_pos, world_normal, light_dir, next_idx);
+        let proj_next = cascade_project(biased_next, next_idx);
+        let uv_next = vec2<f32>(proj_next.x, proj_next.y);
+
+        // Only blend if the next cascade actually contains this point.
+        if uv_next.x >= 0.0 && uv_next.x <= 1.0 && uv_next.y >= 0.0 && uv_next.y <= 1.0 {
+            let shadow_next = pcss_shadow(uv_next, proj_next.z, next_idx, pixel_pos, light_size);
+            // blend=0 at the edge -> full next-cascade; blend=1 at transition_width -> full primary.
+            let blend = smoothstep(0.0, CASCADE_TRANSITION_WIDTH, edge_dist);
+            return mix(shadow_next, shadow_primary, blend);
+        }
+    }
+
+    return shadow_primary;
 }
 
 // ---------------------------------------------------------------------------
