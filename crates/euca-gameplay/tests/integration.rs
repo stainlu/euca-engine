@@ -5,16 +5,44 @@
 
 use euca_ecs::{Entity, Events, Query, World};
 use euca_gameplay::{
-    DamageEvent, Dead, DeathEvent, GamePhase, GameState, Health, MatchConfig, SpawnPoint, Team,
-    apply_damage_system, death_check_system, game_state_system, respawn_system,
-    start_respawn_on_death,
     // v0.9.3/v0.9.4 systems
-    BaseStats, DamageResistance, Equipment, ItemDef, ItemRegistry, ResolvedStats, StatModifiers,
-    equipment_stat_system, stat_resolution_system,
-    ModifierOp, StackPolicy, StatModifier, StatusEffect, StatusEffects,
+    BaseStats,
+    DamageEvent,
+    DamageResistance,
+    Dead,
+    DeathEvent,
+    Equipment,
+    GamePhase,
+    GameState,
+    Health,
+    ItemDef,
+    ItemRegistry,
+    MatchConfig,
+    ModifierOp,
+    ResolvedStats,
+    SpawnPoint,
+    StackPolicy,
+    StatModifier,
+    StatModifiers,
+    StatusEffect,
+    StatusEffects,
+    Team,
+    ViewFilter,
+    VisibilityRule,
+    VisibleTo,
+    Zone,
+    ZoneEffect,
+    ZoneShape,
+    apply_damage_system,
+    death_check_system,
+    equipment_stat_system,
+    game_state_system,
+    respawn_system,
+    start_respawn_on_death,
+    stat_resolution_system,
     status_effect_tick_system,
-    ViewFilter, VisibilityRule, VisibleTo, visibility_system,
-    Zone, ZoneEffect, ZoneShape, zone_system,
+    visibility_system,
+    zone_system,
 };
 use euca_math::{Transform, Vec3};
 use euca_scene::{GlobalTransform, LocalTransform};
@@ -404,12 +432,9 @@ fn stat_pipeline_base_equipment_status_effects() {
 
     // Entity with base stats.
     let entity = world.spawn(BaseStats(
-        [
-            ("attack_damage".into(), 50.0),
-            ("speed".into(), 100.0),
-        ]
-        .into_iter()
-        .collect(),
+        [("attack_damage".into(), 50.0), ("speed".into(), 100.0)]
+            .into_iter()
+            .collect(),
     ));
 
     // Equip the sword via Equipment component.
@@ -482,7 +507,9 @@ fn visibility_observer_with_radius_filter() {
     visibility_system(&mut world);
 
     // Near entity should have VisibleTo containing the observer.
-    let near_vt = world.get::<VisibleTo>(near).expect("near should have VisibleTo");
+    let near_vt = world
+        .get::<VisibleTo>(near)
+        .expect("near should have VisibleTo");
     assert!(
         near_vt.0.contains(&observer),
         "near entity should be visible to observer"
@@ -493,10 +520,7 @@ fn visibility_observer_with_radius_filter() {
         .get::<VisibleTo>(far)
         .map(|vt| vt.0.contains(&observer))
         .unwrap_or(false);
-    assert!(
-        !far_visible,
-        "far entity should not be visible to observer"
-    );
+    assert!(!far_visible, "far entity should not be visible to observer");
 }
 
 #[test]
@@ -561,11 +585,7 @@ fn damage_resistance_with_category() {
     // 50 physical resistance.
     world.insert(
         target,
-        DamageResistance(
-            [("physical".into(), 50.0_f64)]
-                .into_iter()
-                .collect(),
-        ),
+        DamageResistance([("physical".into(), 50.0_f64)].into_iter().collect()),
     );
 
     // Deal 100 physical damage. Effective = 100 * (100 / 150) ≈ 66.67.
