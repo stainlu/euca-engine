@@ -59,6 +59,18 @@ pub struct PostProcessSettings {
     // Depth of field
     pub dof: crate::dof::DofSettings,
 
+    // Image-Based Lighting
+    /// Enable IBL (environment cubemap) for indirect specular/diffuse.
+    /// The renderer uses this to decide whether to activate IBL resources.
+    pub ibl_enabled: bool,
+    /// IBL intensity multiplier (default 1.0).
+    pub ibl_intensity: f32,
+
+    // PCSS Soft Shadows
+    /// Enable Percentage-Closer Soft Shadows. When disabled the renderer
+    /// sets `light_size` to 0.0, producing hard shadow edges.
+    pub pcss_enabled: bool,
+
     // Color grading
     /// EV stops: final color *= 2^exposure (default 0.0 = no change).
     pub exposure: f32,
@@ -87,6 +99,9 @@ impl Default for PostProcessSettings {
             ssr: crate::ssr::SsrSettings::default(),
             motion_blur: crate::motion_blur::MotionBlurSettings::default(),
             dof: crate::dof::DofSettings::default(),
+            ibl_enabled: false,
+            ibl_intensity: 1.0,
+            pcss_enabled: true,
             fxaa_enabled: true,
             bloom_enabled: true,
             bloom_threshold: 0.8,
@@ -1492,6 +1507,9 @@ mod tests {
             ssr: crate::ssr::SsrSettings::default(),
             motion_blur: crate::motion_blur::MotionBlurSettings::default(),
             dof: crate::dof::DofSettings::default(),
+            ibl_enabled: false,
+            ibl_intensity: 1.0,
+            pcss_enabled: true,
         };
         let u = PostProcessUniforms::from_settings(&settings, 1920, 1080);
         assert_eq!(u.color_grade[0], 0.5);

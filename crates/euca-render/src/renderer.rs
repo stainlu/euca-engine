@@ -19,13 +19,18 @@ use euca_math::Mat4;
 /// then apply them via [`Renderer::set_post_process_settings`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RenderQuality {
-    /// Minimal overhead: SSAO off, FXAA on, bloom on.
+    /// Minimal overhead: SSAO off, FXAA on, bloom on. All advanced features
+    /// (SSGI, motion blur, DoF, IBL) disabled.
     Low,
-    /// Balanced: SSAO on at reduced radius, FXAA on, bloom on.
+    /// Balanced: SSAO on at reduced radius, IBL at 0.8 intensity, motion blur
+    /// with 4 samples. No SSGI or DoF.
     Medium,
-    /// Full quality: SSAO on, all color grading at neutral, everything enabled.
+    /// Full quality: SSAO, SSGI (4 rays), IBL, motion blur (8 samples), DoF,
+    /// and PCSS all enabled. Color grading at neutral.
     High,
-    /// Maximum fidelity: boosted SSAO, slightly elevated contrast/saturation.
+    /// Maximum fidelity: boosted SSAO, SSGI (8 rays, 1.2x intensity), motion
+    /// blur (16 samples), DoF (30px max blur), slightly elevated contrast and
+    /// saturation.
     Ultra,
 }
 
@@ -37,6 +42,19 @@ impl RenderQuality {
                 ssao_enabled: false,
                 fxaa_enabled: true,
                 bloom_enabled: true,
+                // All new features off for minimum overhead.
+                ssgi_enabled: false,
+                motion_blur: crate::motion_blur::MotionBlurSettings {
+                    enabled: false,
+                    ..Default::default()
+                },
+                dof: crate::dof::DofSettings {
+                    enabled: false,
+                    ..Default::default()
+                },
+                ibl_enabled: false,
+                ibl_intensity: 1.0,
+                pcss_enabled: true,
                 ..PostProcessSettings::default()
             },
             RenderQuality::Medium => PostProcessSettings {
@@ -44,6 +62,20 @@ impl RenderQuality {
                 ssao_radius: 0.3,
                 fxaa_enabled: true,
                 bloom_enabled: true,
+                // IBL on at reduced intensity; motion blur with fewer samples.
+                ibl_enabled: true,
+                ibl_intensity: 0.8,
+                motion_blur: crate::motion_blur::MotionBlurSettings {
+                    enabled: true,
+                    sample_count: 4,
+                    ..Default::default()
+                },
+                ssgi_enabled: false,
+                dof: crate::dof::DofSettings {
+                    enabled: false,
+                    ..Default::default()
+                },
+                pcss_enabled: true,
                 ..PostProcessSettings::default()
             },
             RenderQuality::High => PostProcessSettings {
@@ -55,6 +87,24 @@ impl RenderQuality {
                 exposure: 1.0,
                 contrast: 1.0,
                 saturation: 1.0,
+                // SSGI, motion blur, DoF, and IBL all active.
+                ssgi_enabled: true,
+                ssgi_ray_count: 4,
+                ssgi_intensity: 1.0,
+                ibl_enabled: true,
+                ibl_intensity: 1.0,
+                motion_blur: crate::motion_blur::MotionBlurSettings {
+                    enabled: true,
+                    sample_count: 8,
+                    ..Default::default()
+                },
+                dof: crate::dof::DofSettings {
+                    enabled: true,
+                    focus_distance: 10.0,
+                    aperture: 0.05,
+                    ..Default::default()
+                },
+                pcss_enabled: true,
                 ..PostProcessSettings::default()
             },
             RenderQuality::Ultra => PostProcessSettings {
@@ -66,6 +116,23 @@ impl RenderQuality {
                 exposure: 1.0,
                 contrast: 1.05,
                 saturation: 1.05,
+                // Everything maxed.
+                ssgi_enabled: true,
+                ssgi_ray_count: 8,
+                ssgi_intensity: 1.2,
+                ibl_enabled: true,
+                ibl_intensity: 1.0,
+                motion_blur: crate::motion_blur::MotionBlurSettings {
+                    enabled: true,
+                    sample_count: 16,
+                    ..Default::default()
+                },
+                dof: crate::dof::DofSettings {
+                    enabled: true,
+                    max_blur_radius: 30.0,
+                    ..Default::default()
+                },
+                pcss_enabled: true,
                 ..PostProcessSettings::default()
             },
         }
@@ -2060,13 +2127,38 @@ mod tests {
                 s.ssao_intensity >= 0.0,
                 "{quality:?} ssao_intensity must be >= 0"
             );
+            assert!(
+                s.ibl_intensity > 0.0,
+                "{quality:?} ibl_intensity must be > 0"
+            );
+            assert!(s.pcss_enabled, "{quality:?} should have PCSS enabled");
         }
     }
 
     #[test]
-    fn low_has_ssao_off() {
+    fn low_has_new_features_off() {
         let s = RenderQuality::Low.to_settings();
         assert!(!s.ssao_enabled);
+        assert!(!s.ssgi_enabled, "Low should have SSGI disabled");
+        assert!(
+            !s.motion_blur.enabled,
+            "Low should have motion blur disabled"
+        );
+        assert!(!s.dof.enabled, "Low should have DoF disabled");
+        assert!(!s.ibl_enabled, "Low should have IBL disabled");
+    }
+
+    #[test]
+    fn default_settings_have_new_features_off() {
+        let s = PostProcessSettings::default();
+        assert!(!s.ssgi_enabled, "Default should have SSGI disabled");
+        assert!(
+            !s.motion_blur.enabled,
+            "Default should have motion blur disabled"
+        );
+        assert!(!s.dof.enabled, "Default should have DoF disabled");
+        assert!(!s.ibl_enabled, "Default should have IBL disabled");
+        assert!(s.pcss_enabled, "Default should have PCSS enabled");
     }
 
     #[test]
@@ -2087,6 +2179,32 @@ mod tests {
             s.saturation > 1.0,
             "Ultra should have slightly elevated saturation"
         );
+        // New WU1-WU7 features.
+        assert!(s.ssgi_enabled, "Ultra should have SSGI enabled");
+        assert_eq!(s.ssgi_ray_count, 8, "Ultra should use 8 SSGI rays");
+        assert!(
+            s.ssgi_intensity > 1.0,
+            "Ultra should have boosted SSGI intensity"
+        );
+        assert!(s.ibl_enabled, "Ultra should have IBL enabled");
+        assert!(
+            (s.ibl_intensity - 1.0).abs() < 1e-6,
+            "Ultra IBL intensity should be 1.0"
+        );
+        assert!(
+            s.motion_blur.enabled,
+            "Ultra should have motion blur enabled"
+        );
+        assert_eq!(
+            s.motion_blur.sample_count, 16,
+            "Ultra motion blur should use 16 samples"
+        );
+        assert!(s.dof.enabled, "Ultra should have DoF enabled");
+        assert!(
+            (s.dof.max_blur_radius - 30.0).abs() < 1e-6,
+            "Ultra DoF max blur radius should be 30"
+        );
+        assert!(s.pcss_enabled, "Ultra should have PCSS enabled");
     }
 
     #[test]
