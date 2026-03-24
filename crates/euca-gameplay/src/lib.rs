@@ -32,6 +32,8 @@ pub mod health;
 pub mod inventory;
 /// Experience points, levels, and XP bounties.
 pub mod leveling;
+/// Jungle neutral camp monsters with leash behavior.
+pub mod neutral_camp;
 /// Player hero marker, command queue, and command execution.
 pub mod player;
 /// Mouse/keyboard input translation to player commands.
@@ -92,6 +94,7 @@ pub use inventory::{
     equipment_stat_system, find_item, has_space, remove_item, unequip,
 };
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
+pub use neutral_camp::{NeutralCamp, neutral_camp_system};
 pub use player::{PlayerCommand, PlayerCommandQueue};
 pub use player_input::{ViewportSize, player_input_system, ray_ground_intersection};
 pub use stats::{BaseStats, DamageResistance, ResolvedStats, stat_resolution_system};
