@@ -39,11 +39,11 @@ External AI Agents (Claude Code, OpenClaw, etc.)
                     └─────────┘
 ```
 
-## Crate Map (24 crates, 767+ tests)
+## Crate Map (24 crates, 850+ tests)
 
 | Crate | Purpose | Tests |
 |-------|---------|-------|
-| `euca-ecs` | Archetype ECS: Entity, World, Query, Schedule, Events, change detection, query caching, ParallelSchedule | 89 |
+| `euca-ecs` | Archetype ECS: Entity, World, Query, Schedule, Events, change detection, Changed<T> filter, query caching, ParallelSchedule | 95 |
 | `euca-math` | SIMD-accelerated (SSE2/NEON) Vec2/3/4, Quat, Mat4, Transform, AABB | 39 |
 | `euca-reflect` | Runtime reflection: field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` | 6 |
 | `euca-scene` | Transform hierarchy, prefabs, spatial index, world streaming, level file format | 28 |
@@ -51,7 +51,7 @@ External AI Agents (Claude Code, OpenClaw, etc.)
 | `euca-render` | Forward+ PBR, cascaded shadows, FXAA, SSAO, SSR, volumetric fog, LOD, HLOD, HZB occlusion, GPU-driven, clustered lights (256+), foliage, decals, compute, Metal hints, SmartBuffer | 171 |
 | `euca-physics` | Collision layers/masks, mass, character controller, vehicle physics, CCD, spatial hash, scene queries, joints | 53 |
 | `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload | 11 |
-| `euca-agent` | HTTP API (axum), 70+ endpoints, nit auth, HUD canvas, level loading | — |
+| `euca-agent` | HTTP API (axum), 75+ endpoints, nit auth, HUD canvas, level loading | — |
 | `euca-editor` | egui: viewport, hierarchy, inspector, play/pause/stop/reset, gizmos, undo/redo, level loading | 13 |
 | `euca-input` | InputState, ActionMap, gamepad, input contexts, MOBA keybindings | 8 |
 | `euca-net` | UDP transport, reliable layer, property replication, delta compression, RPCs, interest culling | 39 |
@@ -65,7 +65,7 @@ External AI Agents (Claude Code, OpenClaw, etc.)
 | `euca-terrain` | Heightmap terrain, chunk LOD, 4-layer splatting, physics colliders, brush editing | 30 |
 | `euca-script` | Lua scripting (mlua): hot reload, sandboxing, ECS bridge, event handlers | 25 |
 | `euca-game` | Standalone game runner | 4 |
-| `euca-cli` | CLI tool: 25+ command groups, level load/save | 0 |
+| `euca-cli` | CLI tool: 30 command groups, level load/save, `euca discover --json` | 0 |
 
 ## Dependency DAG
 
