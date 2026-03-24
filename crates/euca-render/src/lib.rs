@@ -34,6 +34,8 @@ pub mod gpu_driven;
 pub mod gpu_particles;
 mod hardware;
 mod hlod;
+/// Image-Based Lighting (IBL) resource generation pipeline.
+pub mod ibl;
 mod light;
 /// Spherical-harmonics light probes for indirect lighting.
 pub mod light_probe;
@@ -97,6 +99,7 @@ pub use hlod::{
     HlodCluster, HlodClusterId, HlodRegistry, HlodVisibility, generate_hlod_cluster,
     hlod_select_system,
 };
+pub use ibl::IblResources;
 pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
 pub use light_probe::{LightProbe, LightProbeGrid, evaluate_sh};
 pub use lod::{LodSettings, lod_select_system};
