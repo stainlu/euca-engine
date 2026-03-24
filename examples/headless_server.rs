@@ -29,7 +29,7 @@ fn build_gameplay_schedule() -> Schedule {
     schedule.add_system(|w: &mut World| euca_gameplay::projectile_system(w, DT));
     schedule.add_system(euca_gameplay::trigger_system);
     schedule.add_system(|w: &mut World| euca_gameplay::ai_system(w, DT));
-    schedule.add_system(|w: &mut World| euca_gameplay::tower_aggro_system(w, DT));
+    schedule.add_system(euca_gameplay::tower_aggro_system);
     schedule.add_system(|w: &mut World| euca_gameplay::auto_combat_system(w, DT));
     schedule.add_system(|w: &mut World| euca_gameplay::neutral_camp_system(w, DT));
 
