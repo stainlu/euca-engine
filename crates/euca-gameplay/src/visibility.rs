@@ -8,7 +8,7 @@
 //! `ViewFilter` against all world entities and writes the resulting
 //! `VisibleTo` component on each observed entity.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use euca_ecs::{Entity, Query, World};
 use euca_math::Vec3;
@@ -101,7 +101,6 @@ pub struct VisibleTo(pub HashSet<Entity>);
 ///
 /// Uses [`SpatialIndex`] for efficient radius queries when available.
 pub fn visibility_system(world: &mut World) {
-    // 1. Collect observers (entities with ViewFilter).
     let observers: Vec<(Entity, ViewFilter)> = {
         let q = Query::<(Entity, &ViewFilter)>::new(world);
         q.iter().map(|(e, vf)| (e, vf.clone())).collect()
@@ -111,13 +110,11 @@ pub fn visibility_system(world: &mut World) {
         return;
     }
 
-    // 2. Collect all entities with positions (candidates for visibility).
     let candidates: Vec<(Entity, Vec3)> = {
         let q = Query::<(Entity, &LocalTransform)>::new(world);
         q.iter().map(|(e, lt)| (e, lt.0.translation)).collect()
     };
 
-    // 3. Pre-fetch observer positions and teams.
     let observer_data: Vec<(Entity, Vec3, Option<u8>, ViewFilter)> = observers
         .into_iter()
         .map(|(e, vf)| {
@@ -130,7 +127,6 @@ pub fn visibility_system(world: &mut World) {
         })
         .collect();
 
-    // 4. Pre-fetch zone data for InZone rules.
     let zone_data: Vec<(Entity, Vec3, f32)> = {
         let q = Query::<(Entity, &ZoneRadius, &LocalTransform)>::new(world);
         q.iter()
@@ -138,13 +134,10 @@ pub fn visibility_system(world: &mut World) {
             .collect()
     };
 
-    // 5. Build visibility map: target_entity -> set of observers who can see it.
-    let mut visibility_map: std::collections::HashMap<Entity, HashSet<Entity>> =
-        std::collections::HashMap::new();
+    let mut visibility_map: HashMap<Entity, HashSet<Entity>> = HashMap::new();
 
-    // Index candidates by Entity for O(1) lookup when narrowing via SpatialIndex.
-    let candidate_positions: std::collections::HashMap<Entity, Vec3> =
-        candidates.iter().copied().collect();
+    // O(1) lookup for narrowing spatial index results to candidate positions.
+    let candidate_positions: HashMap<Entity, Vec3> = candidates.iter().copied().collect();
 
     // Pre-compute spatial index queries for each observer that has a radius rule.
     // We do this while we have an immutable borrow on the world, then use the
@@ -164,17 +157,19 @@ pub fn visibility_system(world: &mut World) {
     for (i, (observer, obs_pos, obs_team, filter)) in observer_data.iter().enumerate() {
         // If we pre-computed a spatial query for this observer, use it to
         // narrow the candidate set. Otherwise, check all candidates.
-        let candidates_for_observer: Vec<(Entity, Vec3)> =
+        let narrowed: Vec<(Entity, Vec3)>;
+        let candidates_for_observer: &[(Entity, Vec3)] =
             if let Some(ref spatial_hits) = spatial_candidates[i] {
-                spatial_hits
+                narrowed = spatial_hits
                     .iter()
                     .filter_map(|e| candidate_positions.get(e).map(|pos| (*e, *pos)))
-                    .collect()
+                    .collect();
+                &narrowed
             } else {
-                candidates.clone()
+                &candidates
             };
 
-        for (target, target_pos) in &candidates_for_observer {
+        for (target, target_pos) in candidates_for_observer {
             // Don't evaluate visibility for the observer itself.
             if *target == *observer {
                 visibility_map.entry(*target).or_default().insert(*observer);
@@ -197,8 +192,7 @@ pub fn visibility_system(world: &mut World) {
         }
     }
 
-    // 6. Write VisibleTo components.
-    // First, clear VisibleTo on all entities that had it previously.
+    // Clear previous VisibleTo, then write new results.
     let existing_visible_to: Vec<Entity> = {
         let q = Query::<Entity, euca_ecs::With<VisibleTo>>::new(world);
         q.iter().collect()
@@ -209,7 +203,6 @@ pub fn visibility_system(world: &mut World) {
         }
     }
 
-    // Write new visibility data.
     for (entity, observers) in visibility_map {
         if let Some(vt) = world.get_mut::<VisibleTo>(entity) {
             vt.0 = observers;
@@ -220,16 +213,11 @@ pub fn visibility_system(world: &mut World) {
 }
 
 /// Returns the `WithinRadius` value from a rule set, if present.
-/// Used to pre-filter candidates via `SpatialIndex` before evaluating
-/// the full rule set.
 fn extract_radius(rules: &[VisibilityRule]) -> Option<f32> {
-    let mut radius = None;
-    for rule in rules {
-        if let VisibilityRule::WithinRadius { radius: r } = rule {
-            radius = Some(*r);
-        }
-    }
-    radius
+    rules.iter().find_map(|rule| match rule {
+        VisibilityRule::WithinRadius { radius } => Some(*radius),
+        _ => None,
+    })
 }
 
 /// Evaluate all rules (AND semantics). Returns `true` if the target is

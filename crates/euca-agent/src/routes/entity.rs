@@ -376,11 +376,7 @@ pub async fn entity_damage(
         if let Some(entity) = find_entity(w, entity_id)
             && let Some(events) = w.resource_mut::<euca_ecs::Events>()
         {
-            events.send(euca_gameplay::DamageEvent {
-                target: entity,
-                amount,
-                source: None,
-            });
+            events.send(euca_gameplay::DamageEvent::new(entity, amount, None));
         }
     });
 
