@@ -50,6 +50,15 @@ pub struct MobaCamera {
     pub locked: bool,
     /// Accumulated displacement from edge panning (world XZ plane).
     pub pan_offset: Vec3,
+
+    /// Key that, when HELD, temporarily centers camera on the follow entity.
+    /// Overrides edge-pan while held. Release returns to free camera.
+    /// `None` = no follow key configured.
+    pub follow_key: Option<euca_input::InputKey>,
+
+    /// Key that, when PRESSED, toggles the `locked` state.
+    /// `None` = no toggle key configured.
+    pub toggle_lock_key: Option<euca_input::InputKey>,
 }
 
 impl Default for MobaCamera {
@@ -63,8 +72,10 @@ impl Default for MobaCamera {
             max_zoom: 3.0,
             edge_pan_speed: 15.0,
             edge_pan_margin: 50.0,
-            locked: true,
+            locked: false,
             pan_offset: Vec3::ZERO,
+            follow_key: None,
+            toggle_lock_key: None,
         }
     }
 }
@@ -92,16 +103,38 @@ pub fn moba_camera_system(world: &mut World) {
         .map(|t| t.delta)
         .unwrap_or(1.0 / 60.0);
 
-    let (mouse_x, mouse_y, scroll) = world
-        .resource::<euca_input::InputState>()
-        .map(|input| {
-            (
+    // Snapshot all needed input values in a single borrow of InputState.
+    let (mouse_x, mouse_y, scroll, follow_held, toggle_pressed) = {
+        let cam_snapshot = world.resource::<MobaCamera>();
+        let input = world.resource::<euca_input::InputState>();
+        match (cam_snapshot, input) {
+            (Some(cam), Some(input)) => {
+                let follow = cam
+                    .follow_key
+                    .as_ref()
+                    .is_some_and(|key| input.is_pressed(key));
+                let toggle = cam
+                    .toggle_lock_key
+                    .as_ref()
+                    .is_some_and(|key| input.is_just_pressed(key));
+                (
+                    input.mouse_position[0],
+                    input.mouse_position[1],
+                    input.scroll_delta,
+                    follow,
+                    toggle,
+                )
+            }
+            (_, Some(input)) => (
                 input.mouse_position[0],
                 input.mouse_position[1],
                 input.scroll_delta,
-            )
-        })
-        .unwrap_or((f32::NAN, f32::NAN, 0.0));
+                false,
+                false,
+            ),
+            _ => (f32::NAN, f32::NAN, 0.0, false, false),
+        }
+    };
 
     let (screen_w, screen_h) = world
         .resource::<ScreenSize>()
@@ -140,9 +173,10 @@ pub fn moba_camera_system(world: &mut World) {
     // ── Compute edge-pan delta ──────────────────────────────────────────
 
     let mut new_pan_offset = cam.pan_offset;
+    let effectively_locked = cam.locked || follow_held;
 
-    if cam.locked {
-        // Locked mode: always reset pan offset
+    if effectively_locked {
+        // Locked mode or follow key held: always reset pan offset
         new_pan_offset = Vec3::ZERO;
     } else if !mouse_x.is_nan() && !screen_w.is_nan() {
         let margin = cam.edge_pan_margin;
@@ -170,11 +204,20 @@ pub fn moba_camera_system(world: &mut World) {
     let eye = hero_pos + cam.offset * new_zoom + new_pan_offset;
     let target = hero_pos + cam.look_at_offset + new_pan_offset;
 
+    // ── Toggle lock state ───────────────────────────────────────────────
+
+    let new_locked = if toggle_pressed {
+        !cam.locked
+    } else {
+        cam.locked
+    };
+
     // ── Write back ──────────────────────────────────────────────────────
 
     if let Some(moba) = world.resource_mut::<MobaCamera>() {
         moba.zoom = new_zoom;
         moba.pan_offset = new_pan_offset;
+        moba.locked = new_locked;
     }
 
     if let Some(camera) = world.resource_mut::<euca_render::Camera>() {
@@ -254,7 +297,7 @@ mod tests {
             cam.target.z
         );
 
-        // Pan offset should remain zero (locked = true by default)
+        // Pan offset should remain zero (no InputState → edge-pan cannot trigger)
         let moba = world.resource::<MobaCamera>().unwrap();
         assert_eq!(moba.pan_offset, Vec3::ZERO);
     }
@@ -387,5 +430,98 @@ mod tests {
         assert!((cam.eye.x - expected_eye.x).abs() < 1e-5);
         assert!((cam.eye.y - expected_eye.y).abs() < 1e-5);
         assert!((cam.eye.z - expected_eye.z).abs() < 1e-5);
+    }
+
+    #[test]
+    fn follow_key_held_centers_camera() {
+        let (mut world, _hero) = setup_world();
+
+        // Configure follow key and set camera to unlocked with an existing pan offset
+        let follow_key = euca_input::InputKey::Key("1".into());
+        if let Some(moba) = world.resource_mut::<MobaCamera>() {
+            moba.locked = false;
+            moba.follow_key = Some(follow_key.clone());
+            moba.pan_offset = Vec3::new(50.0, 0.0, -30.0);
+        }
+
+        // Hold the follow key
+        let mut input = euca_input::InputState::new();
+        input.press(follow_key);
+        input.set_mouse_position(500.0, 500.0);
+        world.insert_resource(input);
+        world.insert_resource(ScreenSize::default());
+
+        moba_camera_system(&mut world);
+
+        let moba = world.resource::<MobaCamera>().unwrap();
+        assert_eq!(
+            moba.pan_offset,
+            Vec3::ZERO,
+            "follow key held should reset pan_offset to zero"
+        );
+        // locked state should remain false (follow key does not toggle)
+        assert!(!moba.locked, "follow key should not change locked state");
+    }
+
+    #[test]
+    fn follow_key_released_allows_edge_pan() {
+        let (mut world, _hero) = setup_world();
+
+        // Configure follow key but do NOT press it; unlock camera
+        let follow_key = euca_input::InputKey::Key("1".into());
+        if let Some(moba) = world.resource_mut::<MobaCamera>() {
+            moba.locked = false;
+            moba.follow_key = Some(follow_key);
+        }
+
+        // Place mouse in the left margin to trigger edge pan
+        let mut input = euca_input::InputState::new();
+        input.set_mouse_position(10.0, 500.0);
+        world.insert_resource(input);
+        world.insert_resource(ScreenSize::default());
+
+        let mut time = euca_core::Time::new();
+        time.delta = 1.0 / 60.0;
+        world.insert_resource(time);
+
+        moba_camera_system(&mut world);
+
+        let moba = world.resource::<MobaCamera>().unwrap();
+        assert!(
+            moba.pan_offset.x < 0.0,
+            "with follow key released, edge pan should work — got pan_offset.x = {}",
+            moba.pan_offset.x
+        );
+    }
+
+    #[test]
+    fn toggle_lock_key_flips_locked() {
+        let (mut world, _hero) = setup_world();
+
+        let toggle_key = euca_input::InputKey::Key("Y".into());
+        if let Some(moba) = world.resource_mut::<MobaCamera>() {
+            moba.locked = false;
+            moba.toggle_lock_key = Some(toggle_key.clone());
+        }
+
+        // Press the toggle key (just_pressed)
+        let mut input = euca_input::InputState::new();
+        input.press(toggle_key.clone());
+        world.insert_resource(input);
+
+        moba_camera_system(&mut world);
+
+        let moba = world.resource::<MobaCamera>().unwrap();
+        assert!(moba.locked, "toggle should flip locked from false to true");
+
+        // Press again to flip back
+        let mut input = euca_input::InputState::new();
+        input.press(toggle_key);
+        world.insert_resource(input);
+
+        moba_camera_system(&mut world);
+
+        let moba = world.resource::<MobaCamera>().unwrap();
+        assert!(!moba.locked, "toggle should flip locked from true to false");
     }
 }

@@ -473,9 +473,12 @@ impl DotaClientApp {
             apply_hero_template(&mut self.world, hero_entity, "Juggernaut");
             log::info!("Applied Juggernaut template to player hero (entity {PLAYER_HERO_INDEX})");
 
-            // Point the MOBA camera at the player hero
+            // Point the MOBA camera at the player hero with DotA-style key bindings
             if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
                 cam.follow_entity = Some(hero_entity);
+                cam.locked = false;
+                cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
+                cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
             }
         } else {
             log::warn!("Player hero entity {PLAYER_HERO_INDEX} not found in level");
@@ -488,6 +491,9 @@ impl DotaClientApp {
                 apply_hero_template(&mut self.world, hero, "Juggernaut");
                 if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
                     cam.follow_entity = Some(hero);
+                    cam.locked = false;
+                    cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
+                    cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
                 }
             }
         }
@@ -806,7 +812,9 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     log::info!("Euca Engine — DotA Client");
-    log::info!("Controls: Click to move, Q/W/E/R for abilities, Scroll to zoom");
+    log::info!(
+        "Controls: Click to move, Q/W/E/R for abilities, Scroll to zoom, Hold 1 to center camera, Y to toggle lock"
+    );
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = DotaClientApp::new();
