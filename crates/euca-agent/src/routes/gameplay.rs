@@ -462,3 +462,208 @@ pub async fn ability_list(
 
     Json(data.unwrap_or(serde_json::json!({"error": "Entity not found"})))
 }
+
+// ── Status Effects ──
+
+/// POST /effect/apply — apply a status effect to an entity
+pub async fn effect_apply(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<super::MessageResponse> {
+    let entity_id = req.get("entity_id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let tag = req
+        .get("tag")
+        .and_then(|v| v.as_str())
+        .unwrap_or("effect")
+        .to_string();
+    let duration = req.get("duration").and_then(|v| v.as_f64()).unwrap_or(5.0) as f32;
+
+    let modifiers: Vec<euca_gameplay::StatModifier> = req
+        .get("modifiers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let s = v.as_str()?;
+                    parse_modifier(s)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let stack_policy = match req.get("stack_policy").and_then(|v| v.as_str()) {
+        Some(s) if s.starts_with("stack") => {
+            let max = s
+                .strip_prefix("stack:")
+                .and_then(|n| n.parse::<u32>().ok())
+                .unwrap_or(5);
+            euca_gameplay::StackPolicy::Stack { max }
+        }
+        _ => euca_gameplay::StackPolicy::Replace,
+    };
+
+    let tick_effect = req
+        .get("tick_effect")
+        .and_then(|v| v.as_str())
+        .and_then(parse_tick_effect);
+
+    let source_id = req.get("source").and_then(|v| v.as_u64()).map(|v| v as u32);
+
+    let ok = world.with(|w, _| {
+        let entity = match find_entity(w, entity_id) {
+            Some(e) => e,
+            None => return false,
+        };
+
+        let source = source_id.and_then(|id| find_entity(w, id));
+
+        let effect = euca_gameplay::StatusEffect {
+            tag: tag.clone(),
+            modifiers,
+            duration,
+            remaining: duration,
+            source,
+            stack_policy,
+            tick_effect,
+        };
+
+        euca_gameplay::apply_effect(w, entity, effect);
+        true
+    });
+
+    Json(super::MessageResponse {
+        ok,
+        message: Some(if ok {
+            format!("Applied effect '{tag}' to entity {entity_id} for {duration}s")
+        } else {
+            format!("Entity {entity_id} not found")
+        }),
+    })
+}
+
+/// GET /effect/list/:id — list active status effects on an entity
+pub async fn effect_list(
+    State(world): State<SharedWorld>,
+    axum::extract::Path(id): axum::extract::Path<u32>,
+) -> Json<serde_json::Value> {
+    let data = world.with_world(|w| {
+        let entity = find_entity(w, id)?;
+        let effects = w.get::<euca_gameplay::StatusEffects>(entity).map(|status| {
+            status
+                .effects
+                .iter()
+                .map(|e| {
+                    let modifiers: Vec<serde_json::Value> = e
+                        .modifiers
+                        .iter()
+                        .map(|m| {
+                            let op = match m.op {
+                                euca_gameplay::ModifierOp::Set => "set",
+                                euca_gameplay::ModifierOp::Add => "add",
+                                euca_gameplay::ModifierOp::Multiply => "multiply",
+                            };
+                            serde_json::json!({
+                                "stat": m.stat,
+                                "op": op,
+                                "value": m.value,
+                            })
+                        })
+                        .collect();
+
+                    let tick = e.tick_effect.as_ref().map(|t| match t {
+                        euca_gameplay::TickEffect::DamagePerSecond(dps) => {
+                            format!("dps:{dps}")
+                        }
+                        euca_gameplay::TickEffect::HealPerSecond(hps) => {
+                            format!("hps:{hps}")
+                        }
+                        euca_gameplay::TickEffect::Custom(tag) => {
+                            format!("custom:{tag}")
+                        }
+                    });
+
+                    serde_json::json!({
+                        "tag": e.tag,
+                        "duration": e.duration,
+                        "remaining": e.remaining,
+                        "modifiers": modifiers,
+                        "source": e.source.map(|s| s.index()),
+                        "tick_effect": tick,
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+
+        Some(serde_json::json!({
+            "entity_id": id,
+            "effects": effects.unwrap_or_default(),
+        }))
+    });
+
+    Json(data.unwrap_or(serde_json::json!({"error": "Entity not found"})))
+}
+
+/// POST /effect/cleanse — remove effects matching a tag filter
+pub async fn effect_cleanse(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<super::MessageResponse> {
+    let entity_id = req.get("entity_id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let filter = req
+        .get("filter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let result = world.with(|w, _| {
+        let entity = match find_entity(w, entity_id) {
+            Some(e) => e,
+            None => return None,
+        };
+        Some(euca_gameplay::cleanse(w, entity, &filter))
+    });
+
+    match result {
+        Some(removed) => Json(super::MessageResponse {
+            ok: true,
+            message: Some(format!(
+                "Cleansed {removed} effect(s) matching '{filter}' from entity {entity_id}"
+            )),
+        }),
+        None => Json(super::MessageResponse {
+            ok: false,
+            message: Some(format!("Entity {entity_id} not found")),
+        }),
+    }
+}
+
+/// Parse a modifier string "stat:op:value" into a StatModifier.
+fn parse_modifier(s: &str) -> Option<euca_gameplay::StatModifier> {
+    let parts: Vec<&str> = s.splitn(3, ':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let stat = parts[0].to_string();
+    let op = match parts[1] {
+        "set" => euca_gameplay::ModifierOp::Set,
+        "add" => euca_gameplay::ModifierOp::Add,
+        "multiply" | "mul" => euca_gameplay::ModifierOp::Multiply,
+        _ => return None,
+    };
+    let value: f64 = parts[2].parse().ok()?;
+    Some(euca_gameplay::StatModifier { stat, op, value })
+}
+
+/// Parse a tick effect string like "dps:10" or "hps:5" or "custom:bleed".
+fn parse_tick_effect(s: &str) -> Option<euca_gameplay::TickEffect> {
+    if let Some(rest) = s.strip_prefix("dps:") {
+        let v: f32 = rest.parse().ok()?;
+        Some(euca_gameplay::TickEffect::DamagePerSecond(v))
+    } else if let Some(rest) = s.strip_prefix("hps:") {
+        let v: f32 = rest.parse().ok()?;
+        Some(euca_gameplay::TickEffect::HealPerSecond(v))
+    } else {
+        s.strip_prefix("custom:")
+            .map(|rest| euca_gameplay::TickEffect::Custom(rest.to_string()))
+    }
+}

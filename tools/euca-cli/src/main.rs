@@ -90,6 +90,12 @@ enum Commands {
         command: AbilityCommands,
     },
 
+    /// Status effects: apply, list, cleanse
+    Effect {
+        #[command(subcommand)]
+        command: EffectCommands,
+    },
+
     /// Audio: play, stop, list sounds
     Audio {
         #[command(subcommand)]
@@ -347,6 +353,46 @@ enum AbilityCommands {
     List {
         /// Entity ID
         entity_id: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum EffectCommands {
+    /// Apply a status effect to an entity
+    Apply {
+        /// Entity ID
+        entity_id: u32,
+        /// Effect tag (e.g. "stun", "poison_debuff")
+        #[arg(long)]
+        tag: String,
+        /// Duration in seconds
+        #[arg(long, default_value = "5.0")]
+        duration: f32,
+        /// Stat modifiers as "stat:op:value" (repeatable)
+        #[arg(long)]
+        modifier: Vec<String>,
+        /// Tick effect: "dps:N", "hps:N", or "custom:tag"
+        #[arg(long)]
+        tick: Option<String>,
+        /// Stack policy: "replace" or "stack:N"
+        #[arg(long, default_value = "replace")]
+        stack: String,
+        /// Source entity ID
+        #[arg(long)]
+        source: Option<u32>,
+    },
+    /// List active status effects on an entity
+    List {
+        /// Entity ID
+        entity_id: u32,
+    },
+    /// Cleanse effects matching a tag filter
+    Cleanse {
+        /// Entity ID
+        entity_id: u32,
+        /// Substring to match against effect tags (e.g. "debuff")
+        #[arg(long)]
+        filter: String,
     },
 }
 
@@ -1368,6 +1414,51 @@ fn main() {
             AbilityCommands::List { entity_id } => {
                 let resp = client
                     .get(format!("{server}/ability/list/{entity_id}"))
+                    .send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Status Effects ──
+        Commands::Effect { command } => match command {
+            EffectCommands::Apply {
+                entity_id,
+                tag,
+                duration,
+                modifier,
+                tick,
+                stack,
+                source,
+            } => {
+                let mut body = serde_json::json!({
+                    "entity_id": entity_id,
+                    "tag": tag,
+                    "duration": duration,
+                    "modifiers": modifier,
+                    "stack_policy": stack,
+                });
+                if let Some(t) = tick {
+                    body["tick_effect"] = serde_json::json!(t);
+                }
+                if let Some(s) = source {
+                    body["source"] = serde_json::json!(s);
+                }
+                let resp = client
+                    .post(format!("{server}/effect/apply"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            EffectCommands::List { entity_id } => {
+                let resp = client
+                    .get(format!("{server}/effect/list/{entity_id}"))
+                    .send();
+                handle_response(resp)
+            }
+            EffectCommands::Cleanse { entity_id, filter } => {
+                let resp = client
+                    .post(format!("{server}/effect/cleanse"))
+                    .json(&serde_json::json!({"entity_id": entity_id, "filter": filter}))
                     .send();
                 handle_response(resp)
             }

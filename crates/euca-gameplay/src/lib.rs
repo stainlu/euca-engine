@@ -36,6 +36,8 @@ pub mod player;
 pub mod player_input;
 /// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
+/// Data-driven status effects (modifiers) with tick effects and cleanse.
+pub mod status_effects;
 /// Team assignment, spawn points, and respawn timers.
 pub mod teams;
 /// Spatial trigger zones that fire actions on overlap.
@@ -70,3 +72,7 @@ pub use economy::{Gold, GoldBounty, gold_on_kill_system};
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
 pub use player::{PlayerCommand, PlayerCommandQueue};
 pub use player_input::{ViewportSize, player_input_system, ray_ground_intersection};
+pub use status_effects::{
+    ModifierOp, StackPolicy, StatModifier, StatusEffect, StatusEffectExpired, StatusEffects,
+    TickEffect, apply_effect, cleanse, status_effect_tick_system,
+};
