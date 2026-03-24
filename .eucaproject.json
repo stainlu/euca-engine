@@ -1,6 +1,6 @@
 {
   "name": "Euca MOBA Demo",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "default_level": "level.json",
   "window": {
     "title": "Euca MOBA Demo",

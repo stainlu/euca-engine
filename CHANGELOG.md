@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.9.2 (2026-03-24)
+
+### Prove It Works — Verification & Hardening
+
+Documentation, CI, API completeness, and integration tests.
+
+- **Docs**: Updated stale ROADMAP.md — all phases (A–G) now marked complete. Updated crate/test counts in DESIGN.md.
+- **CI**: Added macOS test job to CI pipeline — catches Metal/Apple SIMD platform issues
+- **CLI**: Added `euca animation state-machine` and `euca animation montage` commands (were HTTP-only)
+- **CLI**: Added `euca script load/list` and `euca net status` commands (were internal-only)
+- **HTTP**: Added `POST /postprocess/preset` endpoint (was CLI-only)
+- **HTTP**: Added `POST /script/load`, `GET /script/list`, `GET /net/status` endpoints
+- **Testing**: 10 new headless integration tests covering full gameplay pipeline (damage → death → scoring → respawn → game-over)
+
 ## v0.9.1 (2026-03-24)
 
 ### Comprehensive Optimization — Full Engine Audit
