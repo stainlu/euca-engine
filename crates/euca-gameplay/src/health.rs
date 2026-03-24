@@ -6,6 +6,8 @@
 
 use euca_ecs::{Entity, Events, Query, World};
 
+use crate::stats::DamageResistance;
+
 /// Entity has hit points that can be reduced by damage or restored by healing.
 ///
 /// Damage pipeline: `DamageEvent` -> `apply_damage_system` reduces `current`
@@ -53,10 +55,41 @@ pub struct LastAttacker(pub Option<Entity>);
 pub struct DamageEvent {
     /// Entity to receive damage.
     pub target: Entity,
-    /// Raw damage amount (before any future mitigation).
+    /// Raw damage amount (before resistance mitigation).
     pub amount: f32,
     /// Who dealt the damage (used for kill attribution via `LastAttacker`).
     pub source: Option<Entity>,
+    /// Damage category (e.g. "physical", "magical", "true").
+    /// Not an enum — games define categories as data.
+    /// Defaults to "physical". The category "true" bypasses all resistance.
+    pub category: String,
+}
+
+impl DamageEvent {
+    /// Create a damage event with default category ("physical").
+    pub fn new(target: Entity, amount: f32, source: Option<Entity>) -> Self {
+        Self {
+            target,
+            amount,
+            source,
+            category: "physical".to_string(),
+        }
+    }
+
+    /// Create a damage event with a specific damage category.
+    pub fn with_category(
+        target: Entity,
+        amount: f32,
+        source: Option<Entity>,
+        category: impl Into<String>,
+    ) -> Self {
+        Self {
+            target,
+            amount,
+            source,
+            category: category.into(),
+        }
+    }
 }
 
 /// Notification that an entity has died. Emitted by `death_check_system`.
@@ -69,6 +102,11 @@ pub struct DeathEvent {
 }
 
 /// Apply pending damage events to Health components.
+///
+/// If the target has a [`DamageResistance`] component, resistance is applied:
+/// `effective = raw * (100.0 / (100.0 + resistance))`.
+/// The special category `"true"` bypasses resistance entirely.
+/// If the target has no `DamageResistance`, full damage is dealt.
 pub fn apply_damage_system(world: &mut World) {
     // Collect events first to avoid borrow conflicts
     let events: Vec<DamageEvent> = world
@@ -77,14 +115,47 @@ pub fn apply_damage_system(world: &mut World) {
         .unwrap_or_default();
 
     for event in events {
+        // Calculate effective damage after resistance
+        let effective_damage = compute_effective_damage(
+            event.amount,
+            &event.category,
+            world.get::<DamageResistance>(event.target),
+        );
+
         if let Some(health) = world.get_mut::<Health>(event.target) {
-            health.current = (health.current - event.amount).max(0.0);
+            health.current = (health.current - effective_damage).max(0.0);
         }
         // Track who dealt this damage for kill attribution
         if event.source.is_some() {
             world.insert(event.target, LastAttacker(event.source));
         }
     }
+}
+
+/// Compute effective damage after applying resistance.
+///
+/// Formula: `effective = raw * (100.0 / (100.0 + resistance))`.
+/// - If `category` is `"true"`, resistance is bypassed (full damage).
+/// - If no `DamageResistance` component or no entry for the category, full damage.
+fn compute_effective_damage(
+    raw: f32,
+    category: &str,
+    resistance: Option<&DamageResistance>,
+) -> f32 {
+    if category == "true" {
+        return raw;
+    }
+
+    let Some(dr) = resistance else {
+        return raw;
+    };
+
+    let resist_value = dr.0.get(category).copied().unwrap_or(0.0);
+    if resist_value <= 0.0 {
+        return raw;
+    }
+
+    raw * (100.0 / (100.0 + resist_value)) as f32
 }
 
 /// Check for entities with Health <= 0 that aren't already Dead.
@@ -152,11 +223,10 @@ mod tests {
         let entity = world.spawn(Health::new(100.0));
 
         // Send damage event
-        world.resource_mut::<Events>().unwrap().send(DamageEvent {
-            target: entity,
-            amount: 30.0,
-            source: None,
-        });
+        world
+            .resource_mut::<Events>()
+            .unwrap()
+            .send(DamageEvent::new(entity, 30.0, None));
 
         apply_damage_system(&mut world);
 
@@ -171,11 +241,10 @@ mod tests {
 
         let entity = world.spawn(Health::new(50.0));
 
-        world.resource_mut::<Events>().unwrap().send(DamageEvent {
-            target: entity,
-            amount: 999.0,
-            source: None,
-        });
+        world
+            .resource_mut::<Events>()
+            .unwrap()
+            .send(DamageEvent::new(entity, 999.0, None));
 
         apply_damage_system(&mut world);
 
@@ -254,5 +323,100 @@ mod tests {
 
         let health = world.get::<Health>(entity).unwrap();
         assert_eq!(health.current, 100.0);
+    }
+
+    // ── Damage resistance tests ──
+
+    #[test]
+    fn damage_reduced_by_resistance() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let entity = world.spawn(Health::new(100.0));
+        // 50 physical resistance → effective = 100 * (100 / 150) ≈ 66.67
+        let mut resist = std::collections::HashMap::new();
+        resist.insert("physical".to_string(), 50.0);
+        world.insert(entity, DamageResistance(resist));
+
+        world
+            .resource_mut::<Events>()
+            .unwrap()
+            .send(DamageEvent::new(entity, 100.0, None));
+
+        apply_damage_system(&mut world);
+
+        let health = world.get::<Health>(entity).unwrap();
+        // 100 - 66.67 = 33.33
+        let expected = 100.0 - 100.0 * (100.0 / 150.0) as f32;
+        assert!((health.current - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn true_damage_bypasses_resistance() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let entity = world.spawn(Health::new(100.0));
+        let mut resist = std::collections::HashMap::new();
+        resist.insert("physical".to_string(), 999.0);
+        world.insert(entity, DamageResistance(resist));
+
+        // "true" damage ignores all resistance
+        world
+            .resource_mut::<Events>()
+            .unwrap()
+            .send(DamageEvent::with_category(entity, 40.0, None, "true"));
+
+        apply_damage_system(&mut world);
+
+        let health = world.get::<Health>(entity).unwrap();
+        assert_eq!(health.current, 60.0);
+    }
+
+    #[test]
+    fn no_resistance_means_full_damage() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        // Entity without DamageResistance
+        let entity = world.spawn(Health::new(100.0));
+
+        world
+            .resource_mut::<Events>()
+            .unwrap()
+            .send(DamageEvent::new(entity, 25.0, None));
+
+        apply_damage_system(&mut world);
+
+        let health = world.get::<Health>(entity).unwrap();
+        assert_eq!(health.current, 75.0);
+    }
+
+    #[test]
+    fn unmatched_category_means_full_damage() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let entity = world.spawn(Health::new(100.0));
+        // Has physical resistance but takes magical damage
+        let mut resist = std::collections::HashMap::new();
+        resist.insert("physical".to_string(), 100.0);
+        world.insert(entity, DamageResistance(resist));
+
+        world
+            .resource_mut::<Events>()
+            .unwrap()
+            .send(DamageEvent::with_category(entity, 50.0, None, "magical"));
+
+        apply_damage_system(&mut world);
+
+        let health = world.get::<Health>(entity).unwrap();
+        assert_eq!(health.current, 50.0);
+    }
+
+    #[test]
+    fn backward_compat_default_category_is_physical() {
+        let event = DamageEvent::new(euca_ecs::Entity::from_raw(0, 0), 10.0, None);
+        assert_eq!(event.category, "physical");
     }
 }

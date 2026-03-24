@@ -174,11 +174,7 @@ pub fn zone_system(world: &mut World, dt: f32) {
             for effect in effects {
                 match effect {
                     ZoneEffect::DamagePerSecond(dps) => {
-                        damage_events.push(DamageEvent {
-                            target: *entity,
-                            amount: dps * dt,
-                            source: Some(*zone_entity),
-                        });
+                        damage_events.push(DamageEvent::new(*entity, dps * dt, Some(*zone_entity)));
                     }
                     ZoneEffect::HealPerSecond(hps) => {
                         heals.push((*entity, hps * dt));
@@ -306,11 +302,11 @@ pub fn zone_dynamic_system(world: &mut World, dt: f32) {
                 continue;
             }
             if !contains(&shape, &info.zone_pos, entity_pos) {
-                damage_events.push(DamageEvent {
-                    target: *entity,
-                    amount: info.damage_outside_dps * dt,
-                    source: Some(info.zone_entity),
-                });
+                damage_events.push(DamageEvent::new(
+                    *entity,
+                    info.damage_outside_dps * dt,
+                    Some(info.zone_entity),
+                ));
             }
         }
     }

@@ -38,6 +38,8 @@ pub mod player;
 pub mod player_input;
 /// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
+/// Stat block and damage resistance — data-driven entity attributes.
+pub mod stats;
 /// Genre-agnostic status effects (modifiers) with tick effects and cleanse.
 pub mod status_effects;
 /// Team assignment, spawn points, and respawn timers.
@@ -90,6 +92,7 @@ pub use inventory::{
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
 pub use player::{PlayerCommand, PlayerCommandQueue};
 pub use player_input::{ViewportSize, player_input_system, ray_ground_intersection};
+pub use stats::{BaseStats, DamageResistance, ResolvedStats, stat_resolution_system};
 pub use status_effects::{
     ModifierOp, StackPolicy, StatModifier, StatusEffect, StatusEffectExpired, StatusEffects,
     TickEffect, apply_status_effect, cleanse, effective_stat, status_effect_tick_system,

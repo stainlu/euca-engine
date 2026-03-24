@@ -288,11 +288,11 @@ fn resolve_effect(
                     .collect()
             };
             for target in targets {
-                actions.push(EffectAction::SendDamage(DamageEvent {
+                actions.push(EffectAction::SendDamage(DamageEvent::new(
                     target,
-                    amount: *damage,
-                    source: Some(ctx.caster),
-                }));
+                    *damage,
+                    Some(ctx.caster),
+                )));
             }
         }
 
@@ -310,11 +310,11 @@ fn resolve_effect(
         AbilityEffect::Damage { amount, .. } => {
             // Targets ctx.caster: standalone this is self-damage, but inside
             // AreaEffect the caster is rebound to each affected entity.
-            actions.push(EffectAction::SendDamage(DamageEvent {
-                target: ctx.caster,
-                amount: *amount,
-                source: Some(ctx.caster),
-            }));
+            actions.push(EffectAction::SendDamage(DamageEvent::new(
+                ctx.caster,
+                *amount,
+                Some(ctx.caster),
+            )));
         }
 
         AbilityEffect::SpawnProjectile {

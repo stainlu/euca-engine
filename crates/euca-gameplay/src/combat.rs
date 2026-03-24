@@ -107,11 +107,7 @@ pub fn projectile_system(world: &mut World, dt: f32) {
             }
             let dist = (new_pos - *target_pos).length();
             if dist < *radius {
-                damage_events.push(DamageEvent {
-                    target: *target_entity,
-                    amount: *damage,
-                    source: Some(*owner),
-                });
+                damage_events.push(DamageEvent::new(*target_entity, *damage, Some(*owner)));
                 to_despawn.push(*proj_entity);
                 break;
             }
@@ -400,11 +396,7 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             if dist <= combat.range {
                 // In attack range — deal damage if cooldown ready
                 if combat.elapsed >= combat.cooldown {
-                    damage_events.push(DamageEvent {
-                        target,
-                        amount: combat.damage,
-                        source: Some(entity),
-                    });
+                    damage_events.push(DamageEvent::new(target, combat.damage, Some(entity)));
                     cooldown_resets.push(entity);
                 }
                 velocity_updates.push((entity, Vec3::ZERO));

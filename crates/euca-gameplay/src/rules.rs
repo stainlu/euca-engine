@@ -535,11 +535,7 @@ pub fn execute_action(
             if let Some(entity) = resolve_target(target, trigger_entity, source)
                 && let Some(events) = world.resource_mut::<Events>()
             {
-                events.send(DamageEvent {
-                    target: entity,
-                    amount: *amount,
-                    source: None,
-                });
+                events.send(DamageEvent::new(entity, *amount, None));
             }
         }
         GameAction::Heal { target, amount } => {

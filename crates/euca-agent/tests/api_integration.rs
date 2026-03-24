@@ -217,11 +217,7 @@ fn test_damage_event_flow() {
     shared.with(|w, _| {
         let entity = euca_ecs::Entity::from_raw(entity_id, 0);
         if let Some(events) = w.resource_mut::<Events>() {
-            events.send(euca_gameplay::DamageEvent {
-                target: entity,
-                amount: 30.0,
-                source: None,
-            });
+            events.send(euca_gameplay::DamageEvent::new(entity, 30.0, None));
         }
     });
 

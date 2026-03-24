@@ -88,11 +88,7 @@ pub fn trigger_system(world: &mut World) {
             if diff.x.abs() < half.x && diff.y.abs() < half.y && diff.z.abs() < half.z {
                 match action {
                     TriggerAction::Damage { amount } => {
-                        damage_events.push(DamageEvent {
-                            target: *entity,
-                            amount: *amount,
-                            source: Some(*zone_entity),
-                        });
+                        damage_events.push(DamageEvent::new(*entity, *amount, Some(*zone_entity)));
                     }
                     TriggerAction::Heal { amount } => {
                         heals.push((*entity, *amount));

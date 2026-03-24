@@ -188,11 +188,11 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                     // In attack range — deal damage if cooldown ready.
                     velocity_updates.push((entity, Vec3::ZERO));
                     if ac.elapsed >= ac.cooldown {
-                        damage_events.push(DamageEvent {
-                            target: target_entity,
-                            amount: ac.damage,
-                            source: Some(entity),
-                        });
+                        damage_events.push(DamageEvent::new(
+                            target_entity,
+                            ac.damage,
+                            Some(entity),
+                        ));
                         cooldown_resets.push(entity);
                     }
                 } else {
@@ -225,11 +225,11 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                     let target =
                         find_nearest_enemy_in_range(world, entity, my_pos, ac.range, my_team);
                     if let Some(target_entity) = target {
-                        damage_events.push(DamageEvent {
-                            target: target_entity,
-                            amount: ac.damage,
-                            source: Some(entity),
-                        });
+                        damage_events.push(DamageEvent::new(
+                            target_entity,
+                            ac.damage,
+                            Some(entity),
+                        ));
                         cooldown_resets.push(entity);
                     }
                 }

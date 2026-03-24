@@ -172,11 +172,7 @@ pub fn status_effect_tick_system(world: &mut World, dt: f32) {
                 // Apply tick effects (proportional to dt).
                 match &effect.tick_effect {
                     Some(TickEffect::DamagePerSecond(dps)) => {
-                        damage_events.push(DamageEvent {
-                            target: entity,
-                            amount: dps * dt,
-                            source: effect.source,
-                        });
+                        damage_events.push(DamageEvent::new(entity, dps * dt, effect.source));
                     }
                     Some(TickEffect::HealPerSecond(hps)) => {
                         heals.push((entity, hps * dt));

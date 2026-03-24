@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::bandwidth::BandwidthBudget;
+use crate::interest::InterestManager;
 use crate::protocol::{NetworkId, Replicated};
 
 // ── ReplicatedComponent trait ──
@@ -230,6 +231,9 @@ pub struct ReplicationManager {
     pub clients: HashMap<u32, ClientReplicationState>,
     /// Outgoing replication data per client, populated by the send system.
     pub outgoing: HashMap<u32, Vec<EntityReplicationData>>,
+    /// Outgoing virtual despawns per client (entities that left interest radius).
+    /// These entities still exist server-side but should be removed on the client.
+    pub outgoing_despawns: HashMap<u32, Vec<NetworkId>>,
     /// Outgoing RPCs to send to specific clients.
     pub outgoing_rpcs: HashMap<u32, Vec<ClientRpc>>,
     /// Incoming RPCs from clients, to be validated and processed.
@@ -241,6 +245,7 @@ impl ReplicationManager {
         Self {
             clients: HashMap::new(),
             outgoing: HashMap::new(),
+            outgoing_despawns: HashMap::new(),
             outgoing_rpcs: HashMap::new(),
             incoming_rpcs: Vec::new(),
         }
@@ -251,6 +256,7 @@ impl ReplicationManager {
         self.clients
             .insert(client_id, ClientReplicationState::default());
         self.outgoing.insert(client_id, Vec::new());
+        self.outgoing_despawns.insert(client_id, Vec::new());
         self.outgoing_rpcs.insert(client_id, Vec::new());
     }
 
@@ -258,6 +264,7 @@ impl ReplicationManager {
     pub fn remove_client(&mut self, client_id: u32) {
         self.clients.remove(&client_id);
         self.outgoing.remove(&client_id);
+        self.outgoing_despawns.remove(&client_id);
         self.outgoing_rpcs.remove(&client_id);
     }
 
@@ -272,6 +279,14 @@ impl ReplicationManager {
     pub fn mark_sent(&mut self, client_id: u32, network_id: NetworkId, tick: u32) {
         if let Some(state) = self.clients.get_mut(&client_id) {
             state.last_sent_tick.insert(network_id, tick);
+        }
+    }
+
+    /// Remove an entity from a client's sent-tracking (after virtual despawn).
+    /// This ensures the entity will be treated as new if it re-enters interest.
+    pub fn mark_unsent(&mut self, client_id: u32, network_id: NetworkId) {
+        if let Some(state) = self.clients.get_mut(&client_id) {
+            state.last_sent_tick.remove(&network_id);
         }
     }
 
@@ -290,6 +305,14 @@ impl ReplicationManager {
     /// Drain outgoing replication data for a client.
     pub fn drain_outgoing(&mut self, client_id: u32) -> Vec<EntityReplicationData> {
         self.outgoing
+            .get_mut(&client_id)
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// Drain outgoing virtual despawns for a client (entities that left interest radius).
+    pub fn drain_outgoing_despawns(&mut self, client_id: u32) -> Vec<NetworkId> {
+        self.outgoing_despawns
             .get_mut(&client_id)
             .map(std::mem::take)
             .unwrap_or_default()
@@ -505,8 +528,15 @@ pub fn replication_collect_system(world: &mut World) {
 /// and populate the `ReplicationManager` outgoing buffers.
 ///
 /// Uses delta compression: only components whose change tick exceeds the
-/// last-sent tick for that client are serialized. Respects bandwidth budgets
-/// and replication priority.
+/// last-sent tick for that client are serialized. Respects bandwidth budgets,
+/// replication priority, and interest-based culling.
+///
+/// When an `InterestManager` resource exists with an entry for a client, only
+/// entities in that client's `relevant_entities` set are replicated. Entities
+/// that were previously sent but are no longer relevant receive a virtual
+/// despawn (the entity still exists server-side but the client removes it).
+/// If `InterestManager` is absent or has no entry for a client, all entities
+/// are sent (backward compatibility).
 pub fn replication_send_system(world: &mut World) {
     // Collect replicated entities and their priorities
     let replicated_entities: Vec<(Entity, NetworkId, u8)> = {
@@ -537,6 +567,31 @@ pub fn replication_send_system(world: &mut World) {
         return;
     }
 
+    // Snapshot interest data: for each client that has interest, capture the relevant set.
+    // If InterestManager is absent or has no entry for a client, that client gets `None`
+    // (meaning: send everything, backward compat).
+    let interest_snapshot: HashMap<u32, Option<std::collections::HashSet<u32>>> = {
+        let interest = world.resource::<InterestManager>();
+        world
+            .resource::<ReplicationManager>()
+            .map(|m| {
+                m.clients
+                    .keys()
+                    .map(|&cid| {
+                        let relevant = interest.and_then(|im| im.relevant_entities(cid).cloned());
+                        (cid, relevant)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // Build NetworkId -> entity_index lookup for O(1) despawn detection
+    let net_id_to_entity_index: HashMap<NetworkId, u32> = sorted_entities
+        .iter()
+        .map(|&(entity, net_id, _)| (net_id, entity.index()))
+        .collect();
+
     // Collect client IDs
     let client_ids: Vec<u32> = world
         .resource::<ReplicationManager>()
@@ -554,10 +609,20 @@ pub fn replication_send_system(world: &mut World) {
             .map(|r| r.estimated_bytes_per_entity)
             .unwrap_or(128);
 
+        let relevant_set = interest_snapshot.get(client_id).and_then(|v| v.as_ref());
+
         let mut replication_data: Vec<EntityReplicationData> = Vec::new();
         let mut sent_entities: Vec<(NetworkId, u32)> = Vec::new();
 
         for &(entity, network_id, _priority) in &sorted_entities {
+            // Interest culling: skip entities not in this client's interest set.
+            // If no interest entry exists for this client, send everything (backward compat).
+            if let Some(relevant) = relevant_set {
+                if !relevant.contains(&entity.index()) {
+                    continue;
+                }
+            }
+
             if !budget.try_allocate(estimated_bytes) {
                 break;
             }
@@ -580,13 +645,41 @@ pub fn replication_send_system(world: &mut World) {
             }
         }
 
+        // Detect entities that left the interest radius: previously sent but no longer relevant.
+        // These get a virtual despawn so the client removes them.
+        let mut despawned_ids: Vec<NetworkId> = Vec::new();
+
+        if let Some(relevant) = relevant_set {
+            if let Some(manager) = world.resource::<ReplicationManager>() {
+                if let Some(client_state) = manager.clients.get(client_id) {
+                    for &net_id in client_state.last_sent_tick.keys() {
+                        let still_relevant = net_id_to_entity_index
+                            .get(&net_id)
+                            .is_some_and(|eidx| relevant.contains(eidx));
+
+                        if !still_relevant {
+                            despawned_ids.push(net_id);
+                        }
+                    }
+                }
+            }
+        }
+
         // Update the manager with results
         if let Some(manager) = world.resource_mut::<ReplicationManager>() {
             for (network_id, tick) in sent_entities {
                 manager.mark_sent(*client_id, network_id, tick);
             }
+            // Clear sent-tracking for despawned entities so they're treated as new
+            // if they re-enter the interest radius.
+            for &net_id in &despawned_ids {
+                manager.mark_unsent(*client_id, net_id);
+            }
             if let Some(outgoing) = manager.outgoing.get_mut(client_id) {
                 outgoing.extend(replication_data);
+            }
+            if let Some(despawns) = manager.outgoing_despawns.get_mut(client_id) {
+                despawns.extend(despawned_ids);
             }
         }
     }
@@ -1054,5 +1147,257 @@ mod tests {
         assert_eq!(decoded.name, "velocity");
         assert_eq!(decoded.data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(decoded.change_tick, 42);
+    }
+
+    #[test]
+    fn replication_manager_mark_unsent() {
+        let mut manager = ReplicationManager::new();
+        manager.add_client(1);
+        manager.mark_sent(1, NetworkId(10), 5);
+        assert_eq!(manager.last_sent_tick(1, NetworkId(10)), Some(5));
+        manager.mark_unsent(1, NetworkId(10));
+        assert_eq!(manager.last_sent_tick(1, NetworkId(10)), None);
+    }
+
+    #[test]
+    fn replication_manager_drain_despawns() {
+        let mut manager = ReplicationManager::new();
+        manager.add_client(1);
+        manager
+            .outgoing_despawns
+            .get_mut(&1)
+            .unwrap()
+            .push(NetworkId(42));
+        let despawns = manager.drain_outgoing_despawns(1);
+        assert_eq!(despawns.len(), 1);
+        assert_eq!(despawns[0], NetworkId(42));
+        assert!(manager.drain_outgoing_despawns(1).is_empty());
+    }
+
+    /// Helper: set up a world with replication infrastructure and spawn entities
+    /// with Replicated + NetworkId. Returns (world, entity_list).
+    ///
+    /// Advances the world tick after spawning so that change detection picks up
+    /// the newly-spawned components (change tick 0 needs since_tick < 0, which
+    /// is impossible with unsigned, so we tick the world to ensure the change
+    /// detect check `tick > since_tick` passes for initial replication).
+    fn setup_replication_world(entity_count: u32) -> (World, Vec<(Entity, NetworkId)>) {
+        let mut world = World::new();
+        // Advance tick so spawning at tick 1 gives change_tick=1 > since_tick=0.
+        world.tick();
+
+        let mut registry = ComponentReplicationRegistry::new();
+        registry.register::<Position>("Position");
+        world.insert_resource(registry);
+
+        let mut manager = ReplicationManager::new();
+        manager.add_client(1);
+        world.insert_resource(manager);
+
+        let mut entities = Vec::new();
+        for i in 0..entity_count {
+            let pos = Position {
+                x: i as f32 * 10.0,
+                y: 0.0,
+                z: 0.0,
+            };
+            let net_id = NetworkId(i as u64);
+            let entity = world.spawn(pos);
+            world.insert(entity, Replicated);
+            world.insert(entity, net_id);
+            entities.push((entity, net_id));
+        }
+
+        (world, entities)
+    }
+
+    #[test]
+    fn interest_culling_filters_replication() {
+        let (mut world, entities) = setup_replication_world(3);
+
+        // Set up interest: client 1 is only interested in entity 0 and entity 2
+        let mut interest = InterestManager::new(crate::interest::InterestConfig {
+            max_relevance_distance: 100.0,
+            update_interval: 0,
+        });
+        interest.add_client(1, [0.0, 0.0, 0.0]);
+        interest
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .insert(entities[0].0.index());
+        interest
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .insert(entities[2].0.index());
+        world.insert_resource(interest);
+
+        replication_send_system(&mut world);
+
+        let manager = world.resource::<ReplicationManager>().unwrap();
+        let outgoing = manager.outgoing.get(&1).unwrap();
+
+        // Only 2 of 3 entities should be replicated
+        assert_eq!(outgoing.len(), 2);
+        let sent_ids: Vec<NetworkId> = outgoing.iter().map(|d| d.network_id).collect();
+        assert!(sent_ids.contains(&entities[0].1));
+        assert!(!sent_ids.contains(&entities[1].1));
+        assert!(sent_ids.contains(&entities[2].1));
+    }
+
+    #[test]
+    fn no_interest_manager_sends_all_entities() {
+        let (mut world, entities) = setup_replication_world(3);
+
+        // No InterestManager inserted - backward compat: all entities sent
+        replication_send_system(&mut world);
+
+        let manager = world.resource::<ReplicationManager>().unwrap();
+        let outgoing = manager.outgoing.get(&1).unwrap();
+        assert_eq!(outgoing.len(), entities.len());
+    }
+
+    #[test]
+    fn interest_manager_without_client_entry_sends_all() {
+        let (mut world, entities) = setup_replication_world(3);
+
+        // InterestManager exists but has no entry for client 1
+        let interest = InterestManager::new(crate::interest::InterestConfig::default());
+        world.insert_resource(interest);
+
+        replication_send_system(&mut world);
+
+        let manager = world.resource::<ReplicationManager>().unwrap();
+        let outgoing = manager.outgoing.get(&1).unwrap();
+        assert_eq!(outgoing.len(), entities.len());
+    }
+
+    #[test]
+    fn entity_leaving_interest_produces_despawn() {
+        let (mut world, entities) = setup_replication_world(2);
+
+        // First tick: both entities are relevant
+        let mut interest = InterestManager::new(crate::interest::InterestConfig {
+            max_relevance_distance: 100.0,
+            update_interval: 0,
+        });
+        interest.add_client(1, [0.0, 0.0, 0.0]);
+        interest
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .insert(entities[0].0.index());
+        interest
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .insert(entities[1].0.index());
+        world.insert_resource(interest);
+
+        replication_send_system(&mut world);
+
+        // Both should have been sent
+        let manager = world.resource::<ReplicationManager>().unwrap();
+        assert_eq!(manager.outgoing.get(&1).unwrap().len(), 2);
+        assert!(manager.outgoing_despawns.get(&1).unwrap().is_empty());
+
+        // Drain outgoing so we can check next tick
+        world
+            .resource_mut::<ReplicationManager>()
+            .unwrap()
+            .drain_outgoing(1);
+
+        // Second tick: entity 1 leaves interest
+        world
+            .resource_mut::<InterestManager>()
+            .unwrap()
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .remove(&entities[1].0.index());
+
+        replication_send_system(&mut world);
+
+        let manager = world.resource::<ReplicationManager>().unwrap();
+        let despawns = manager.outgoing_despawns.get(&1).unwrap();
+        assert_eq!(despawns.len(), 1);
+        assert_eq!(despawns[0], entities[1].1);
+
+        // Entity 1 should no longer be in last_sent_tick (mark_unsent was called)
+        assert!(manager.last_sent_tick(1, entities[1].1).is_none());
+        // Entity 0 should still be tracked
+        assert!(manager.last_sent_tick(1, entities[0].1).is_some());
+    }
+
+    #[test]
+    fn entity_reentering_interest_is_resent_as_new() {
+        let (mut world, entities) = setup_replication_world(1);
+
+        let mut interest = InterestManager::new(crate::interest::InterestConfig {
+            max_relevance_distance: 100.0,
+            update_interval: 0,
+        });
+        interest.add_client(1, [0.0, 0.0, 0.0]);
+        interest
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .insert(entities[0].0.index());
+        world.insert_resource(interest);
+
+        // Tick 1: entity is relevant, gets sent
+        replication_send_system(&mut world);
+        let manager = world.resource::<ReplicationManager>().unwrap();
+        assert_eq!(manager.outgoing.get(&1).unwrap().len(), 1);
+        world
+            .resource_mut::<ReplicationManager>()
+            .unwrap()
+            .drain_outgoing(1);
+
+        // Tick 2: entity leaves interest -> virtual despawn
+        world
+            .resource_mut::<InterestManager>()
+            .unwrap()
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .clear();
+        replication_send_system(&mut world);
+        let despawns = world
+            .resource_mut::<ReplicationManager>()
+            .unwrap()
+            .drain_outgoing_despawns(1);
+        assert_eq!(despawns.len(), 1);
+        world
+            .resource_mut::<ReplicationManager>()
+            .unwrap()
+            .drain_outgoing(1);
+
+        // Tick 3: entity re-enters interest -> should be sent again (since_tick=0, treated as new)
+        world
+            .resource_mut::<InterestManager>()
+            .unwrap()
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .relevant_entities
+            .insert(entities[0].0.index());
+        replication_send_system(&mut world);
+        let manager = world.resource::<ReplicationManager>().unwrap();
+        let outgoing = manager.outgoing.get(&1).unwrap();
+        assert_eq!(
+            outgoing.len(),
+            1,
+            "entity should be resent after re-entering interest"
+        );
+        assert_eq!(outgoing[0].network_id, entities[0].1);
     }
 }

@@ -30,11 +30,10 @@ fn spawn_fighter(world: &mut World, hp: f32, team: u8, pos: Vec3) -> Entity {
 
 /// Helper: send a damage event.
 fn deal_damage(world: &mut World, target: Entity, amount: f32, source: Option<Entity>) {
-    world.resource_mut::<Events>().unwrap().send(DamageEvent {
-        target,
-        amount,
-        source,
-    });
+    world
+        .resource_mut::<Events>()
+        .unwrap()
+        .send(DamageEvent::new(target, amount, source));
 }
 
 /// Helper: advance one gameplay tick (damage → death → scoring → respawn).
