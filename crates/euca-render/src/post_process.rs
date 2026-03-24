@@ -30,6 +30,18 @@ pub struct PostProcessSettings {
     /// Occlusion strength multiplier (default 1.0).
     pub ssao_intensity: f32,
 
+    // SSGI
+    /// Screen-space global illumination (indirect diffuse via depth ray-march).
+    pub ssgi_enabled: bool,
+    /// Number of rays cast per half-res pixel (4-8 recommended).
+    pub ssgi_ray_count: u32,
+    /// Maximum world-space ray distance.
+    pub ssgi_max_distance: f32,
+    /// Indirect lighting intensity multiplier.
+    pub ssgi_intensity: f32,
+    /// Temporal accumulation blend factor (0 = no history, 1 = all history).
+    pub ssgi_temporal_blend: f32,
+
     // SSR
     pub ssr_enabled: bool,
     pub ssr: crate::ssr::SsrSettings,
@@ -60,6 +72,11 @@ impl Default for PostProcessSettings {
             ssao_enabled: true,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
+            ssgi_enabled: false,
+            ssgi_ray_count: 4,
+            ssgi_max_distance: 10.0,
+            ssgi_intensity: 1.0,
+            ssgi_temporal_blend: 0.9,
             ssr_enabled: false,
             ssr: crate::ssr::SsrSettings::default(),
             fxaa_enabled: true,
@@ -1451,6 +1468,11 @@ mod tests {
             ssao_enabled: true,
             ssao_radius: 0.75,
             ssao_intensity: 1.5,
+            ssgi_enabled: false,
+            ssgi_ray_count: 4,
+            ssgi_max_distance: 10.0,
+            ssgi_intensity: 1.0,
+            ssgi_temporal_blend: 0.9,
             fxaa_enabled: true,
             bloom_enabled: false,
             bloom_threshold: 1.0,

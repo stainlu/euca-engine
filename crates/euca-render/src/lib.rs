@@ -50,6 +50,8 @@ pub mod post_process;
 /// Depth and normal pre-pass for deferred techniques.
 pub mod prepass;
 mod renderer;
+/// Screen-space global illumination (indirect diffuse via depth-buffer ray-march).
+pub mod ssgi;
 /// Screen-space reflections.
 pub mod ssr;
 /// Temporal anti-aliasing resolve pass.
@@ -108,6 +110,7 @@ pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::{PostProcessSettings, PostProcessStack};
 pub use renderer::{DrawCommand, RenderQuality, Renderer};
+pub use ssgi::{SsgiExecuteParams, SsgiPass, SsgiSettings, step_size as ssgi_step_size};
 pub use ssr::{
     SsrExecuteParams, SsrPass, SsrSettings, compute_step_count, passes_roughness_filter,
 };
