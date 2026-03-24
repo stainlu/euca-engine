@@ -91,6 +91,8 @@ pub enum GameAction {
         #[serde(default = "default_text_color")]
         color: String,
     },
+    #[serde(rename = "endgame")]
+    EndGame { winner_team: u8 },
 }
 
 fn default_text_size() -> f32 {
@@ -579,6 +581,14 @@ pub fn execute_action(
             // For now, log the text. The HTTP layer can bridge this.
             log::info!("Rule ShowText: '{text}' at ({x}, {y}) size={size} color={color}");
         }
+        GameAction::EndGame { winner_team } => {
+            if let Some(state) = world.resource_mut::<crate::game_state::GameState>() {
+                state.phase = crate::game_state::GamePhase::PostMatch {
+                    winner: Some(Entity::from_raw(u32::from(*winner_team), 0)),
+                };
+                log::info!("Game over! Team {} wins!", winner_team);
+            }
+        }
     }
 }
 
@@ -687,6 +697,10 @@ pub fn parse_action(s: &str) -> Option<GameAction> {
                 size: 20.0,
                 color: "white".to_string(),
             })
+        }
+        "endgame" => {
+            let team: u8 = parts.get(1)?.trim().parse().ok()?;
+            Some(GameAction::EndGame { winner_team: team })
         }
         _ => None,
     }
@@ -1063,5 +1077,58 @@ mod tests {
 
         // Should have spawned exactly 1 entity (default when count is None)
         assert_eq!(world.entity_count() - count_before, 1);
+    }
+
+    #[test]
+    fn parse_action_endgame_team_1() {
+        let action = parse_action("endgame 1").unwrap();
+        match action {
+            GameAction::EndGame { winner_team } => assert_eq!(winner_team, 1),
+            _ => panic!("Expected EndGame"),
+        }
+    }
+
+    #[test]
+    fn parse_action_endgame_team_2() {
+        let action = parse_action("endgame 2").unwrap();
+        match action {
+            GameAction::EndGame { winner_team } => assert_eq!(winner_team, 2),
+            _ => panic!("Expected EndGame"),
+        }
+    }
+
+    #[test]
+    fn execute_endgame_transitions_to_postmatch() {
+        use crate::game_state::{GamePhase, GameState, MatchConfig};
+
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let mut state = GameState::new(MatchConfig::default());
+        state.start();
+        world.insert_resource(state);
+
+        let action = GameAction::EndGame { winner_team: 1 };
+        let dummy = Entity::from_raw(0, 0);
+        execute_action(&mut world, &action, dummy, None);
+
+        let state = world.resource::<GameState>().unwrap();
+        assert_eq!(
+            state.phase,
+            GamePhase::PostMatch {
+                winner: Some(Entity::from_raw(1, 0))
+            }
+        );
+    }
+
+    #[test]
+    fn execute_endgame_without_game_state_no_panic() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let action = GameAction::EndGame { winner_team: 2 };
+        let dummy = Entity::from_raw(0, 0);
+        // Should not panic when GameState resource is absent
+        execute_action(&mut world, &action, dummy, None);
     }
 }
