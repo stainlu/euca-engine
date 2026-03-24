@@ -617,10 +617,10 @@ pub fn replication_send_system(world: &mut World) {
         for &(entity, network_id, _priority) in &sorted_entities {
             // Interest culling: skip entities not in this client's interest set.
             // If no interest entry exists for this client, send everything (backward compat).
-            if let Some(relevant) = relevant_set {
-                if !relevant.contains(&entity.index()) {
-                    continue;
-                }
+            if let Some(relevant) = relevant_set
+                && !relevant.contains(&entity.index())
+            {
+                continue;
             }
 
             if !budget.try_allocate(estimated_bytes) {

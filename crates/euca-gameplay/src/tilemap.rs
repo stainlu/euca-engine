@@ -250,15 +250,15 @@ pub fn tile_income_system(world: &mut World, dt: f32) {
 
         let mut owned: Vec<(Entity, Vec<(String, f64)>)> = Vec::new();
         for tile in &map.tiles {
-            if let Some(owner_idx) = tile.owner {
-                if let Some(&entity) = owners.entities.get(owner_idx as usize) {
-                    let props: Vec<(String, f64)> = tile
-                        .properties
-                        .iter()
-                        .map(|(k, v)| (k.clone(), *v))
-                        .collect();
-                    owned.push((entity, props));
-                }
+            if let Some(owner_idx) = tile.owner
+                && let Some(&entity) = owners.entities.get(owner_idx as usize)
+            {
+                let props: Vec<(String, f64)> = tile
+                    .properties
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect();
+                owned.push((entity, props));
             }
         }
         owned

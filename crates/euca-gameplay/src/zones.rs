@@ -12,6 +12,10 @@
 //! duplicate any logic. Move, scale, or despawn zones like any other entity.
 
 use euca_ecs::{Entity, Events, Query, World};
+use euca_math::Vec3;
+
+/// Snapshot of a zone's data, collected before mutating the world.
+type ZoneSnapshot = (Entity, Vec3, ZoneShape, Vec<ZoneEffect>, Option<u8>);
 use euca_scene::LocalTransform;
 
 use crate::health::{DamageEvent, heal};
@@ -100,7 +104,7 @@ pub struct ZoneDynamic {
 // ── Containment helpers ──
 
 /// Test whether a point (on the XZ plane) is inside a zone shape centered at `zone_pos`.
-fn contains(shape: &ZoneShape, zone_pos: &euca_math::Vec3, point: &euca_math::Vec3) -> bool {
+fn contains(shape: &ZoneShape, zone_pos: &Vec3, point: &Vec3) -> bool {
     let dx = point.x - zone_pos.x;
     let dz = point.z - zone_pos.z;
     match shape {
@@ -120,13 +124,7 @@ fn contains(shape: &ZoneShape, zone_pos: &euca_math::Vec3, point: &euca_math::Ve
 /// which respects the status effect's stack policy.
 pub fn zone_system(world: &mut World, dt: f32) {
     // Phase 1: collect zone data (avoids holding a borrow on World).
-    let zones: Vec<(
-        Entity,
-        euca_math::Vec3,
-        ZoneShape,
-        Vec<ZoneEffect>,
-        Option<u8>,
-    )> = {
+    let zones: Vec<ZoneSnapshot> = {
         let query = Query::<(Entity, &Zone, &LocalTransform)>::new(world);
         query
             .iter()
@@ -144,7 +142,7 @@ pub fn zone_system(world: &mut World, dt: f32) {
     };
 
     // Phase 2: collect all positioned entities (potential targets).
-    let entities: Vec<(Entity, euca_math::Vec3)> = {
+    let entities: Vec<(Entity, Vec3)> = {
         let query = Query::<(Entity, &LocalTransform)>::new(world);
         query.iter().map(|(e, lt)| (e, lt.0.translation)).collect()
     };
@@ -257,7 +255,7 @@ pub fn zone_dynamic_system(world: &mut World, dt: f32) {
     // Phase 1: collect dynamic zone data and perform shrinking.
     struct DynamicZoneInfo {
         zone_entity: Entity,
-        zone_pos: euca_math::Vec3,
+        zone_pos: Vec3,
         radius: f32,
         damage_outside_dps: f32,
     }
@@ -286,7 +284,7 @@ pub fn zone_dynamic_system(world: &mut World, dt: f32) {
     }
 
     // Phase 2: find entities outside each dynamic zone and apply damage.
-    let entities: Vec<(Entity, euca_math::Vec3)> = {
+    let entities: Vec<(Entity, Vec3)> = {
         let query = Query::<(Entity, &LocalTransform)>::new(world);
         query.iter().map(|(e, lt)| (e, lt.0.translation)).collect()
     };
