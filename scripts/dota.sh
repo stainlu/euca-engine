@@ -155,6 +155,20 @@ echo ""
 
 echo "  3 heroes registered."
 
+# ── 3b. Apply hero templates to spawned hero entities ──
+echo "Selecting heroes..."
+# Entity 16 = Team 1 hero (Radiant), Entity 17 = Team 2 hero (Dire)
+# (2 ancients + 12 towers + 2 spawn points = 16 entities before heroes)
+curl -s -X POST "${SERVER}/hero/select" \
+  -H 'Content-Type: application/json' \
+  -d '{"entity_id": 16, "hero_name": "Juggernaut"}'
+echo ""
+curl -s -X POST "${SERVER}/hero/select" \
+  -H 'Content-Type: application/json' \
+  -d '{"entity_id": 17, "hero_name": "Sven"}'
+echo ""
+echo "  Heroes selected: Juggernaut (Radiant) vs Sven (Dire)"
+
 # ── 4. Spawn neutral jungle camps ──
 echo "Spawning neutral camps..."
 

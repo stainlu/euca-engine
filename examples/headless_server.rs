@@ -67,6 +67,9 @@ fn build_gameplay_schedule() -> Schedule {
     // SLG economy
     schedule.add_system(|w: &mut World| euca_gameplay::tile_income_system(w, DT));
 
+    // Camera
+    schedule.add_system(euca_gameplay::camera::moba_camera_system);
+
     schedule
 }
 
