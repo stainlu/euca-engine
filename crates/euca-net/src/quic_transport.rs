@@ -3,6 +3,7 @@
 //! Provides TLS 1.3 encryption, built-in congestion control (Cubic),
 //! connection management, and both reliable streams and unreliable datagrams.
 
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -11,6 +12,9 @@ use std::sync::Arc;
 pub struct QuicTransport {
     endpoint: quinn::Endpoint,
     connections: HashMap<SocketAddr, quinn::Connection>,
+    /// Persistent unidirectional send streams for reliable data (one per peer).
+    /// Avoids opening a new QUIC stream for every reliable send.
+    reliable_streams: HashMap<SocketAddr, quinn::SendStream>,
 }
 
 impl QuicTransport {
@@ -40,6 +44,7 @@ impl QuicTransport {
         Ok(Self {
             endpoint,
             connections: HashMap::new(),
+            reliable_streams: HashMap::new(),
         })
     }
 
@@ -69,6 +74,7 @@ impl QuicTransport {
         Ok(Self {
             endpoint,
             connections: HashMap::new(),
+            reliable_streams: HashMap::new(),
         })
     }
 
@@ -96,20 +102,35 @@ impl QuicTransport {
         Some(addr)
     }
 
-    /// Send data reliably to a peer via a unidirectional QUIC stream.
-    pub async fn send_reliable(&self, addr: &SocketAddr, data: &[u8]) -> Result<(), String> {
+    /// Send data reliably to a peer via a persistent unidirectional QUIC stream.
+    ///
+    /// Reuses an existing stream when possible. If the cached stream has been
+    /// closed or errors on write, a fresh stream is opened transparently.
+    pub async fn send_reliable(&mut self, addr: &SocketAddr, data: &[u8]) -> Result<(), String> {
         let conn = self
             .connections
             .get(addr)
-            .ok_or_else(|| format!("No connection to {addr}"))?;
+            .ok_or_else(|| format!("No connection to {addr}"))?
+            .clone();
 
+        // Build the frame once: 4-byte little-endian length prefix + payload.
+        let len = (data.len() as u32).to_le_bytes();
+
+        // Try writing on the cached stream first.
+        if let Some(stream) = self.reliable_streams.get_mut(addr) {
+            if stream.write_all(&len).await.is_ok() && stream.write_all(data).await.is_ok() {
+                return Ok(());
+            }
+            // Stream broken -- remove and fall through to open a new one.
+            self.reliable_streams.remove(addr);
+        }
+
+        // Open a new stream and cache it.
         let mut stream = conn
             .open_uni()
             .await
             .map_err(|e| format!("Failed to open stream: {e}"))?;
 
-        // Write length prefix + data
-        let len = (data.len() as u32).to_le_bytes();
         stream
             .write_all(&len)
             .await
@@ -118,9 +139,8 @@ impl QuicTransport {
             .write_all(data)
             .await
             .map_err(|e| format!("Write data failed: {e}"))?;
-        stream
-            .finish()
-            .map_err(|e| format!("Finish stream failed: {e}"))?;
+
+        self.reliable_streams.insert(*addr, stream);
 
         Ok(())
     }
@@ -135,7 +155,7 @@ impl QuicTransport {
             .get(addr)
             .ok_or_else(|| format!("No connection to {addr}"))?;
 
-        conn.send_datagram(data.to_vec().into())
+        conn.send_datagram(Bytes::copy_from_slice(data))
             .map_err(|e| format!("Datagram send failed: {e}"))?;
 
         Ok(())
@@ -155,6 +175,7 @@ impl QuicTransport {
 
     /// Disconnect a peer.
     pub fn disconnect(&mut self, addr: &SocketAddr) {
+        self.reliable_streams.remove(addr);
         if let Some(conn) = self.connections.remove(addr) {
             conn.close(quinn::VarInt::from_u32(0), b"disconnect");
             log::info!("Disconnected {addr}");

@@ -14,6 +14,7 @@ euca-input = { path = "../euca-input" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 log = "0.4"
+bytes = "1"
 quinn = "0.11"
 rustls = { version = "0.23", features = ["ring"] }
 rcgen = "0.13"

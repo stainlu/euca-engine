@@ -1,6 +1,7 @@
 //! Interest management: only replicate entities near each client.
 
 use euca_ecs::{Entity, Query, World};
+use euca_scene::GlobalTransform;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -117,14 +118,21 @@ impl InterestManager {
 
 /// System: update interest sets for all clients using world entity positions.
 pub fn interest_culling_system(world: &mut World) {
-    // Collect entity positions
+    // Collect entity positions from GlobalTransform (world-space).
+    // Entities without a GlobalTransform are placed at the origin.
     let positions: Vec<(u32, f32, f32, f32)> = {
         let query = Query::<(Entity, &crate::protocol::Replicated)>::new(world);
         query
             .iter()
             .map(|(e, _)| {
-                // Placeholder: real implementation would read GlobalTransform
-                (e.index(), 0.0, 0.0, 0.0)
+                let (x, y, z) = match world.get::<GlobalTransform>(e) {
+                    Some(gt) => {
+                        let t = &gt.0.translation;
+                        (t.x, t.y, t.z)
+                    }
+                    None => (0.0, 0.0, 0.0),
+                };
+                (e.index(), x, y, z)
             })
             .collect()
     };
