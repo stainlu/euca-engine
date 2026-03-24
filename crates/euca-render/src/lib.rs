@@ -25,6 +25,8 @@ pub mod compute;
 pub mod decal;
 /// Deferred shading G-buffer and lighting pass.
 pub mod deferred;
+/// Depth of field (thin-lens bokeh blur).
+pub mod dof;
 /// Procedural foliage scattering and instanced rendering.
 pub mod foliage;
 mod gpu;
@@ -44,6 +46,8 @@ mod material;
 mod mesh;
 /// Apple Metal backend hints and render pass optimization.
 pub mod metal_hints;
+/// Per-pixel velocity-based motion blur.
+pub mod motion_blur;
 /// Hierarchical Z-buffer (HZB) occlusion culling.
 pub mod occlusion;
 mod plugin;
@@ -85,6 +89,7 @@ pub use decal::{
 pub use deferred::{
     DeferredLightingUniforms, DeferredPipeline, GBuffer, GBufferFormats, RenderPath,
 };
+pub use dof::{DofPass, DofSettings};
 pub use foliage::{
     FoliageDrawData, FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, scatter_foliage,
 };
@@ -109,6 +114,7 @@ pub use metal_hints::{
     AttachmentOps, ComputeOptimizer, ComputeTimingHint, DepthAttachmentOps, MetalRenderHints,
     RenderPassLayout, RenderPassOptimizer,
 };
+pub use motion_blur::{MotionBlurPass, MotionBlurSettings};
 pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::{PostProcessSettings, PostProcessStack};

@@ -53,6 +53,12 @@ pub struct PostProcessSettings {
     pub bloom_enabled: bool,
     pub bloom_threshold: f32,
 
+    // Motion blur
+    pub motion_blur: crate::motion_blur::MotionBlurSettings,
+
+    // Depth of field
+    pub dof: crate::dof::DofSettings,
+
     // Color grading
     /// EV stops: final color *= 2^exposure (default 0.0 = no change).
     pub exposure: f32,
@@ -79,6 +85,8 @@ impl Default for PostProcessSettings {
             ssgi_temporal_blend: 0.9,
             ssr_enabled: false,
             ssr: crate::ssr::SsrSettings::default(),
+            motion_blur: crate::motion_blur::MotionBlurSettings::default(),
+            dof: crate::dof::DofSettings::default(),
             fxaa_enabled: true,
             bloom_enabled: true,
             bloom_threshold: 0.8,
@@ -1482,6 +1490,8 @@ mod tests {
             temperature: -10.0,
             ssr_enabled: false,
             ssr: crate::ssr::SsrSettings::default(),
+            motion_blur: crate::motion_blur::MotionBlurSettings::default(),
+            dof: crate::dof::DofSettings::default(),
         };
         let u = PostProcessUniforms::from_settings(&settings, 1920, 1080);
         assert_eq!(u.color_grade[0], 0.5);

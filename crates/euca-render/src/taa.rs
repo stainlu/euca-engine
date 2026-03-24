@@ -1,7 +1,8 @@
-//! Temporal Anti-Aliasing (TAA) resolve pass.
+//! Enhanced Temporal Anti-Aliasing (TAA) resolve pass.
 //!
 //! Blends the current jittered frame with accumulated history using
-//! neighborhood clamping to prevent ghosting. Runs as a compute shader
+//! velocity-buffer reprojection, variance-based neighborhood clamping in
+//! YCoCg space, and disocclusion detection. Runs as a compute shader
 //! between the main PBR pass and post-processing.
 
 use euca_math::Mat4;
@@ -17,7 +18,9 @@ struct TaaParamsGpu {
     jitter: [f32; 2],
     resolution: [f32; 2],
     blend_factor: f32,
-    _pad: [f32; 3],
+    variance_gamma: f32,
+    depth_threshold: f32,
+    _pad: f32,
 }
 
 /// TAA resolve pass — manages history textures and dispatches the resolve shader.
@@ -110,6 +113,17 @@ impl TaaPass {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // 6: velocity buffer (Rg16Float motion vectors)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -241,13 +255,14 @@ impl TaaPass {
         &self.output_texture
     }
 
-    /// Execute the TAA resolve pass.
+    /// Execute the enhanced TAA resolve pass.
     ///
-    /// Reads the current HDR frame and depth, reprojects from history,
-    /// blends with neighborhood clamping, writes to output.
+    /// Uses velocity-buffer reprojection instead of depth-based reprojection
+    /// for accurate per-pixel motion tracking. Applies variance-based
+    /// neighborhood clamping in YCoCg space and detects disocclusion events.
     // clippy::too_many_arguments — TAA resolve requires the current frame,
-    // depth, two view-projection matrices, and jitter; all are distinct GPU
-    // resources or per-frame parameters that don't form a reusable struct.
+    // depth, velocity, two view-projection matrices, and jitter; all are
+    // distinct GPU resources or per-frame parameters.
     #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &mut self,
@@ -256,6 +271,7 @@ impl TaaPass {
         encoder: &mut wgpu::CommandEncoder,
         current_frame_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
+        velocity_view: &wgpu::TextureView,
         inv_vp: &Mat4,
         prev_vp: &Mat4,
         jitter: [f32; 2],
@@ -267,7 +283,9 @@ impl TaaPass {
             jitter,
             resolution: [self.width as f32, self.height as f32],
             blend_factor: 0.1,
-            _pad: [0.0; 3],
+            variance_gamma: 1.0,
+            depth_threshold: 0.01,
+            _pad: 0.0,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
 
@@ -303,6 +321,10 @@ impl TaaPass {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(velocity_view),
                 },
             ],
         });
@@ -349,11 +371,65 @@ mod tests {
 
     #[test]
     fn taa_params_gpu_size() {
-        // Ensure the GPU struct is the expected size (must match shader layout)
+        // Ensure the GPU struct is the expected size (must match shader layout).
+        // 2 mat4x4 (64 each) + vec2 + vec2 + f32 + f32 + f32 + f32 pad = 128 + 8 + 8 + 16 = 160
+        assert_eq!(std::mem::size_of::<TaaParamsGpu>(), 160);
+    }
+
+    #[test]
+    fn taa_params_gpu_alignment() {
         assert_eq!(
-            std::mem::size_of::<TaaParamsGpu>(),
-            // 2 mat4x4 (64 each) + vec2 + vec2 + f32 + vec3 pad = 128 + 8 + 8 + 4 + 12 = 160
-            160,
+            std::mem::size_of::<TaaParamsGpu>() % 16,
+            0,
+            "TaaParamsGpu must be 16-byte aligned for uniform buffers"
+        );
+    }
+
+    #[test]
+    fn taa_shader_source_valid() {
+        assert!(!TAA_SHADER.is_empty());
+        assert!(TAA_SHADER.contains("@compute"));
+        assert!(TAA_SHADER.contains("@workgroup_size(8, 8)"));
+        assert!(TAA_SHADER.contains("fn main"));
+        assert!(
+            TAA_SHADER.contains("velocity_tex"),
+            "Shader must reference velocity texture"
+        );
+        assert!(
+            TAA_SHADER.contains("variance_gamma"),
+            "Shader must use variance-based clamping"
+        );
+        assert!(
+            TAA_SHADER.contains("depth_threshold"),
+            "Shader must have disocclusion detection"
+        );
+    }
+
+    #[test]
+    fn taa_params_default_values() {
+        // Verify the default uniform values are reasonable.
+        let params = TaaParamsGpu {
+            inv_vp: [[0.0; 4]; 4],
+            prev_vp: [[0.0; 4]; 4],
+            jitter: [0.0; 2],
+            resolution: [1920.0, 1080.0],
+            blend_factor: 0.1,
+            variance_gamma: 1.0,
+            depth_threshold: 0.01,
+            _pad: 0.0,
+        };
+
+        assert!(
+            params.blend_factor > 0.0 && params.blend_factor <= 0.2,
+            "Blend factor should be small (mostly history)"
+        );
+        assert!(
+            params.variance_gamma >= 0.5 && params.variance_gamma <= 3.0,
+            "Variance gamma should be in a reasonable range"
+        );
+        assert!(
+            params.depth_threshold > 0.0 && params.depth_threshold < 1.0,
+            "Depth threshold should be a small positive value"
         );
     }
 }

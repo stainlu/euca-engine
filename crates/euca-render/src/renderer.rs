@@ -292,6 +292,8 @@ pub struct Renderer {
     pending_decals: Vec<DecalDrawCommand>,
     /// GPU compute particle systems.
     gpu_particle_systems: Vec<crate::gpu_particles::GpuParticleSystem>,
+    /// Velocity buffer textures for TAA / motion blur / DoF.
+    velocity_textures: crate::velocity::VelocityTextures,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -811,6 +813,11 @@ impl Renderer {
             decal_bind_group,
             pending_decals: Vec::new(),
             gpu_particle_systems: Vec::new(),
+            velocity_textures: crate::velocity::VelocityTextures::new(
+                &gpu.device,
+                gpu.surface_config.width,
+                gpu.surface_config.height,
+            ),
         }
     }
 
@@ -977,6 +984,11 @@ impl Renderer {
             );
         }
         self.taa_pass.resize(
+            &gpu.device,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
+        );
+        self.velocity_textures.resize(
             &gpu.device,
             gpu.surface_config.width,
             gpu.surface_config.height,
@@ -1608,6 +1620,7 @@ impl Renderer {
                 encoder,
                 resolve_target,
                 &self.post_process_stack.depth_resolve_view,
+                &self.velocity_textures.velocity_view,
                 &inv_vp,
                 &prev_vp,
                 camera.jitter,
