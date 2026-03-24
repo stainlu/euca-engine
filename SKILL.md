@@ -1,7 +1,7 @@
 ---
 name: eucaengine
 description: ECS-first, agent-native game engine in Rust
-version: 0.9.0
+version: 0.9.1
 auth: nit
 protocol: cli
 ---

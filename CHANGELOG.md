@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.9.1 (2026-03-24)
+
+### Comprehensive Optimization — Full Engine Audit
+
+All 24 crates reviewed line-by-line. Fixes across 8 work units:
+
+- **ECS**: `Query::iter()` no longer clones cached archetypes (eliminates heap alloc per iteration). `Changed<T>` query filter now fully implemented with tick-based change detection.
+- **Network**: Interest culling uses actual `GlobalTransform` positions instead of hardcoded origin. QUIC reliable streams cached per peer (was opening new stream per send). Removed unnecessary datagram `.to_vec()` clone.
+- **Rendering**: Decal per-object uniform binding completed (model_matrix + opacity)
+- **Core**: Removed dead `plugins` field from `App`. Refactored `reflect_to_json` to use match dispatch with proper error handling.
+- **Gameplay**: Projectile hit radius now configurable (was hardcoded 0.5)
+- **Terrain**: Physics collider generation no longer panics on unexpected types
+- **Audio**: Added `unload_clip()` method to prevent memory leaks
+- **Input**: `InputContextStack::pop()` prevents empty state with guard
+- **Agent**: RGB color parsing validates input and clamps to valid range
+- **Editor**: `find_alive_entity` generation scan documented
+- **Game**: Hardcoded initialization values documented as named constants
+
 ## v0.9.0 (2026-03-24)
 
 ### Hard Problems — Tuples, Stress Test, Multiplayer, WASM Foundation
