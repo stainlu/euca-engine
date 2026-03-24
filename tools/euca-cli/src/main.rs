@@ -90,6 +90,12 @@ enum Commands {
         command: AbilityCommands,
     },
 
+    /// Items: define, give, equip, list inventory
+    Item {
+        #[command(subcommand)]
+        command: ItemCommands,
+    },
+
     /// Audio: play, stop, list sounds
     Audio {
         #[command(subcommand)]
@@ -344,6 +350,46 @@ enum AbilityCommands {
         slot: String,
     },
     /// List an entity's abilities, mana, gold, level
+    List {
+        /// Entity ID
+        entity_id: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum ItemCommands {
+    /// Define an item in the registry
+    Define {
+        /// Item ID
+        #[arg(long)]
+        id: u32,
+        /// Item name
+        #[arg(long)]
+        name: String,
+        /// Properties as "key:value" pairs (repeatable)
+        #[arg(long)]
+        prop: Vec<String>,
+    },
+    /// Give an item to an entity's inventory
+    Give {
+        /// Entity ID
+        entity_id: u32,
+        /// Item ID to give
+        item_id: u32,
+        /// Number of items to give
+        #[arg(long, default_value = "1")]
+        count: u32,
+    },
+    /// Equip an item from inventory into a slot
+    Equip {
+        /// Entity ID
+        entity_id: u32,
+        /// Equipment slot name (e.g. "weapon", "head")
+        slot: String,
+        /// Item ID to equip
+        item_id: u32,
+    },
+    /// List an entity's inventory, equipment, and stat modifiers
     List {
         /// Entity ID
         entity_id: u32,
@@ -1369,6 +1415,63 @@ fn main() {
                 let resp = client
                     .get(format!("{server}/ability/list/{entity_id}"))
                     .send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Items ──
+        Commands::Item { command } => match command {
+            ItemCommands::Define { id, name, prop } => {
+                let mut properties = serde_json::Map::new();
+                for p in &prop {
+                    if let Some((key, val_str)) = p.split_once(':')
+                        && let Ok(val) = val_str.parse::<f64>()
+                    {
+                        properties.insert(key.to_string(), serde_json::json!(val));
+                    }
+                }
+                let resp = client
+                    .post(format!("{server}/item/define"))
+                    .json(&serde_json::json!({
+                        "id": id,
+                        "name": name,
+                        "properties": properties,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+            ItemCommands::Give {
+                entity_id,
+                item_id,
+                count,
+            } => {
+                let resp = client
+                    .post(format!("{server}/item/give"))
+                    .json(&serde_json::json!({
+                        "entity_id": entity_id,
+                        "item_id": item_id,
+                        "count": count,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+            ItemCommands::Equip {
+                entity_id,
+                slot,
+                item_id,
+            } => {
+                let resp = client
+                    .post(format!("{server}/item/equip"))
+                    .json(&serde_json::json!({
+                        "entity_id": entity_id,
+                        "slot": slot,
+                        "item_id": item_id,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+            ItemCommands::List { entity_id } => {
+                let resp = client.get(format!("{server}/item/list/{entity_id}")).send();
                 handle_response(resp)
             }
         },
