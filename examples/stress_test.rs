@@ -152,6 +152,7 @@ impl StressTestApp {
             direction: [0.4, -1.0, 0.3],
             color: [1.0, 0.98, 0.95],
             intensity: 2.0,
+            ..Default::default()
         });
     }
 

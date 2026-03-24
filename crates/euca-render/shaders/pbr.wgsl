@@ -40,6 +40,7 @@ struct SceneUniforms {
     num_spot_lights: vec4<f32>,
     probe_sh: array<vec4<f32>, 9>,
     probe_enabled: vec4<f32>,
+    shadow_params: vec4<f32>,
 }
 
 struct MaterialUniforms {
@@ -64,6 +65,7 @@ struct MaterialUniforms {
 @group(1) @binding(0) var<uniform> scene: SceneUniforms;
 @group(1) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(2) var shadow_sampler: sampler_comparison;
+@group(1) @binding(3) var shadow_depth_sampler: sampler;
 
 @group(2) @binding(0) var<uniform> material: MaterialUniforms;
 @group(2) @binding(1) var albedo_tex: texture_2d<f32>;
@@ -162,10 +164,88 @@ fn evaluate_sh(normal: vec3<f32>, sh: array<vec4<f32>, 9>) -> vec3<f32> {
 }
 
 // ---------------------------------------------------------------------------
-// Cascaded shadow mapping
+// Cascaded shadow mapping with PCSS (Percentage-Closer Soft Shadows)
 // ---------------------------------------------------------------------------
 
-fn shadow_factor_biased(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
+const SHADOW_MAP_SIZE: f32 = 2048.0;
+
+const POISSON_16: array<vec2<f32>, 16> = array(
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870), vec2(0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845), vec2(0.97484398,  0.75648379),
+    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2(0.79197514,  0.19090188),
+    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+    vec2(0.19984126,  0.78641367), vec2(0.14383161, -0.14100790),
+);
+
+/// Interleaved gradient noise for per-pixel Poisson disk rotation.
+/// Produces a stable noise value based on screen position, avoiding
+/// visible repetition patterns in the shadow penumbra.
+fn interleaved_gradient_noise(pixel: vec2<f32>) -> f32 {
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+/// Rotate a 2D sample by the given angle (radians).
+fn rotate_poisson(sample: vec2<f32>, angle: f32) -> vec2<f32> {
+    let s = sin(angle);
+    let c = cos(angle);
+    return vec2(sample.x * c - sample.y * s, sample.x * s + sample.y * c);
+}
+
+/// Stage 1 of PCSS: search for occluders near the receiver.
+/// Returns vec2(average_blocker_depth, blocker_count).
+fn find_blocker(shadow_uv: vec2<f32>, receiver_depth: f32, search_radius: f32,
+                cascade_index: i32, rotation: f32) -> vec2<f32> {
+    var blocker_sum = 0.0;
+    var blocker_count = 0.0;
+    for (var i = 0; i < 16; i++) {
+        let offset = rotate_poisson(POISSON_16[i], rotation) * search_radius;
+        let sample_uv = shadow_uv + offset;
+        let shadow_depth = textureSampleLevel(
+            shadow_map, shadow_depth_sampler, sample_uv, cascade_index, 0.0
+        );
+        if shadow_depth < receiver_depth {
+            blocker_sum += shadow_depth;
+            blocker_count += 1.0;
+        }
+    }
+    return vec2(blocker_sum / max(blocker_count, 1.0), blocker_count);
+}
+
+/// Full PCSS shadow computation: blocker search -> penumbra estimation -> filtered PCF.
+fn pcss_shadow(shadow_uv: vec2<f32>, receiver_depth: f32, cascade_index: i32,
+               pixel_pos: vec2<f32>, light_size: f32) -> f32 {
+    let rotation = interleaved_gradient_noise(pixel_pos) * 6.28318;
+    let search_radius = light_size / SHADOW_MAP_SIZE;
+
+    // Stage 1: blocker search.
+    let blocker = find_blocker(shadow_uv, receiver_depth, search_radius, cascade_index, rotation);
+    if blocker.y < 1.0 {
+        // No blockers found — fully lit.
+        return 1.0;
+    }
+
+    // Stage 2: penumbra estimation.
+    let penumbra = (receiver_depth - blocker.x) / blocker.x * light_size;
+    let filter_radius = penumbra / SHADOW_MAP_SIZE;
+    let clamped_radius = clamp(filter_radius, 1.0 / SHADOW_MAP_SIZE, search_radius * 2.0);
+
+    // Stage 3: filtered PCF with Poisson disk.
+    var shadow = 0.0;
+    for (var i = 0; i < 16; i++) {
+        let offset = rotate_poisson(POISSON_16[i], rotation) * clamped_radius;
+        shadow += textureSampleCompare(
+            shadow_map, shadow_sampler,
+            shadow_uv + offset, cascade_index, receiver_depth
+        );
+    }
+    return shadow / 16.0;
+}
+
+fn shadow_factor_biased(world_pos: vec3<f32>, world_normal: vec3<f32>,
+                        pixel_pos: vec2<f32>) -> f32 {
     let light_dir = normalize(-scene.light_direction.xyz);
     let normal_bias = 0.01 + 0.03 * (1.0 - max(dot(world_normal, light_dir), 0.0));
     let biased_pos = world_pos + world_normal * normal_bias;
@@ -193,19 +273,8 @@ fn shadow_factor_biased(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
         return 1.0;
     }
 
-    // 3x3 PCF (percentage-closer filtering).
-    let texel_size = 1.0 / 2048.0;
-    var shadow = 0.0;
-    for (var x = -1i; x <= 1i; x++) {
-        for (var y = -1i; y <= 1i; y++) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            shadow += textureSampleCompare(
-                shadow_map, shadow_sampler,
-                shadow_uv + offset, cascade_idx, current_depth
-            );
-        }
-    }
-    return shadow / 9.0;
+    let light_size = scene.shadow_params.x;
+    return pcss_shadow(shadow_uv, current_depth, cascade_idx, pixel_pos, light_size);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +337,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
-    let shadow = shadow_factor_biased(in.world_pos, N);
+    let shadow = shadow_factor_biased(in.world_pos, N, in.clip_position.xy);
     var Lo = (kD * albedo / PI + specular) * radiance * NdotL * shadow;
 
     // --- Point lights ---

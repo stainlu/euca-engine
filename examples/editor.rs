@@ -921,6 +921,7 @@ impl EditorApp {
             direction: [0.4, -0.9, 0.25],
             color: [1.0, 0.95, 0.88],
             intensity: 2.5,
+            ..Default::default()
         });
         world.insert(light, euca_agent::Persistent);
     }
@@ -1338,6 +1339,7 @@ impl EditorApp {
                             direction: [0.5, -1.0, 0.3],
                             color: [1.0, 0.98, 0.95],
                             intensity: 2.0,
+                            ..Default::default()
                         });
                         self.editor_state.clear_selection();
                     }

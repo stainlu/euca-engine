@@ -398,6 +398,7 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
         direction: [0.4, -0.9, 0.25],
         color: [1.0, 0.95, 0.88],
         intensity: 2.5,
+        ..Default::default()
     });
 }
 

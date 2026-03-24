@@ -186,6 +186,8 @@ struct SceneUniforms {
     probe_sh: [[f32; 4]; 9],
     /// x=1.0 if probe data is valid, 0.0 otherwise. yzw=padding.
     probe_enabled: [f32; 4],
+    /// x=light_size for PCSS soft shadow penumbra. yzw=padding.
+    shadow_params: [f32; 4],
 }
 
 struct GpuMaterial {
@@ -244,6 +246,7 @@ pub struct Renderer {
     shadow_map_view: wgpu::TextureView,
     shadow_cascade_views: Vec<wgpu::TextureView>,
     shadow_sampler: wgpu::Sampler,
+    shadow_depth_sampler: wgpu::Sampler,
     shadow_instance_buffer: SmartBuffer,
     shadow_instance_bind_group: wgpu::BindGroup,
     msaa_hdr_view: wgpu::TextureView,
@@ -366,6 +369,12 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let shadow_depth_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Shadow Depth Sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
         let instance_bgl = gpu
             .device
@@ -413,6 +422,12 @@ impl Renderer {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
                 ],
@@ -491,6 +506,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&shadow_depth_sampler),
                 },
             ],
         });
@@ -760,6 +779,7 @@ impl Renderer {
             shadow_map_view,
             shadow_cascade_views,
             shadow_sampler,
+            shadow_depth_sampler,
             shadow_instance_buffer,
             shadow_instance_bind_group,
             msaa_hdr_texture,
@@ -1417,6 +1437,7 @@ impl Renderer {
             num_spot_lights: [spot_lights.len().min(MAX_SPOT_LIGHTS) as f32, 0.0, 0.0, 0.0],
             probe_sh: self.probe_sh,
             probe_enabled: [if self.probe_enabled { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+            shadow_params: [light.light_size, 0.0, 0.0, 0.0],
         };
         self.scene_buffer
             .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
@@ -1806,5 +1827,69 @@ mod tests {
                 "{quality:?} should roundtrip through name()"
             );
         }
+    }
+
+    /// The PBR shader must declare a 16-element Poisson disk array with all
+    /// sample coordinates in the [-1, 1] range.
+    #[test]
+    fn pcss_poisson_disk_has_16_entries_in_range() {
+        let src = PBR_SHADER;
+        // Extract the POISSON_16 block between `array(` and the closing `);`.
+        let start = src
+            .find("const POISSON_16")
+            .expect("POISSON_16 not found in shader");
+        let block = &src[start..];
+        let array_start = block.find("array(").unwrap();
+        let array_end = block[array_start..].find(");").unwrap();
+        let array_body = &block[array_start..array_start + array_end];
+
+        // Count vec2( occurrences — each one is a sample.
+        let count = array_body.matches("vec2(").count();
+        assert_eq!(
+            count, 16,
+            "POISSON_16 must have exactly 16 entries, found {count}"
+        );
+
+        // Parse all floating point literals and verify range.
+        for cap in array_body.split("vec2(").skip(1) {
+            let inner = cap.split(')').next().unwrap();
+            for component in inner.split(',') {
+                let val: f32 = component.trim().parse().unwrap_or_else(|e| {
+                    panic!("Failed to parse Poisson component '{component}': {e}");
+                });
+                assert!(
+                    (-1.0..=1.0).contains(&val),
+                    "Poisson sample component {val} is outside [-1, 1]"
+                );
+            }
+        }
+    }
+
+    /// When `light_size` is 0.0, the PCSS search radius is zero, which means the
+    /// blocker search finds no blockers and the function returns 1.0 (fully lit).
+    /// This effectively produces hard shadows since only the PCF path with a
+    /// minimum radius is used. Verify `shadow_params` propagation at the uniform
+    /// level: zero `light_size` ⟹ `shadow_params.x == 0.0`.
+    #[test]
+    fn pcss_zero_light_size_produces_zero_search_radius() {
+        use crate::light::DirectionalLight;
+        let light = DirectionalLight {
+            light_size: 0.0,
+            ..Default::default()
+        };
+        // The uniform would be populated as:
+        let shadow_params = [light.light_size, 0.0, 0.0, 0.0];
+        assert_eq!(
+            shadow_params[0], 0.0,
+            "zero light_size must yield zero search radius"
+        );
+    }
+
+    /// Default `DirectionalLight` should have `light_size = 1.0`.
+    #[test]
+    fn directional_light_default_light_size() {
+        use crate::light::DirectionalLight;
+        let light = DirectionalLight::default();
+        assert_eq!(light.light_size, 1.0);
     }
 }

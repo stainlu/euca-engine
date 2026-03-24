@@ -7,6 +7,12 @@ pub struct DirectionalLight {
     pub color: [f32; 3],
     /// Intensity multiplier.
     pub intensity: f32,
+    /// Apparent size of the light source for PCSS soft shadow penumbra.
+    ///
+    /// Larger values produce wider, softer shadow penumbrae. A value of 0.0
+    /// effectively disables PCSS and produces hard shadow edges identical to
+    /// standard PCF. Reasonable values for a sun-like light are 0.5–2.0.
+    pub light_size: f32,
 }
 
 impl Default for DirectionalLight {
@@ -15,6 +21,7 @@ impl Default for DirectionalLight {
             direction: [0.3, -1.0, 0.5], // From upper-right
             color: [1.0, 1.0, 1.0],
             intensity: 1.0,
+            light_size: 1.0,
         }
     }
 }
