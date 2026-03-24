@@ -42,3 +42,7 @@ path = "../../examples/server.rs"
 [[example]]
 name = "client"
 path = "../../examples/client.rs"
+
+[[example]]
+name = "dota_client"
+path = "../../examples/dota_client.rs"
