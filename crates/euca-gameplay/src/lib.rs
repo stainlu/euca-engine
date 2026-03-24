@@ -28,6 +28,8 @@ pub mod economy;
 pub mod game_state;
 /// Hit points, damage events, death detection, and healing.
 pub mod health;
+/// Data-driven inventory, equipment, and stat aggregation.
+pub mod inventory;
 /// Experience points, levels, and XP bounties.
 pub mod leveling;
 /// Player hero marker, command queue, and command execution.
@@ -36,10 +38,20 @@ pub mod player;
 pub mod player_input;
 /// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
+/// Genre-agnostic status effects (modifiers) with tick effects and cleanse.
+pub mod status_effects;
 /// Team assignment, spawn points, and respawn timers.
 pub mod teams;
+/// Genre-agnostic tile maps with square and hex topologies.
+pub mod tilemap;
 /// Spatial trigger zones that fire actions on overlap.
 pub mod triggers;
+/// Turn & phase management for turn-based games.
+pub mod turns;
+/// Dynamic entity visibility — per-observer filtering with composable rules.
+pub mod visibility;
+/// Spatial zones with continuous effects (damage, healing, status effects, shrinking).
+pub mod zones;
 
 // Re-export key types at crate root for convenience
 pub use ai::{AiBehavior, AiGoal, ai_system};
@@ -60,13 +72,32 @@ pub use rules::{
 };
 pub use teams::{RespawnTimer, SpawnPoint, Team, respawn_system, start_respawn_on_death};
 pub use triggers::{TriggerAction, TriggerZone, trigger_system};
+pub use visibility::{
+    Tags, ViewFilter, VisibilityRule, VisibleTo, ZoneRadius, parse_rule as parse_visibility_rule,
+    visibility_system,
+};
 
 pub use abilities::{
-    Ability, AbilityEffect, AbilitySet, AbilitySlot, Mana, SpeedBuff, UseAbilityEvent,
-    ability_tick_system, use_ability_system,
+    Ability, AbilityEffect, AbilitySet, AbilitySlot, AppliedEffect, Mana, SpeedBuff,
+    UseAbilityEvent, ability_tick_system, use_ability_system,
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use economy::{Gold, GoldBounty, gold_on_kill_system};
+pub use inventory::{
+    Equipment, Inventory, ItemDef, ItemRegistry, ItemStack, StatModifiers, add_item, equip,
+    equipment_stat_system, find_item, has_space, remove_item, unequip,
+};
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
 pub use player::{PlayerCommand, PlayerCommandQueue};
 pub use player_input::{ViewportSize, player_input_system, ray_ground_intersection};
+pub use status_effects::{
+    ModifierOp, StackPolicy, StatModifier, StatusEffect, StatusEffectExpired, StatusEffects,
+    TickEffect, apply_status_effect, cleanse, effective_stat, status_effect_tick_system,
+};
+pub use tilemap::{
+    ResourcePool, TileCoord, TileData, TileMap, TileOwnerTable, Topology, tile_income_system,
+};
+pub use turns::{
+    TurnConfig, TurnEvent, TurnState, advance_phase, spend_action_points, turn_system,
+};
+pub use zones::{Zone, ZoneDynamic, ZoneEffect, ZoneShape, zone_dynamic_system, zone_system};
