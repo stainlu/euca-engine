@@ -36,8 +36,8 @@ pub use entity::{
 pub use fog::{fog_get, fog_set};
 pub use foliage::{foliage_list, foliage_scatter};
 pub use gameplay::{
-    ability_list, ability_use, ai_set, game_create, game_state, projectile_spawn, rule_create,
-    rule_list, trigger_create,
+    ability_list, ability_use, ai_set, effect_apply, effect_cleanse, effect_list, game_create,
+    game_state, projectile_spawn, rule_create, rule_list, trigger_create,
 };
 pub use input::{input_bind, input_context_pop, input_context_push, input_list, input_unbind};
 pub use material::material_set;
