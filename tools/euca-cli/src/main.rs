@@ -203,6 +203,18 @@ enum Commands {
         command: AssetCommands,
     },
 
+    /// Lua scripting: load scripts, list scripted entities
+    Script {
+        #[command(subcommand)]
+        command: ScriptCommands,
+    },
+
+    /// Networking: status, connected peers, tick rate
+    Net {
+        #[command(subcommand)]
+        command: NetCommands,
+    },
+
     /// Discover available commands (for AI agents and humans, works offline)
     Discover {
         /// Output as machine-readable JSON
@@ -449,6 +461,40 @@ enum AnimationCommands {
     },
     /// List loaded animation clips
     List,
+    /// Create an animation state machine on an entity
+    StateMachine {
+        /// Entity ID
+        entity_id: u32,
+        /// Initial state index
+        #[arg(long, default_value = "0")]
+        initial_state: usize,
+        /// States as "name:clip[:speed[:loop]]" (repeatable)
+        #[arg(long)]
+        state: Vec<String>,
+    },
+    /// Play an animation montage on an entity
+    Montage {
+        /// Entity ID
+        entity_id: u32,
+        /// Clip index
+        #[arg(long)]
+        clip: usize,
+        /// Clip duration in seconds
+        #[arg(long)]
+        clip_duration: f32,
+        /// Playback speed
+        #[arg(long, default_value = "1.0")]
+        speed: f32,
+        /// Blend-in duration (seconds)
+        #[arg(long, default_value = "0.1")]
+        blend_in: f32,
+        /// Blend-out duration (seconds)
+        #[arg(long, default_value = "0.1")]
+        blend_out: f32,
+        /// Bone mask indices as "0,1,2,..."
+        #[arg(long)]
+        bone_mask: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -822,6 +868,25 @@ enum FogCommands {
         #[arg(long)]
         enabled: Option<bool>,
     },
+}
+
+#[derive(Subcommand)]
+enum ScriptCommands {
+    /// Attach a Lua script to an entity
+    Load {
+        /// Entity ID
+        entity_id: u32,
+        /// Path to .lua script file
+        path: String,
+    },
+    /// List entities with scripts attached
+    List,
+}
+
+#[derive(Subcommand)]
+enum NetCommands {
+    /// Show networking state (connected peers, bandwidth, tick rate)
+    Status,
 }
 
 // ── Helpers ──
@@ -1511,6 +1576,70 @@ fn main() {
                 let resp = client.get(format!("{server}/animation/list")).send();
                 handle_response(resp)
             }
+            AnimationCommands::StateMachine {
+                entity_id,
+                initial_state,
+                state,
+            } => {
+                let states: Vec<serde_json::Value> = state
+                    .iter()
+                    .map(|s| {
+                        let parts: Vec<&str> = s.split(':').collect();
+                        let name = parts.first().copied().unwrap_or("state");
+                        let clip: usize = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+                        let speed: f32 = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(1.0);
+                        let looping: bool = parts.get(3).map(|p| *p != "false").unwrap_or(true);
+                        serde_json::json!({
+                            "name": name,
+                            "clip": clip,
+                            "speed": speed,
+                            "looping": looping,
+                        })
+                    })
+                    .collect();
+                let body = serde_json::json!({
+                    "entity_id": entity_id,
+                    "initial_state": initial_state,
+                    "states": states,
+                });
+                let resp = client
+                    .post(format!("{server}/animation/state-machine"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            AnimationCommands::Montage {
+                entity_id,
+                clip,
+                clip_duration,
+                speed,
+                blend_in,
+                blend_out,
+                bone_mask,
+            } => {
+                let mut body = serde_json::json!({
+                    "entity_id": entity_id,
+                    "clip": clip,
+                    "clip_duration": clip_duration,
+                    "speed": speed,
+                    "blend_in": blend_in,
+                    "blend_out": blend_out,
+                });
+                if let Some(mask_str) = bone_mask {
+                    let indices: Vec<usize> = mask_str
+                        .split(',')
+                        .filter_map(|p| p.trim().parse().ok())
+                        .collect();
+                    if !indices.is_empty() {
+                        body["bone_mask"] = serde_json::json!(indices);
+                    }
+                }
+                let resp = client
+                    .post(format!("{server}/animation/montage"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
         },
 
         Commands::Terrain { command } => match command {
@@ -1745,6 +1874,29 @@ fn main() {
             UiCommands::Clear => post_empty(&client, server, "/ui/clear"),
             UiCommands::List => {
                 let resp = client.get(format!("{server}/ui/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Scripting ──
+        Commands::Script { command } => match command {
+            ScriptCommands::Load { entity_id, path } => {
+                let resp = client
+                    .post(format!("{server}/script/load"))
+                    .json(&serde_json::json!({"entity_id": entity_id, "path": path}))
+                    .send();
+                handle_response(resp)
+            }
+            ScriptCommands::List => {
+                let resp = client.get(format!("{server}/script/list")).send();
+                handle_response(resp)
+            }
+        },
+
+        // ── Networking ──
+        Commands::Net { command } => match command {
+            NetCommands::Status => {
+                let resp = client.get(format!("{server}/net/status")).send();
                 handle_response(resp)
             }
         },

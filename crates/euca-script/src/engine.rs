@@ -219,6 +219,11 @@ impl ScriptEngine {
     pub fn is_loaded(&self, name: &str) -> bool {
         self.loaded_scripts.contains(name)
     }
+
+    /// Return the names of all currently loaded scripts.
+    pub fn loaded_script_names(&self) -> &HashSet<String> {
+        &self.loaded_scripts
+    }
 }
 
 #[cfg(test)]

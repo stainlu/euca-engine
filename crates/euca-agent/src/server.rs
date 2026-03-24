@@ -92,6 +92,7 @@ impl AgentServer {
             .route("/material/set", post(routes::material_set))
             .route("/postprocess/settings", get(routes::postprocess_get))
             .route("/postprocess/settings", post(routes::postprocess_set))
+            .route("/postprocess/preset", post(routes::postprocess_preset))
             .route("/fog/settings", get(routes::fog_get))
             .route("/fog/settings", post(routes::fog_set))
             .route("/diagnose", get(routes::diagnose))
@@ -112,6 +113,9 @@ impl AgentServer {
             .route("/input/context/pop", post(routes::input_context_pop))
             .route("/foliage/scatter", post(routes::foliage_scatter))
             .route("/foliage/list", get(routes::foliage_list))
+            .route("/script/load", post(routes::script_load))
+            .route("/script/list", get(routes::script_list))
+            .route("/net/status", get(routes::net_status))
             .with_state(self.shared.clone())
     }
 

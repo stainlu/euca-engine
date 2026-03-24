@@ -1229,6 +1229,7 @@ dependencies = [
  "euca-physics",
  "euca-render",
  "euca-scene",
+ "euca-script",
  "euca-terrain",
  "log",
  "rand 0.8.5",
