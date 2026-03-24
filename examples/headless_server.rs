@@ -1,28 +1,52 @@
 use euca_agent::AgentServer;
-use euca_ecs::{Entity, Query, Schedule, World};
-use euca_math::{Transform, Vec3};
-use euca_scene::{GlobalTransform, LocalTransform};
+use euca_ecs::{Events, Schedule, World};
 
-/// Simple movement system: entities with Velocity move each tick.
-#[derive(Clone, Copy, Debug)]
-struct Velocity {
-    dx: f32,
-    dy: f32,
-    dz: f32,
-}
+const DT: f32 = 1.0 / 60.0;
 
-fn movement_system(world: &mut World) {
-    let updates: Vec<(Entity, f32, f32, f32)> = {
-        let query = Query::<(Entity, &Velocity)>::new(world);
-        query.iter().map(|(e, v)| (e, v.dx, v.dy, v.dz)).collect()
-    };
-    for (entity, dx, dy, dz) in updates {
-        if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
-            lt.0.translation = lt.0.translation + Vec3::new(dx, dy, dz);
-        }
-    }
-    // Propagate transforms
-    euca_scene::transform_propagation_system(world);
+/// Register all gameplay systems into the schedule so that `sim step`
+/// processes damage, death, respawn, scoring, rules, and combat.
+fn build_gameplay_schedule() -> Schedule {
+    let mut schedule = Schedule::new();
+
+    // Physics & transforms
+    schedule.add_system(|w: &mut World| euca_physics::physics_step_system(w));
+    schedule.add_system(|w: &mut World| euca_physics::character_controller_system(w, DT));
+    schedule.add_system(euca_scene::transform_propagation_system);
+
+    // Core gameplay
+    schedule.add_system(euca_gameplay::apply_damage_system);
+    schedule.add_system(euca_gameplay::death_check_system);
+    schedule.add_system(|w: &mut World| euca_gameplay::projectile_system(w, DT));
+    schedule.add_system(euca_gameplay::trigger_system);
+    schedule.add_system(|w: &mut World| euca_gameplay::ai_system(w, DT));
+    schedule.add_system(|w: &mut World| euca_gameplay::auto_combat_system(w, DT));
+
+    // Game state & scoring
+    schedule.add_system(|w: &mut World| euca_gameplay::game_state_system(w, DT));
+    schedule.add_system(euca_gameplay::on_death_rule_system);
+    schedule.add_system(|w: &mut World| euca_gameplay::timer_rule_system(w, DT));
+    schedule.add_system(euca_gameplay::health_below_rule_system);
+    schedule.add_system(euca_gameplay::on_score_rule_system);
+    schedule.add_system(euca_gameplay::on_phase_rule_system);
+
+    // Respawn & cleanup
+    schedule.add_system(|w: &mut World| {
+        let delay = w
+            .resource::<euca_gameplay::GameState>()
+            .map(|gs| gs.config.respawn_delay)
+            .unwrap_or(5.0);
+        euca_gameplay::start_respawn_on_death(w, delay);
+    });
+    schedule.add_system(|w: &mut World| euca_gameplay::respawn_system(w, DT));
+    schedule.add_system(|w: &mut World| euca_gameplay::corpse_cleanup_system(w, DT));
+
+    // Economy & abilities
+    schedule.add_system(euca_gameplay::gold_on_kill_system);
+    schedule.add_system(euca_gameplay::xp_on_kill_system);
+    schedule.add_system(|w: &mut World| euca_gameplay::ability_tick_system(w, DT));
+    schedule.add_system(euca_gameplay::use_ability_system);
+
+    schedule
 }
 
 #[tokio::main]
@@ -30,46 +54,12 @@ async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let mut world = World::new();
+    world.insert_resource(Events::default());
 
-    // Spawn some entities
-    let e1 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
-        0.0, 0.0, 0.0,
-    ))));
-    world.insert(e1, GlobalTransform::default());
-    world.insert(
-        e1,
-        Velocity {
-            dx: 1.0,
-            dy: 0.0,
-            dz: 0.0,
-        },
-    );
+    log::info!("Euca Engine headless server — full gameplay schedule");
 
-    let e2 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
-        10.0, 0.0, 0.0,
-    ))));
-    world.insert(e2, GlobalTransform::default());
+    let schedule = build_gameplay_schedule();
 
-    let e3 = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
-        0.0, 5.0, 0.0,
-    ))));
-    world.insert(e3, GlobalTransform::default());
-    world.insert(
-        e3,
-        Velocity {
-            dx: 0.0,
-            dy: -0.5,
-            dz: 0.0,
-        },
-    );
-
-    log::info!("Spawned {} entities", world.entity_count());
-
-    // Create schedule with movement system
-    let mut schedule = Schedule::new();
-    schedule.add_system(movement_system);
-
-    // Start the agent server
     let port = std::env::args()
         .nth(1)
         .and_then(|s| s.parse().ok())
@@ -77,12 +67,9 @@ async fn main() {
 
     let server = AgentServer::new(world, schedule, port);
 
-    log::info!("Euca Engine running in headless mode");
-    log::info!("Try: curl http://localhost:{port}/");
-    log::info!("Try: curl -X POST http://localhost:{port}/observe");
-    log::info!(
-        "Try: curl -X POST http://localhost:{port}/step -H 'Content-Type: application/json' -d '{{\"ticks\": 10}}'"
-    );
+    log::info!("Listening on http://127.0.0.1:{port}");
+    log::info!("Run: ./scripts/moba.sh to set up a MOBA game");
+    log::info!("Then: euca sim step --ticks 60 to advance the simulation");
 
     server.run().await;
 }
