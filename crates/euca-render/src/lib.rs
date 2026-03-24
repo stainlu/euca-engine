@@ -55,6 +55,8 @@ pub mod ssr;
 /// Temporal anti-aliasing resolve pass.
 pub mod taa;
 mod texture;
+/// Per-pixel velocity buffer for motion vectors (TAA, motion blur, temporal SSGI).
+pub mod velocity;
 mod vertex;
 /// Volumetric fog (ray-marched scattering).
 pub mod volumetric;
@@ -111,5 +113,6 @@ pub use ssr::{
 };
 pub use taa::TaaPass;
 pub use texture::{TextureHandle, TextureStore};
+pub use velocity::{VELOCITY_FORMAT, VelocityPipeline, VelocitySceneUniforms, VelocityTextures};
 pub use vertex::Vertex;
 pub use volumetric::{VolumetricFogPass, VolumetricFogSettings};
