@@ -28,6 +28,8 @@ pub mod economy;
 pub mod game_state;
 /// Hit points, damage events, death detection, and healing.
 pub mod health;
+/// Data-driven inventory, equipment, and stat aggregation.
+pub mod inventory;
 /// Experience points, levels, and XP bounties.
 pub mod leveling;
 /// Player hero marker, command queue, and command execution.
@@ -67,6 +69,10 @@ pub use abilities::{
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use economy::{Gold, GoldBounty, gold_on_kill_system};
+pub use inventory::{
+    Equipment, Inventory, ItemDef, ItemRegistry, ItemStack, StatModifiers, add_item, equip,
+    equipment_stat_system, find_item, has_space, remove_item, unequip,
+};
 pub use leveling::{Level, XpBounty, xp_on_kill_system};
 pub use player::{PlayerCommand, PlayerCommandQueue};
 pub use player_input::{ViewportSize, player_input_system, ray_ground_intersection};
