@@ -649,18 +649,17 @@ pub fn replication_send_system(world: &mut World) {
         // These get a virtual despawn so the client removes them.
         let mut despawned_ids: Vec<NetworkId> = Vec::new();
 
-        if let Some(relevant) = relevant_set {
-            if let Some(manager) = world.resource::<ReplicationManager>() {
-                if let Some(client_state) = manager.clients.get(client_id) {
-                    for &net_id in client_state.last_sent_tick.keys() {
-                        let still_relevant = net_id_to_entity_index
-                            .get(&net_id)
-                            .is_some_and(|eidx| relevant.contains(eidx));
+        if let Some(relevant) = relevant_set
+            && let Some(manager) = world.resource::<ReplicationManager>()
+            && let Some(client_state) = manager.clients.get(client_id)
+        {
+            for &net_id in client_state.last_sent_tick.keys() {
+                let still_relevant = net_id_to_entity_index
+                    .get(&net_id)
+                    .is_some_and(|eidx| relevant.contains(eidx));
 
-                        if !still_relevant {
-                            despawned_ids.push(net_id);
-                        }
-                    }
+                if !still_relevant {
+                    despawned_ids.push(net_id);
                 }
             }
         }
