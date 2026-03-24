@@ -102,6 +102,12 @@ enum Commands {
         command: ItemCommands,
     },
 
+    /// Shop: buy, sell, and list items
+    Shop {
+        #[command(subcommand)]
+        command: ShopCommands,
+    },
+
     /// Audio: play, stop, list sounds
     Audio {
         #[command(subcommand)]
@@ -440,6 +446,30 @@ enum ItemCommands {
         /// Entity ID
         entity_id: u32,
     },
+}
+
+#[derive(Subcommand)]
+enum ShopCommands {
+    /// Buy an item (pays gold, or combines recipe components)
+    Buy {
+        /// Entity ID
+        #[arg(long)]
+        entity: u32,
+        /// Item ID to buy
+        #[arg(long)]
+        item: u32,
+    },
+    /// Sell an item from inventory (returns 50% gold)
+    Sell {
+        /// Entity ID
+        #[arg(long)]
+        entity: u32,
+        /// Item ID to sell
+        #[arg(long)]
+        item: u32,
+    },
+    /// List all items available in the shop
+    List,
 }
 
 #[derive(Subcommand)]
@@ -1571,6 +1601,34 @@ fn main() {
         },
 
         Commands::Auth { command } => run_auth(command, &client, server),
+
+        // ── Shop ──
+        Commands::Shop { command } => match command {
+            ShopCommands::Buy { entity, item } => {
+                let resp = client
+                    .post(format!("{server}/shop/buy"))
+                    .json(&serde_json::json!({
+                        "entity_id": entity,
+                        "item_id": item,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+            ShopCommands::Sell { entity, item } => {
+                let resp = client
+                    .post(format!("{server}/shop/sell"))
+                    .json(&serde_json::json!({
+                        "entity_id": entity,
+                        "item_id": item,
+                    }))
+                    .send();
+                handle_response(resp)
+            }
+            ShopCommands::List => {
+                let resp = client.get(format!("{server}/shop/list")).send();
+                handle_response(resp)
+            }
+        },
 
         // ── Audio ──
         Commands::Audio { command } => match command {
