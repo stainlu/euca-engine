@@ -7,6 +7,7 @@ mod fog;
 mod foliage;
 mod gameplay;
 mod input;
+mod inventory;
 pub mod level;
 mod material;
 mod nav;
@@ -40,6 +41,7 @@ pub use gameplay::{
     rule_list, trigger_create,
 };
 pub use input::{input_bind, input_context_pop, input_context_push, input_list, input_unbind};
+pub use inventory::{item_define, item_equip, item_give, item_list};
 pub use material::material_set;
 pub use nav::{navmesh_generate, path_compute, path_set};
 pub use net::net_status;

@@ -115,6 +115,10 @@ impl AgentServer {
             .route("/foliage/list", get(routes::foliage_list))
             .route("/script/load", post(routes::script_load))
             .route("/script/list", get(routes::script_list))
+            .route("/item/define", post(routes::item_define))
+            .route("/item/give", post(routes::item_give))
+            .route("/item/equip", post(routes::item_equip))
+            .route("/item/list/{entity_id}", get(routes::item_list))
             .route("/net/status", get(routes::net_status))
             .with_state(self.shared.clone())
     }
