@@ -46,6 +46,8 @@ pub mod status_effects;
 pub mod teams;
 /// Genre-agnostic tile maps with square and hex topologies.
 pub mod tilemap;
+/// Tower aggro override — forces towers to target heroes attacking allied heroes.
+pub mod tower_aggro;
 /// Spatial trigger zones that fire actions on overlap.
 pub mod triggers;
 /// Turn & phase management for turn-based games.
@@ -104,3 +106,5 @@ pub use turns::{
     TurnConfig, TurnEvent, TurnState, advance_phase, spend_action_points, turn_system,
 };
 pub use zones::{Zone, ZoneDynamic, ZoneEffect, ZoneShape, zone_dynamic_system, zone_system};
+
+pub use tower_aggro::{TowerAggroOverride, tower_aggro_system};

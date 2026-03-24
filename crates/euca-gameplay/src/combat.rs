@@ -10,9 +10,10 @@ use euca_math::Vec3;
 use euca_physics::Velocity;
 use euca_scene::{LocalTransform, SpatialIndex};
 
-use crate::health::{DamageEvent, Health};
+use crate::health::{DamageEvent, Dead, Health};
 use crate::player::PlayerHero;
 use crate::teams::Team;
+use crate::tower_aggro::TowerAggroOverride;
 
 /// Entity that moves in a direction and damages what it hits.
 #[derive(Clone, Debug)]
@@ -322,6 +323,35 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             match valid {
                 Some(v) => current_target = Some(v),
                 None => target_removes.push(entity),
+            }
+        }
+
+        // --- Step 2b: Tower aggro override ---
+        // If this entity has a TowerAggroOverride and the override target is
+        // alive, not dead, and within attack range, force it as the current
+        // target. This takes priority over both the existing target and the
+        // normal priority scan.
+        if let Some(ovr) = world.get::<TowerAggroOverride>(entity) {
+            let ovr_target = ovr.target;
+            let valid = fighter_map
+                .get(&ovr_target)
+                .and_then(|&(tpos, _tteam, tdead, _)| {
+                    if tdead {
+                        return None;
+                    }
+                    // Also skip if the override target has a Dead marker.
+                    if world.get::<Dead>(ovr_target).is_some() {
+                        return None;
+                    }
+                    let dist = (tpos - pos).length();
+                    if dist > combat.range {
+                        return None;
+                    }
+                    Some((ovr_target, tpos, dist))
+                });
+            if let Some(v) = valid {
+                current_target = Some(v);
+                target_inserts.push((entity, v.0));
             }
         }
 
