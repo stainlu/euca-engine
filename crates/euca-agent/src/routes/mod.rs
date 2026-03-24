@@ -6,6 +6,7 @@ mod entity;
 mod fog;
 mod foliage;
 mod gameplay;
+mod hero;
 mod input;
 mod inventory;
 pub mod level;
@@ -18,6 +19,7 @@ mod prefab;
 mod profile;
 mod scene_auth;
 mod script;
+mod shop;
 mod sim;
 mod status_effects;
 mod templates;
@@ -41,6 +43,7 @@ pub use gameplay::{
     ability_list, ability_use, ai_set, game_create, game_state, projectile_spawn, rule_create,
     rule_list, trigger_create,
 };
+pub use hero::{hero_list, hero_select};
 pub use input::{input_bind, input_context_pop, input_context_push, input_list, input_unbind};
 pub use inventory::{item_define, item_equip, item_give, item_list};
 pub use material::material_set;
@@ -52,6 +55,7 @@ pub use prefab::{prefab_list, prefab_spawn};
 pub use profile::profile;
 pub use scene_auth::{auth_login, auth_status, scene_load, scene_save, screenshot};
 pub use script::{script_list, script_load};
+pub use shop::{shop_buy, shop_list, shop_sell};
 pub use sim::{pause, play, step};
 pub use status_effects::{effect_apply, effect_cleanse, effect_list};
 pub use templates::{template_create, template_list, template_spawn};

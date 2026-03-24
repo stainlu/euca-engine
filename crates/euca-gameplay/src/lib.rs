@@ -28,6 +28,8 @@ pub mod economy;
 pub mod game_state;
 /// Hit points, damage events, death detection, and healing.
 pub mod health;
+/// Hero definitions, per-hero stat growth, and hero registry.
+pub mod hero;
 /// Data-driven inventory, equipment, and stat aggregation.
 pub mod inventory;
 /// Experience points, levels, and XP bounties.
@@ -40,6 +42,8 @@ pub mod player;
 pub mod player_input;
 /// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
+/// Shop system — buy/sell items with gold, recipe combining.
+pub mod shop;
 /// Stat block and damage resistance — data-driven entity attributes.
 pub mod stats;
 /// Genre-agnostic status effects (modifiers) with tick effects and cleanse.
@@ -89,14 +93,16 @@ pub use abilities::{
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use economy::{Gold, GoldBounty, gold_on_kill_system};
+pub use hero::{AbilityDef, HeroDef, HeroName, HeroRegistry, StatGrowth, spawn_hero};
 pub use inventory::{
     Equipment, Inventory, ItemDef, ItemRegistry, ItemStack, StatModifiers, add_item, equip,
     equipment_stat_system, find_item, has_space, remove_item, unequip,
 };
-pub use leveling::{Level, XpBounty, xp_on_kill_system};
+pub use leveling::{Level, XpBounty, XpShareRadius, xp_on_kill_system};
 pub use neutral_camp::{NeutralCamp, neutral_camp_system};
 pub use player::{PlayerCommand, PlayerCommandQueue};
 pub use player_input::{ViewportSize, player_input_system, ray_ground_intersection};
+pub use shop::{RecipeDef, RecipeRegistry, ShopError, buy_item, sell_item};
 pub use stats::{BaseStats, DamageResistance, ResolvedStats, stat_resolution_system};
 pub use status_effects::{
     ModifierOp, StackPolicy, StatModifier, StatusEffect, StatusEffectExpired, StatusEffects,

@@ -125,6 +125,11 @@ impl AgentServer {
             .route("/effect/apply", post(routes::effect_apply))
             .route("/effect/list/{id}", get(routes::effect_list))
             .route("/effect/cleanse", post(routes::effect_cleanse))
+            .route("/hero/select", post(routes::hero_select))
+            .route("/hero/list", get(routes::hero_list))
+            .route("/shop/buy", post(routes::shop_buy))
+            .route("/shop/sell", post(routes::shop_sell))
+            .route("/shop/list", get(routes::shop_list))
             .with_state(self.shared.clone())
     }
 
