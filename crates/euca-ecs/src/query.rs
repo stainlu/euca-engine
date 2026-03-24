@@ -121,22 +121,46 @@ pub struct With<T: Component>(PhantomData<T>);
 /// ```
 pub struct Without<T: Component>(PhantomData<T>);
 
-/// Marker type for change-detection queries (reserved for future use).
+/// Query filter that matches entities whose component `T` was modified
+/// since the last world tick.
 ///
-/// Currently, change detection is done via [`World::changed_entities`] and
-/// [`World::get_change_tick`]. This marker exists as a placeholder for
-/// future integration as a query filter.
-#[allow(dead_code)]
+/// An entity passes this filter when its change tick for `T` is
+/// `>= world.current_tick()`. Call [`World::tick()`] once per frame so
+/// that only mutations from the current frame are considered "changed".
+///
+/// ```ignore
+/// // Iterate only entities whose Position was modified this frame
+/// let query = Query::<&Position, Changed<Position>>::new(&world);
+/// ```
 pub struct Changed<T: Component>(PhantomData<T>);
 
 /// Trait for query filters that restrict which archetypes a query matches.
 ///
-/// Implemented for `()` (no filter), [`With<T>`], [`Without<T>`], and
-/// tuples of up to 8 filters. All filters in a tuple must match for the
-/// archetype to be included.
+/// Implemented for `()` (no filter), [`With<T>`], [`Without<T>`],
+/// [`Changed<T>`], and tuples of up to 12 filters. All filters in a tuple
+/// must match for the archetype/entity to be included.
+///
+/// Filters operate at two levels:
+/// - **Archetype-level** ([`matches`](QueryFilter::matches)): coarse check
+///   to skip entire archetypes that cannot contain matching entities.
+/// - **Entity-level** ([`matches_entity`](QueryFilter::matches_entity)):
+///   fine-grained per-row check for filters like [`Changed<T>`] that depend
+///   on per-entity state. Defaults to `true` so purely archetype-level
+///   filters need not override it.
 pub trait QueryFilter {
     /// Returns `true` if the given archetype passes this filter.
     fn matches(world: &World, archetype: &Archetype) -> bool;
+
+    /// Returns `true` if the entity at the given archetype row passes this
+    /// filter. Called only for rows in archetypes that already passed
+    /// [`matches`](QueryFilter::matches).
+    ///
+    /// The default implementation returns `true`, which is correct for
+    /// archetype-level-only filters like [`With<T>`] and [`Without<T>`].
+    #[inline]
+    fn matches_entity(_world: &World, _archetype: &Archetype, _row: usize) -> bool {
+        true
+    }
 }
 
 impl QueryFilter for () {
@@ -159,6 +183,24 @@ impl<T: Component> QueryFilter for Without<T> {
         !world
             .component_id::<T>()
             .is_some_and(|id| archetype.has_component(id))
+    }
+}
+
+impl<T: Component> QueryFilter for Changed<T> {
+    /// Archetype-level: the archetype must contain component `T`.
+    fn matches(world: &World, archetype: &Archetype) -> bool {
+        world
+            .component_id::<T>()
+            .is_some_and(|id| archetype.has_component(id))
+    }
+
+    /// Entity-level: the component's change tick must be >= the current world tick
+    /// (i.e., it was modified during this tick).
+    fn matches_entity(world: &World, archetype: &Archetype, row: usize) -> bool {
+        let Some(comp_id) = world.component_id::<T>() else {
+            return false;
+        };
+        archetype.get_change_tick(comp_id, row) >= world.tick as u32
     }
 }
 
@@ -299,14 +341,14 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     ///
     /// Uses cached archetype indices. The cache is valid as long as no new
     /// archetypes were created since the Query was built (asserted in debug).
-    pub fn iter(&self) -> QueryIter<'w, Q, F> {
+    pub fn iter(&self) -> QueryIter<'_, 'w, Q, F> {
         debug_assert!(
             self.cache_generation == self.world.archetype_generation,
             "Query cache stale: create a new Query after structural world changes"
         );
         QueryIter {
             world: self.world,
-            matching_archetypes: self.cached_archetypes.clone(),
+            matching_archetypes: &self.cached_archetypes,
             arch_cursor: 0,
             row_index: 0,
             _marker: PhantomData,
@@ -325,17 +367,17 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
 /// Iterator over query results.
 ///
 /// Produced by [`Query::iter`]. Walks matching archetypes in order,
-/// yielding one item per entity. Uses cached archetype indices to skip
-/// non-matching archetypes.
-pub struct QueryIter<'w, Q: WorldQuery, F: QueryFilter> {
+/// yielding one item per entity. Borrows the cached archetype indices
+/// from the parent [`Query`] to avoid a per-iteration heap allocation.
+pub struct QueryIter<'q, 'w, Q: WorldQuery, F: QueryFilter> {
     world: &'w World,
-    matching_archetypes: Vec<usize>,
+    matching_archetypes: &'q [usize],
     arch_cursor: usize,
     row_index: usize,
     _marker: PhantomData<(Q, F)>,
 }
 
-impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
+impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'_, 'w, Q, F> {
     type Item = Q::Item<'w>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -355,6 +397,11 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
 
             let row = self.row_index;
             self.row_index += 1;
+
+            // Apply entity-level filter (e.g. Changed<T> per-row check).
+            if !F::matches_entity(self.world, archetype, row) {
+                continue;
+            }
 
             // SAFETY: Archetype matching was verified at cache build time.
             // Row is within bounds (checked above).
@@ -523,6 +570,11 @@ macro_rules! impl_query_filter_tuple {
             #[inline]
             fn matches(world: &World, archetype: &Archetype) -> bool {
                 $($name::matches(world, archetype))&&+
+            }
+
+            #[inline]
+            fn matches_entity(world: &World, archetype: &Archetype, row: usize) -> bool {
+                $($name::matches_entity(world, archetype, row))&&+
             }
         }
     };
@@ -847,5 +899,114 @@ mod tests {
         world.spawn(Velocity { dx: 1.0, dy: 1.0 });
         let gen3 = world.query_cache.read().expect("lock").generation();
         assert_eq!(gen3, 2);
+    }
+
+    // ── Changed<T> filter tests ──
+
+    #[test]
+    fn changed_filter_returns_only_modified_entities() {
+        let mut world = World::new();
+        let e1 = world.spawn(Position { x: 1.0, y: 1.0 });
+        let _e2 = world.spawn(Position { x: 2.0, y: 2.0 });
+
+        // Both spawned at tick 0, advance to tick 1
+        world.tick();
+
+        // Modify only e1 (marks change_tick = 1 = current tick)
+        world.get_mut::<Position>(e1).unwrap().x = 99.0;
+
+        // Changed<Position> should yield only e1
+        let query = Query::<(Entity, &Position), Changed<Position>>::new(&world);
+        let results: Vec<_> = query.iter().collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, e1);
+        assert_eq!(results[0].1.x, 99.0);
+    }
+
+    #[test]
+    fn changed_filter_returns_all_on_spawn_tick() {
+        let mut world = World::new();
+        // Entities spawned at tick 0 have change_tick 0 == world.tick (0)
+        world.spawn(Position { x: 1.0, y: 1.0 });
+        world.spawn(Position { x: 2.0, y: 2.0 });
+
+        let query = Query::<&Position, Changed<Position>>::new(&world);
+        let results: Vec<_> = query.iter().collect();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn changed_filter_returns_none_when_nothing_changed() {
+        let mut world = World::new();
+        world.spawn(Position { x: 1.0, y: 1.0 });
+        world.spawn(Position { x: 2.0, y: 2.0 });
+
+        // Advance tick without modifying anything
+        world.tick();
+
+        let query = Query::<&Position, Changed<Position>>::new(&world);
+        let results: Vec<_> = query.iter().collect();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn changed_filter_with_mut_query() {
+        let mut world = World::new();
+        let e1 = world.spawn(Position { x: 1.0, y: 1.0 });
+        let e2 = world.spawn(Position { x: 2.0, y: 2.0 });
+
+        world.tick(); // tick = 1
+
+        // Modify e2 only
+        world.get_mut::<Position>(e2).unwrap().x = 50.0;
+
+        // Use Changed filter with mutable query access
+        {
+            let query = Query::<(Entity, &mut Position), Changed<Position>>::new(&world);
+            let mut results: Vec<_> = query.iter().collect();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].0, e2);
+            results[0].1.x += 100.0;
+        }
+
+        // e1 unchanged, e2 modified
+        assert_eq!(world.get::<Position>(e1).unwrap().x, 1.0);
+        assert_eq!(world.get::<Position>(e2).unwrap().x, 150.0);
+    }
+
+    #[test]
+    fn changed_filter_excludes_archetypes_without_component() {
+        let mut world = World::new();
+        // This entity has Position + Velocity (different archetype)
+        let e1 = world.spawn(Position { x: 1.0, y: 1.0 });
+        world.insert(e1, Velocity { dx: 5.0, dy: 5.0 });
+        // This entity has only Velocity (no Position at all)
+        world.spawn(Velocity { dx: 10.0, dy: 10.0 });
+
+        // Changed<Position> should only consider entities with Position
+        let query = Query::<&Position, Changed<Position>>::new(&world);
+        let results: Vec<_> = query.iter().collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].x, 1.0);
+    }
+
+    #[test]
+    fn changed_filter_combined_with_without() {
+        let mut world = World::new();
+        let e1 = world.spawn(Position { x: 1.0, y: 1.0 });
+        let e2 = world.spawn(Position { x: 2.0, y: 2.0 });
+        world.insert(e2, Static);
+
+        world.tick(); // tick = 1
+
+        // Modify both entities
+        world.get_mut::<Position>(e1).unwrap().x = 10.0;
+        world.get_mut::<Position>(e2).unwrap().x = 20.0;
+
+        // Changed<Position> + Without<Static>: only e1
+        let query = Query::<(Entity, &Position), (Changed<Position>, Without<Static>)>::new(&world);
+        let results: Vec<_> = query.iter().collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, e1);
     }
 }
