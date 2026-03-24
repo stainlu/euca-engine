@@ -115,7 +115,16 @@ impl AgentServer {
             .route("/foliage/list", get(routes::foliage_list))
             .route("/script/load", post(routes::script_load))
             .route("/script/list", get(routes::script_list))
+            .route("/view-filter/set", post(routes::view_filter_set))
+            .route("/tag", post(routes::tag_set))
+            .route("/item/define", post(routes::item_define))
+            .route("/item/give", post(routes::item_give))
+            .route("/item/equip", post(routes::item_equip))
+            .route("/item/list/{entity_id}", get(routes::item_list))
             .route("/net/status", get(routes::net_status))
+            .route("/effect/apply", post(routes::effect_apply))
+            .route("/effect/list/{id}", get(routes::effect_list))
+            .route("/effect/cleanse", post(routes::effect_cleanse))
             .with_state(self.shared.clone())
     }
 

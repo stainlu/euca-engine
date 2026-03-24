@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query as AxumQuery, State};
 use axum::http::StatusCode;
 
 use euca_ecs::{Entity, Query};
@@ -28,13 +28,52 @@ pub async fn status(State(world): State<SharedWorld>) -> Json<StatusResponse> {
     Json(resp)
 }
 
-/// POST /observe — query full world state
-pub async fn observe(State(world): State<SharedWorld>) -> Json<ObserveResponse> {
+/// Query parameter for observe endpoint.
+#[derive(serde::Deserialize, Default)]
+pub struct ObserveParams {
+    /// If set, only return entities visible to this observer entity id.
+    pub viewer: Option<u32>,
+}
+
+/// POST /observe — query full world state, optionally filtered by viewer visibility.
+pub async fn observe(
+    State(world): State<SharedWorld>,
+    AxumQuery(params): AxumQuery<ObserveParams>,
+) -> Json<ObserveResponse> {
     let resp = world.with_world(|w| {
-        let entities: Vec<RichEntityData> = {
+        let all_entities: Vec<Entity> = {
             let query = Query::<Entity>::new(w);
-            query.iter().map(|e| read_entity_data(w, e)).collect()
+            query.iter().collect()
         };
+
+        let entities: Vec<RichEntityData> = match params.viewer {
+            Some(viewer_id) => {
+                let viewer = find_entity(w, viewer_id);
+                all_entities
+                    .into_iter()
+                    .filter(|&e| {
+                        // Always include the viewer itself.
+                        if viewer.is_some_and(|v| v == e) {
+                            return true;
+                        }
+                        // If entity has VisibleTo, check if viewer is in the set.
+                        match (viewer, w.get::<euca_gameplay::VisibleTo>(e)) {
+                            (Some(v), Some(vt)) => vt.0.contains(&v),
+                            // No VisibleTo component means system hasn't run or
+                            // no ViewFilters exist — backward compat: show everything.
+                            (_, None) => true,
+                            (None, _) => true,
+                        }
+                    })
+                    .map(|e| read_entity_data(w, e))
+                    .collect()
+            }
+            None => all_entities
+                .into_iter()
+                .map(|e| read_entity_data(w, e))
+                .collect(),
+        };
+
         ObserveResponse {
             tick: w.current_tick(),
             entity_count: w.entity_count(),
@@ -404,7 +443,7 @@ pub async fn schema() -> Json<serde_json::Value> {
         },
         "endpoints": {
             "GET /": "Engine status",
-            "POST /observe": "Full world state (all entities with all components)",
+            "POST /observe": "Full world state (all entities with all components). Use ?viewer=<id> to filter by visibility.",
             "GET /entities/:id": "Single entity with all components",
             "POST /entities/:id/components": "Add/update components on entity",
             "POST /spawn": "Create entity with optional components (position, scale, velocity, collider, physics_body)",
@@ -418,7 +457,123 @@ pub async fn schema() -> Json<serde_json::Value> {
             "GET /game/state": "Get match state and scores",
             "POST /trigger/create": "Create trigger zone",
             "POST /projectile/spawn": "Spawn projectile",
-            "POST /ai/set": "Set AI behavior on entity"
+            "POST /ai/set": "Set AI behavior on entity",
+            "POST /view-filter/set": "Set visibility rules on an observer entity",
+            "POST /tag": "Add/remove tags on an entity"
         }
     }))
+}
+
+/// POST /view-filter/set — set visibility rules on an observer entity.
+///
+/// Body: `{ "entity_id": 5, "rules": ["within:8", "same-team"] }`
+pub async fn view_filter_set(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<MessageResponse> {
+    let entity_id = req.get("entity_id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let rule_strs: Vec<String> = req
+        .get("rules")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let ok = world.with(|w, _| {
+        let entity = match find_entity(w, entity_id) {
+            Some(e) => e,
+            None => return false,
+        };
+
+        let rules: Vec<euca_gameplay::VisibilityRule> = rule_strs
+            .iter()
+            .filter_map(|s| euca_gameplay::parse_visibility_rule(s))
+            .collect();
+
+        if rules.is_empty() {
+            // No valid rules means "see everything".
+            w.insert(entity, euca_gameplay::ViewFilter::see_all());
+        } else {
+            w.insert(entity, euca_gameplay::ViewFilter::new(rules));
+        }
+        true
+    });
+
+    Json(MessageResponse {
+        ok,
+        message: Some(if ok {
+            format!(
+                "View filter set on entity {entity_id} with {} rule(s)",
+                rule_strs.len()
+            )
+        } else {
+            format!("Entity {entity_id} not found")
+        }),
+    })
+}
+
+/// POST /tag — add or remove tags on an entity.
+///
+/// Body: `{ "entity_id": 5, "add": ["stealth"], "remove": ["revealed"] }`
+pub async fn tag_set(
+    State(world): State<SharedWorld>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<MessageResponse> {
+    let entity_id = req.get("entity_id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let add: Vec<String> = req
+        .get("add")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let remove: Vec<String> = req
+        .get("remove")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let ok = world.with(|w, _| {
+        let entity = match find_entity(w, entity_id) {
+            Some(e) => e,
+            None => return false,
+        };
+
+        // Ensure Tags component exists.
+        if w.get::<euca_gameplay::Tags>(entity).is_none() {
+            w.insert(entity, euca_gameplay::Tags::new());
+        }
+
+        if let Some(tags) = w.get_mut::<euca_gameplay::Tags>(entity) {
+            for tag in &add {
+                tags.insert(tag.clone());
+            }
+            for tag in &remove {
+                tags.remove(tag);
+            }
+        }
+        true
+    });
+
+    Json(MessageResponse {
+        ok,
+        message: Some(if ok {
+            format!(
+                "Tags updated on entity {entity_id}: +{} -{} tag(s)",
+                add.len(),
+                remove.len()
+            )
+        } else {
+            format!("Entity {entity_id} not found")
+        }),
+    })
 }

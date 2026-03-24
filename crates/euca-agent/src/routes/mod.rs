@@ -7,6 +7,7 @@ mod fog;
 mod foliage;
 mod gameplay;
 mod input;
+mod inventory;
 pub mod level;
 mod material;
 mod nav;
@@ -18,6 +19,7 @@ mod profile;
 mod scene_auth;
 mod script;
 mod sim;
+mod status_effects;
 mod templates;
 mod terrain;
 mod ui;
@@ -31,7 +33,7 @@ pub use camera::{camera_focus, camera_get, camera_set, camera_view};
 pub use debug::{diagnose, events_list};
 pub use entity::{
     despawn, entity_damage, entity_heal, get_entity, observe, patch_entity, reset, schema, spawn,
-    status,
+    status, tag_set, view_filter_set,
 };
 pub use fog::{fog_get, fog_set};
 pub use foliage::{foliage_list, foliage_scatter};
@@ -40,6 +42,7 @@ pub use gameplay::{
     rule_list, trigger_create,
 };
 pub use input::{input_bind, input_context_pop, input_context_push, input_list, input_unbind};
+pub use inventory::{item_define, item_equip, item_give, item_list};
 pub use material::material_set;
 pub use nav::{navmesh_generate, path_compute, path_set};
 pub use net::net_status;
@@ -50,6 +53,7 @@ pub use profile::profile;
 pub use scene_auth::{auth_login, auth_status, scene_load, scene_save, screenshot};
 pub use script::{script_list, script_load};
 pub use sim::{pause, play, step};
+pub use status_effects::{effect_apply, effect_cleanse, effect_list};
 pub use templates::{template_create, template_list, template_spawn};
 pub use terrain::{terrain_create, terrain_edit};
 pub use ui::{ui_bar, ui_clear, ui_list, ui_text};
@@ -210,6 +214,10 @@ pub struct RichEntityData {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mana: Option<[f32; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_to: Option<Vec<u32>>,
 }
 
 pub(crate) fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntityData {
@@ -292,6 +300,17 @@ pub(crate) fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntit
         .get::<euca_gameplay::Mana>(entity)
         .map(|m| [m.current, m.max]);
 
+    let tags = w.get::<euca_gameplay::Tags>(entity).map(|t| {
+        let mut v: Vec<String> = t.0.iter().cloned().collect();
+        v.sort();
+        v
+    });
+    let visible_to = w.get::<euca_gameplay::VisibleTo>(entity).map(|vt| {
+        let mut v: Vec<u32> = vt.0.iter().map(|e| e.index()).collect();
+        v.sort();
+        v
+    });
+
     RichEntityData {
         id: entity.index(),
         generation: entity.generation(),
@@ -309,6 +328,8 @@ pub(crate) fn read_entity_data(w: &euca_ecs::World, entity: Entity) -> RichEntit
         level,
         role,
         mana,
+        tags,
+        visible_to,
     }
 }
 

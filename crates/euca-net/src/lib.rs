@@ -17,7 +17,7 @@ mod transport;
 
 pub use bandwidth::{BandwidthBudget, PriorityCalculator, select_entities_for_replication};
 pub use client::GameClient;
-pub use interest::{InterestConfig, InterestManager, interest_culling_system};
+pub use interest::{InterestConfig, InterestManager, SpatialGrid, interest_culling_system};
 pub use prediction::{
     ClientPrediction, apply_prediction_system, reconcile_entity, record_prediction_for_entity,
 };
