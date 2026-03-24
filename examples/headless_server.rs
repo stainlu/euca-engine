@@ -8,10 +8,20 @@ const DT: f32 = 1.0 / 60.0;
 fn build_gameplay_schedule() -> Schedule {
     let mut schedule = Schedule::new();
 
+    // Input
+    schedule.add_system(euca_gameplay::player_input_system);
+
     // Physics & transforms
     schedule.add_system(|w: &mut World| euca_physics::physics_step_system(w));
     schedule.add_system(|w: &mut World| euca_physics::character_controller_system(w, DT));
     schedule.add_system(euca_scene::transform_propagation_system);
+
+    // Stat pipeline
+    schedule.add_system(euca_gameplay::equipment_stat_system);
+    schedule.add_system(|w: &mut World| euca_gameplay::zone_system(w, DT));
+    schedule.add_system(|w: &mut World| euca_gameplay::zone_dynamic_system(w, DT));
+    schedule.add_system(|w: &mut World| euca_gameplay::status_effect_tick_system(w, DT));
+    schedule.add_system(euca_gameplay::stat_resolution_system);
 
     // Core gameplay
     schedule.add_system(euca_gameplay::apply_damage_system);
@@ -45,6 +55,15 @@ fn build_gameplay_schedule() -> Schedule {
     schedule.add_system(euca_gameplay::xp_on_kill_system);
     schedule.add_system(|w: &mut World| euca_gameplay::ability_tick_system(w, DT));
     schedule.add_system(euca_gameplay::use_ability_system);
+
+    // Perception
+    schedule.add_system(euca_gameplay::visibility_system);
+
+    // Turn-based
+    schedule.add_system(euca_gameplay::turn_system);
+
+    // SLG economy
+    schedule.add_system(|w: &mut World| euca_gameplay::tile_income_system(w, DT));
 
     schedule
 }
