@@ -1,4 +1,5 @@
 mod animation;
+mod asset_gen;
 mod audio;
 mod camera;
 mod debug;
@@ -30,6 +31,7 @@ pub use animation::{
     animation_list, animation_load, animation_montage, animation_play, animation_state_machine,
     animation_stop,
 };
+pub use asset_gen::{asset_generate, asset_generated, asset_providers, asset_status};
 pub use audio::{audio_list, audio_play, audio_stop};
 pub use camera::{camera_focus, camera_get, camera_set, camera_view};
 pub use debug::{diagnose, events_list};

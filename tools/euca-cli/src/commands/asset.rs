@@ -1,5 +1,7 @@
 use clap::Subcommand;
 
+use crate::handle_response;
+
 #[derive(Subcommand)]
 pub(crate) enum AssetCommands {
     /// Show metadata about a glTF/glb asset file
@@ -26,17 +28,84 @@ pub(crate) enum AssetCommands {
         #[arg(short, long, default_value = "4")]
         levels: usize,
     },
+    /// Start an AI 3D model generation task (requires running engine)
+    Generate {
+        /// Text prompt describing the 3D model
+        #[arg(long)]
+        prompt: String,
+        /// Provider: tripo, meshy, rodin, hunyuan
+        #[arg(long, default_value = "tripo")]
+        provider: String,
+        /// Quality: low, medium, high
+        #[arg(long, default_value = "medium")]
+        quality: String,
+    },
+    /// Check the status of an AI generation task (requires running engine)
+    Status {
+        /// Generation task ID (e.g. "gen_1")
+        #[arg(long)]
+        id: String,
+    },
+    /// List all AI-generated assets (requires running engine)
+    Generated,
+    /// List available AI generation providers (requires running engine)
+    Providers,
 }
 
-pub(crate) fn run_asset(command: AssetCommands) {
+/// Run an asset subcommand.
+///
+/// Offline commands (Info, Optimize, Lod) run locally without the engine.
+/// Online commands (Generate, Status, Generated, Providers) call HTTP endpoints.
+pub(crate) fn run_asset(
+    command: AssetCommands,
+    client: &reqwest::blocking::Client,
+    server: &str,
+) -> Result<(), String> {
     match command {
-        AssetCommands::Info { file } => run_asset_info(&file),
-        AssetCommands::Optimize { input, output } => run_asset_optimize(&input, output.as_deref()),
+        AssetCommands::Info { file } => {
+            run_asset_info(&file);
+            Ok(())
+        }
+        AssetCommands::Optimize { input, output } => {
+            run_asset_optimize(&input, output.as_deref());
+            Ok(())
+        }
         AssetCommands::Lod {
             input,
             output,
             levels,
-        } => run_asset_lod(&input, output.as_deref(), levels),
+        } => {
+            run_asset_lod(&input, output.as_deref(), levels);
+            Ok(())
+        }
+        AssetCommands::Generate {
+            prompt,
+            provider,
+            quality,
+        } => {
+            let body = serde_json::json!({
+                "prompt": prompt,
+                "provider": provider,
+                "quality": quality,
+            });
+            let resp = client
+                .post(format!("{server}/asset/generate"))
+                .json(&body)
+                .send();
+            handle_response(resp)
+        }
+        AssetCommands::Status { id } => {
+            let resp = client.get(format!("{server}/asset/status/{id}")).send();
+            handle_response(resp)
+        }
+        AssetCommands::Generated => {
+            let resp = client.get(format!("{server}/asset/generated")).send();
+            handle_response(resp)
+        }
+        AssetCommands::Providers => {
+            let resp = client.get(format!("{server}/asset/providers")).send();
+            handle_response(resp)
+        }
     }
 }
 
@@ -204,5 +273,37 @@ fn run_asset_lod(input: &str, output: Option<&str>, levels: usize) {
         let json = serde_json::to_string_pretty(&stats).unwrap();
         std::fs::write(out_path, json).expect("Failed to write stats file");
         println!("  Stats written to {out_path}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asset_commands_has_generate_variant() {
+        // Verify the enum compiles with all variants including the AI generation ones.
+        let _cmd = AssetCommands::Generate {
+            prompt: "test".to_string(),
+            provider: "tripo".to_string(),
+            quality: "medium".to_string(),
+        };
+    }
+
+    #[test]
+    fn asset_commands_has_status_variant() {
+        let _cmd = AssetCommands::Status {
+            id: "gen_1".to_string(),
+        };
+    }
+
+    #[test]
+    fn asset_commands_has_generated_variant() {
+        let _cmd = AssetCommands::Generated;
+    }
+
+    #[test]
+    fn asset_commands_has_providers_variant() {
+        let _cmd = AssetCommands::Providers;
     }
 }

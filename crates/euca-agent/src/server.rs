@@ -133,6 +133,10 @@ impl AgentServer {
             .route("/shop/buy", post(routes::shop_buy))
             .route("/shop/sell", post(routes::shop_sell))
             .route("/shop/list", get(routes::shop_list))
+            .route("/asset/generate", post(routes::asset_generate))
+            .route("/asset/status/{task_id}", get(routes::asset_status))
+            .route("/asset/generated", get(routes::asset_generated))
+            .route("/asset/providers", get(routes::asset_providers))
             .with_state(self.shared.clone())
     }
 

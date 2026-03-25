@@ -2188,10 +2188,7 @@ fn main() {
             Ok(())
         }
 
-        Commands::Asset { command } => {
-            commands::asset::run_asset(command);
-            Ok(())
-        }
+        Commands::Asset { command } => commands::asset::run_asset(command, &client, server),
 
         // ── Hidden backward-compat aliases ──
         Commands::Observe { entity } => {
