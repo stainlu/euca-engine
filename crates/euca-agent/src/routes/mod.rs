@@ -301,9 +301,21 @@ pub fn drain_pending_mesh_uploads(
             h
         };
 
-        // Only attach MeshRenderer if the entity is still alive.
+        // Only attach MeshRenderer + MaterialRef if the entity is still alive.
         if w.is_alive(entry.entity) {
             w.insert(entry.entity, euca_render::MeshRenderer { mesh: handle });
+            // Assign a material if the entity doesn't already have one.
+            // Use the default material from DefaultAssets.
+            if w.get::<euca_render::MaterialRef>(entry.entity).is_none() {
+                if let Some(assets) = w.resource::<DefaultAssets>() {
+                    w.insert(
+                        entry.entity,
+                        euca_render::MaterialRef {
+                            handle: assets.default_material,
+                        },
+                    );
+                }
+            }
         }
     }
 }
