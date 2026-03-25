@@ -178,10 +178,11 @@ impl IblResources {
             // view will interpret as Rg16Float for sampling.
             //
             // Actually, wgpu requires storage texture format to match the
-            // texture format exactly. We use Rg32Float throughout for the LUT
-            // since 32-bit gives better integration precision and the LUT is
-            // small (512x512 * 8 bytes = 2 MB).
-            format: wgpu::TextureFormat::Rg32Float,
+            // texture format exactly. We use Rgba16Float because Rg32Float is
+            // NOT filterable on Apple Silicon (Metal) — binding it with a
+            // filtering sampler panics. Rgba16Float is filterable and a valid
+            // compute storage format. We store (scale, bias) in .rg channels.
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         })

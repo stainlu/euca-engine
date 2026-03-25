@@ -666,7 +666,7 @@ impl Renderer {
             ..Default::default()
         });
 
-        // The BRDF LUT uses Rg32Float (matching ibl.rs create_brdf_lut_texture).
+        // The BRDF LUT uses Rgba16Float (filterable on all GPUs including Apple Silicon).
         let ibl_dummy_brdf = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("IBL Dummy BRDF LUT"),
             size: wgpu::Extent3d {
@@ -677,7 +677,7 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rg32Float,
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

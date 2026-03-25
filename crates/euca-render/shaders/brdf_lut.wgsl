@@ -4,14 +4,18 @@
 // For each texel (NdotV, roughness), integrates the GGX BRDF split-sum
 // to produce a scale factor (R) and bias factor (G) for Schlick-Fresnel.
 //
-// Output: Rg16Float 512x512 texture
+// Output: Rgba16Float 512x512 texture (scale in R, bias in G, BA unused)
 //   R = integral of F0 * scale (Fresnel scale)
 //   G = integral of bias (Fresnel bias)
 //
 // Bindings (group 0):
-//   @binding(0) output_tex -- storage texture (write), rg32float (written as vec4, rg used)
+//   @binding(0) output_tex -- storage texture (write), rgba16float
+//
+// Note: Rgba16Float used instead of Rg32Float because Rg32Float is NOT
+// filterable on Apple Silicon (Metal). Rgba16Float is filterable and a
+// valid compute storage format.
 
-@group(0) @binding(0) var output_tex: texture_storage_2d<rg32float, write>;
+@group(0) @binding(0) var output_tex: texture_storage_2d<rgba16float, write>;
 
 const PI: f32 = 3.14159265359;
 const SAMPLE_COUNT: u32 = 1024u;
