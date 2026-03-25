@@ -10,8 +10,8 @@ use euca_scene::{GlobalTransform, LocalTransform};
 use crate::state::{Owner, SharedWorld};
 
 use super::{
-    DefaultAssets, MessageResponse, RichEntityData, SpawnRequest, SpawnResponse, apply_collider,
-    apply_physics_body, apply_velocity, read_entity_data,
+    DefaultAssets, MeshResolution, MessageResponse, RichEntityData, SpawnRequest, SpawnResponse,
+    apply_collider, apply_physics_body, apply_velocity, read_entity_data, resolve_mesh,
 };
 
 /// Level file format request.
@@ -37,17 +37,35 @@ pub(crate) fn spawn_entity(w: &mut euca_ecs::World, req: &SpawnRequest) -> Spawn
         w.insert(entity, Owner(agent_id));
     }
 
-    if let Some(assets) = w.resource::<DefaultAssets>().cloned()
-        && let Some(mesh_name) = &req.mesh
-        && let Some(mesh) = assets.mesh(mesh_name)
-    {
-        w.insert(entity, MeshRenderer { mesh });
-        let mat = req
-            .color
-            .as_deref()
-            .and_then(|c| assets.material(c))
-            .unwrap_or(assets.default_material);
-        w.insert(entity, MaterialRef { handle: mat });
+    if let Some(mesh_name) = &req.mesh {
+        match resolve_mesh(w, entity, mesh_name) {
+            MeshResolution::Ready(handle) => {
+                w.insert(entity, MeshRenderer { mesh: handle });
+                let mat = w.resource::<DefaultAssets>().cloned().map(|assets| {
+                    req.color
+                        .as_deref()
+                        .and_then(|c| assets.material(c))
+                        .unwrap_or(assets.default_material)
+                });
+                if let Some(mat) = mat {
+                    w.insert(entity, MaterialRef { handle: mat });
+                }
+            }
+            MeshResolution::Pending => {
+                if let Some(assets) = w.resource::<DefaultAssets>().cloned() {
+                    let mat = req
+                        .color
+                        .as_deref()
+                        .and_then(|c| assets.material(c))
+                        .unwrap_or(assets.default_material);
+                    w.insert(entity, MaterialRef { handle: mat });
+                }
+            }
+            MeshResolution::NotFound => {}
+            MeshResolution::LoadError(err) => {
+                log::warn!("Failed to load mesh '{}': {}", mesh_name, err);
+            }
+        }
     }
 
     if let Some(v) = &req.velocity {

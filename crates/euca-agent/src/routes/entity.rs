@@ -11,9 +11,9 @@ use euca_scene::{GlobalTransform, LocalTransform};
 use crate::state::{Owner, SharedWorld};
 
 use super::{
-    ComponentPatch, DefaultAssets, DespawnRequest, MessageResponse, ObserveResponse,
-    RichEntityData, SpawnRequest, SpawnResponse, StatusResponse, apply_collider,
-    apply_physics_body, apply_velocity, find_entity, read_entity_data,
+    ComponentPatch, DefaultAssets, DespawnRequest, MeshResolution, MessageResponse,
+    ObserveResponse, RichEntityData, SpawnRequest, SpawnResponse, StatusResponse, apply_collider,
+    apply_physics_body, apply_velocity, find_entity, read_entity_data, resolve_mesh,
 };
 
 /// GET / — engine status
@@ -181,17 +181,38 @@ pub async fn spawn(
             w.insert(entity, Owner(agent_id));
         }
 
-        if let Some(assets) = w.resource::<DefaultAssets>().cloned()
-            && let Some(mesh_name) = &req.mesh
-            && let Some(mesh) = assets.mesh(mesh_name)
-        {
-            w.insert(entity, MeshRenderer { mesh });
-            let mat = req
-                .color
-                .as_deref()
-                .and_then(|c| assets.material(c))
-                .unwrap_or(assets.default_material);
-            w.insert(entity, MaterialRef { handle: mat });
+        if let Some(mesh_name) = &req.mesh {
+            match resolve_mesh(w, entity, mesh_name) {
+                MeshResolution::Ready(handle) => {
+                    w.insert(entity, MeshRenderer { mesh: handle });
+                    let mat = w.resource::<DefaultAssets>().cloned().map(|assets| {
+                        req.color
+                            .as_deref()
+                            .and_then(|c| assets.material(c))
+                            .unwrap_or(assets.default_material)
+                    });
+                    if let Some(mat) = mat {
+                        w.insert(entity, MaterialRef { handle: mat });
+                    }
+                }
+                MeshResolution::Pending => {
+                    // Entity will receive MeshRenderer once the render loop
+                    // uploads the mesh. Attach a default material now so it's
+                    // ready when the mesh handle arrives.
+                    if let Some(assets) = w.resource::<DefaultAssets>().cloned() {
+                        let mat = req
+                            .color
+                            .as_deref()
+                            .and_then(|c| assets.material(c))
+                            .unwrap_or(assets.default_material);
+                        w.insert(entity, MaterialRef { handle: mat });
+                    }
+                }
+                MeshResolution::NotFound => {}
+                MeshResolution::LoadError(err) => {
+                    log::warn!("Failed to load mesh '{}': {}", mesh_name, err);
+                }
+            }
         }
 
         if let Some(v) = &req.velocity {

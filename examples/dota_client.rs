@@ -625,6 +625,13 @@ impl DotaClientApp {
         // MOBA camera follow
         euca_gameplay::camera::moba_camera_system(&mut self.world);
 
+        // Upload GLB meshes that were loaded by the spawn handler.
+        {
+            let gpu = self.gpu.as_ref().unwrap();
+            let renderer = self.renderer.as_mut().unwrap();
+            euca_agent::routes::drain_pending_mesh_uploads(&mut self.world, renderer, gpu);
+        }
+
         // ── Render ──────────────────────────────────────────────────────
 
         let gpu = self.gpu.as_ref().unwrap();

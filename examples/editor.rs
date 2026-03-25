@@ -1140,6 +1140,13 @@ impl EditorApp {
 
         lod_select_system(world);
 
+        // Upload GLB meshes that were loaded by the spawn handler.
+        {
+            let gpu = self.gpu.as_ref().unwrap();
+            let renderer = self.renderer.as_mut().unwrap();
+            euca_agent::routes::drain_pending_mesh_uploads(world, renderer, gpu);
+        }
+
         let gpu = self.gpu.as_ref().unwrap();
         let output = match gpu.surface.get_current_texture() {
             Ok(t) => t,

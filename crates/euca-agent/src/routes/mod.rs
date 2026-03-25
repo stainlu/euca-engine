@@ -69,7 +69,7 @@ use serde::{Deserialize, Serialize};
 use euca_ecs::Entity;
 use euca_math::Vec3;
 use euca_physics::{Collider, ColliderShape, PhysicsBody, RigidBodyType, Velocity};
-use euca_render::{MaterialHandle, MeshHandle};
+use euca_render::{MaterialHandle, Mesh, MeshHandle};
 use euca_scene::GlobalTransform;
 
 /// Pre-uploaded mesh/material handles stored as a World resource.
@@ -144,6 +144,167 @@ impl DefaultAssets {
             .get(best)
             .copied()
             .unwrap_or(self.default_material)
+    }
+}
+
+/// Cache of GPU-uploaded meshes loaded from file paths (GLB/glTF).
+///
+/// Stored as a World resource. The spawn handler inserts entries after the
+/// render loop uploads them; subsequent spawns with the same path reuse the
+/// cached handle.
+#[derive(Clone, Default)]
+pub struct MeshCache {
+    pub meshes: std::collections::HashMap<String, MeshHandle>,
+}
+
+/// Queue of meshes loaded from disk that need GPU upload.
+///
+/// The spawn handler pushes entries here (on the HTTP thread) and the
+/// render loop drains them (on the main thread where GPU access is available).
+/// In headless mode this queue is never drained — entities simply have no
+/// `MeshRenderer`, which is harmless.
+#[derive(Default)]
+pub struct PendingMeshUpload {
+    pub queue: Vec<PendingMeshEntry>,
+}
+
+/// A single mesh waiting for GPU upload.
+pub struct PendingMeshEntry {
+    /// The entity that should receive a `MeshRenderer` after upload.
+    pub entity: Entity,
+    /// The file path (used as cache key in `MeshCache`).
+    pub path: String,
+    /// CPU-side mesh geometry, ready for upload.
+    pub mesh: Mesh,
+}
+
+/// Returns true if the mesh name looks like a file path rather than a
+/// primitive name (cube, sphere, etc.).
+pub fn is_file_path_mesh(name: &str) -> bool {
+    name.contains('/') || name.contains('\\') || name.ends_with(".glb") || name.ends_with(".gltf")
+}
+
+/// Result of resolving a mesh name in the spawn handler.
+pub(crate) enum MeshResolution {
+    /// Already uploaded — use this handle immediately.
+    Ready(MeshHandle),
+    /// Queued for GPU upload — entity will receive MeshRenderer later.
+    Pending,
+    /// Not a file path and not in DefaultAssets — no mesh.
+    NotFound,
+    /// File path but loading failed.
+    LoadError(String),
+}
+
+/// Resolve a mesh name to a handle, loading from disk if it's a file path.
+///
+/// - Primitives ("cube", "sphere", etc.) are resolved via `DefaultAssets`.
+/// - File paths are checked in `MeshCache`; if not cached, the GLB is loaded
+///   from disk and pushed to `PendingMeshUpload` for deferred GPU upload.
+pub(crate) fn resolve_mesh(
+    w: &mut euca_ecs::World,
+    entity: Entity,
+    mesh_name: &str,
+) -> MeshResolution {
+    // 1. Try DefaultAssets lookup (primitives).
+    if let Some(assets) = w.resource::<DefaultAssets>().cloned()
+        && let Some(handle) = assets.mesh(mesh_name)
+    {
+        return MeshResolution::Ready(handle);
+    }
+
+    // 2. Only treat as file path if it looks like one.
+    if !is_file_path_mesh(mesh_name) {
+        return MeshResolution::NotFound;
+    }
+
+    // 3. Check mesh cache for previously uploaded file.
+    if let Some(cache) = w.resource::<MeshCache>().cloned()
+        && let Some(handle) = cache.meshes.get(mesh_name)
+    {
+        return MeshResolution::Ready(*handle);
+    }
+
+    // 4. Verify the file exists before attempting to load.
+    if !std::path::Path::new(mesh_name).exists() {
+        return MeshResolution::LoadError(format!("File not found: {mesh_name}"));
+    }
+
+    // 5. Load the GLB/glTF from disk (CPU-only, no GPU access needed).
+    let scene = match euca_asset::load_gltf(mesh_name) {
+        Ok(s) => s,
+        Err(e) => return MeshResolution::LoadError(e),
+    };
+
+    // Take the first mesh from the scene.
+    let gltf_mesh = match scene.meshes.into_iter().next() {
+        Some(m) => m,
+        None => return MeshResolution::LoadError("GLB file contains no meshes".into()),
+    };
+
+    // 6. Ensure PendingMeshUpload resource exists.
+    if w.resource::<PendingMeshUpload>().is_none() {
+        w.insert_resource(PendingMeshUpload::default());
+    }
+
+    // 7. Push to pending queue for GPU upload in the render loop.
+    if let Some(pending) = w.resource_mut::<PendingMeshUpload>() {
+        pending.queue.push(PendingMeshEntry {
+            entity,
+            path: mesh_name.to_string(),
+            mesh: gltf_mesh.mesh,
+        });
+    }
+
+    MeshResolution::Pending
+}
+
+/// Drain the pending mesh upload queue, uploading each mesh to the GPU
+/// and attaching `MeshRenderer` to the corresponding entity.
+///
+/// Call this from the render loop where `Renderer` and `GpuContext` are
+/// available. Each uploaded mesh is cached in `MeshCache` so that
+/// subsequent spawns with the same path skip the upload.
+pub fn drain_pending_mesh_uploads(
+    w: &mut euca_ecs::World,
+    renderer: &mut euca_render::Renderer,
+    gpu: &euca_render::GpuContext,
+) {
+    // Drain the queue: take all entries, leaving the resource empty.
+    let entries: Vec<PendingMeshEntry> = match w.resource_mut::<PendingMeshUpload>() {
+        Some(pending) => std::mem::take(&mut pending.queue),
+        None => return,
+    };
+
+    if entries.is_empty() {
+        return;
+    }
+
+    // Ensure MeshCache resource exists.
+    if w.resource::<MeshCache>().is_none() {
+        w.insert_resource(MeshCache::default());
+    }
+
+    for entry in entries {
+        // Check if another entry in this batch already uploaded the same path.
+        let cached = w
+            .resource::<MeshCache>()
+            .and_then(|c| c.meshes.get(&entry.path).copied());
+
+        let handle = if let Some(h) = cached {
+            h
+        } else {
+            let h = renderer.upload_mesh(gpu, &entry.mesh);
+            if let Some(cache) = w.resource_mut::<MeshCache>() {
+                cache.meshes.insert(entry.path.clone(), h);
+            }
+            h
+        };
+
+        // Only attach MeshRenderer if the entity is still alive.
+        if w.is_alive(entry.entity) {
+            w.insert(entry.entity, euca_render::MeshRenderer { mesh: handle });
+        }
     }
 }
 
@@ -526,5 +687,94 @@ pub(crate) fn apply_physics_body(w: &mut euca_ecs::World, entity: Entity, body_t
         }
     } else {
         w.insert(entity, pb);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use euca_ecs::World;
+
+    #[test]
+    fn is_file_path_mesh_detects_paths() {
+        assert!(is_file_path_mesh("assets/generated/sword.glb"));
+        assert!(is_file_path_mesh("models/hero.gltf"));
+        assert!(is_file_path_mesh("path/to/mesh"));
+        assert!(is_file_path_mesh("model.glb"));
+        assert!(!is_file_path_mesh("cube"));
+        assert!(!is_file_path_mesh("sphere"));
+        assert!(!is_file_path_mesh("plane"));
+    }
+
+    #[test]
+    fn resolve_mesh_primitive_with_default_assets() {
+        let mut world = World::new();
+        let mut meshes = std::collections::HashMap::new();
+        meshes.insert("cube".to_string(), MeshHandle(0));
+        let materials = std::collections::HashMap::new();
+        world.insert_resource(DefaultAssets {
+            meshes,
+            materials,
+            default_material: euca_render::MaterialHandle(0),
+        });
+
+        let entity = world.spawn(());
+        match resolve_mesh(&mut world, entity, "cube") {
+            MeshResolution::Ready(h) => assert_eq!(h, MeshHandle(0)),
+            _ => panic!("Expected Ready for primitive mesh"),
+        }
+    }
+
+    #[test]
+    fn resolve_mesh_unknown_primitive_returns_not_found() {
+        let mut world = World::new();
+        let entity = world.spawn(());
+        match resolve_mesh(&mut world, entity, "nonexistent_primitive") {
+            MeshResolution::NotFound => {}
+            _ => panic!("Expected NotFound for unknown non-path name"),
+        }
+    }
+
+    #[test]
+    fn resolve_mesh_nonexistent_file_returns_load_error() {
+        let mut world = World::new();
+        let entity = world.spawn(());
+        match resolve_mesh(&mut world, entity, "assets/does_not_exist.glb") {
+            MeshResolution::LoadError(msg) => {
+                assert!(
+                    msg.contains("not found") || msg.contains("File not found"),
+                    "Unexpected error: {msg}"
+                );
+            }
+            _ => panic!("Expected LoadError for nonexistent file path"),
+        }
+    }
+
+    #[test]
+    fn resolve_mesh_cached_returns_ready() {
+        let mut world = World::new();
+        let mut cache = MeshCache::default();
+        cache
+            .meshes
+            .insert("assets/cached.glb".to_string(), MeshHandle(42));
+        world.insert_resource(cache);
+
+        let entity = world.spawn(());
+        match resolve_mesh(&mut world, entity, "assets/cached.glb") {
+            MeshResolution::Ready(h) => assert_eq!(h, MeshHandle(42)),
+            _ => panic!("Expected Ready for cached mesh"),
+        }
+    }
+
+    #[test]
+    fn mesh_cache_default_is_empty() {
+        let cache = MeshCache::default();
+        assert!(cache.meshes.is_empty());
+    }
+
+    #[test]
+    fn pending_mesh_upload_default_is_empty() {
+        let pending = PendingMeshUpload::default();
+        assert!(pending.queue.is_empty());
     }
 }
