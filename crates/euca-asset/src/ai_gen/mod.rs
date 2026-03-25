@@ -7,6 +7,7 @@
 //! All provider methods are **synchronous and blocking** — callers are
 //! responsible for scheduling them on a background thread or task pool.
 
+pub mod hunyuan;
 pub mod meshy;
 pub mod rodin;
 pub mod tripo;
