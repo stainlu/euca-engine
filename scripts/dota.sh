@@ -173,14 +173,14 @@ echo "  Heroes selected: Juggernaut (Radiant) vs Sven (Dire)"
 echo "Spawning neutral camps..."
 
 # Radiant-side camps (between lanes, left half of map)
-$E entity create --mesh sphere --position=-18,0.5,10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
-$E entity create --mesh sphere --position=-18,0.5,-10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
-$E entity create --mesh sphere --position=-24,0.5,10 --scale 0.8,0.8,0.8 --color green --health 800 --physics Kinematic --combat --combat-damage 35 --combat-range 2 --combat-speed 2 --combat-cooldown 1.5 --gold-bounty 100 --xp-bounty 120 2>/dev/null
+$E entity create --mesh assets/generated/neutral_wolf.glb --position=-18,0.5,10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
+$E entity create --mesh assets/generated/neutral_wolf.glb --position=-18,0.5,-10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
+$E entity create --mesh assets/generated/neutral_troll.glb --position=-24,0.5,10 --scale 0.8,0.8,0.8 --color green --health 800 --physics Kinematic --combat --combat-damage 35 --combat-range 2 --combat-speed 2 --combat-cooldown 1.5 --gold-bounty 100 --xp-bounty 120 2>/dev/null
 
 # Dire-side camps (between lanes, right half of map)
-$E entity create --mesh sphere --position=18,0.5,10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
-$E entity create --mesh sphere --position=18,0.5,-10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
-$E entity create --mesh sphere --position=24,0.5,-10 --scale 0.8,0.8,0.8 --color green --health 800 --physics Kinematic --combat --combat-damage 35 --combat-range 2 --combat-speed 2 --combat-cooldown 1.5 --gold-bounty 100 --xp-bounty 120 2>/dev/null
+$E entity create --mesh assets/generated/neutral_wolf.glb --position=18,0.5,10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
+$E entity create --mesh assets/generated/neutral_wolf.glb --position=18,0.5,-10 --scale 0.6,0.6,0.6 --color green --health 500 --physics Kinematic --combat --combat-damage 25 --combat-range 2 --combat-speed 3 --combat-cooldown 1.2 --gold-bounty 60 --xp-bounty 80 2>/dev/null
+$E entity create --mesh assets/generated/neutral_troll.glb --position=24,0.5,-10 --scale 0.8,0.8,0.8 --color green --health 800 --physics Kinematic --combat --combat-damage 35 --combat-range 2 --combat-speed 2 --combat-cooldown 1.5 --gold-bounty 100 --xp-bounty 120 2>/dev/null
 
 echo "  6 neutral camps spawned."
 
