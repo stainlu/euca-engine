@@ -478,16 +478,13 @@ impl DotaClientApp {
                 hero.index()
             );
 
-            // Read the hero's world position so we can initialize the camera center.
+            // Read the hero's position for camera initialization.
+            // Use LocalTransform (source of truth from level JSON), NOT GlobalTransform
+            // which is still at default (0,0,0) because transform_propagation hasn't run yet.
             let hero_world_pos = self
                 .world
-                .get::<GlobalTransform>(hero)
-                .map(|gt| gt.0.translation)
-                .or_else(|| {
-                    self.world
-                        .get::<LocalTransform>(hero)
-                        .map(|lt| lt.0.translation)
-                })
+                .get::<LocalTransform>(hero)
+                .map(|lt| lt.0.translation)
                 .unwrap_or(Vec3::ZERO);
 
             if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
