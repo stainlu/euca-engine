@@ -81,8 +81,7 @@ impl GenerationService {
     }
 
     /// Create a service with explicitly-provided generators (useful for tests).
-    #[cfg(test)]
-    fn with_providers(
+    pub fn with_providers(
         providers: HashMap<String, Box<dyn AssetGenerator>>,
         output_dir: PathBuf,
     ) -> Self {
@@ -92,6 +91,13 @@ impl GenerationService {
             output_dir,
             next_id: 0,
         }
+    }
+
+    /// List the names of all registered providers (regardless of availability).
+    pub fn registered_providers(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.providers.keys().map(|s| s.as_str()).collect();
+        names.sort_unstable();
+        names
     }
 
     /// List the names of providers that have a valid API key configured.
