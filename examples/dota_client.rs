@@ -588,6 +588,9 @@ impl DotaClientApp {
             log::info!("Navmesh built for DotA arena");
         }
 
+        // Add point lights on towers and ancients for atmospheric glow
+        add_structure_lights(&mut self.world);
+
         // Reset the Time resource so the first frame after loading doesn't
         // have a massive delta (30+ seconds of GLB loading). Without this,
         // edge-pan speed * huge_delta drifts the camera hundreds of units.
@@ -742,12 +745,22 @@ impl DotaClientApp {
             renderer.set_post_process_settings(pps);
         }
 
-        renderer.render_to_view(
+        // Collect point lights from the world
+        let point_lights: Vec<(euca_math::Vec3, PointLight)> = {
+            let query = Query::<(&GlobalTransform, &PointLight)>::new(&self.world);
+            query.iter().map(|(gt, pl)| (gt.0.translation, pl.clone())).collect()
+        };
+        let pl_refs: Vec<(euca_math::Vec3, &PointLight)> =
+            point_lights.iter().map(|(pos, pl)| (*pos, pl)).collect();
+
+        renderer.render_to_view_with_lights(
             gpu,
             &camera,
             &light,
             &ambient,
             &draw_commands,
+            &pl_refs,
+            &[],
             &view,
             &mut encoder,
         );
@@ -782,6 +795,56 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
             aabb: None,
         })
         .collect()
+}
+
+/// Add glowing point lights on towers and structures for atmosphere.
+fn add_structure_lights(world: &mut World) {
+    use euca_gameplay::{EntityRole, Team};
+    use euca_render::PointLight;
+
+    let structures: Vec<(Entity, Vec3, u8, EntityRole)> = {
+        let query = Query::<(Entity, &GlobalTransform, &Team, &EntityRole)>::new(world);
+        query
+            .iter()
+            .filter(|(_, _, _, role)| {
+                matches!(role, EntityRole::Tower | EntityRole::Structure)
+            })
+            .map(|(e, gt, t, r)| (e, gt.0.translation, t.0, *r))
+            .collect()
+    };
+
+    for &(_entity, pos, team, role) in &structures {
+        let (color, intensity, range) = match (team, role) {
+            (1, EntityRole::Structure) => ([0.2, 0.9, 0.9], 3.0, 12.0), // Radiant ancient: bright cyan
+            (2, EntityRole::Structure) => ([0.9, 0.2, 0.1], 3.0, 12.0), // Dire ancient: bright red
+            (1, _) => ([0.3, 0.7, 0.8], 1.5, 8.0),                     // Radiant tower: soft cyan
+            (2, _) => ([0.8, 0.3, 0.1], 1.5, 8.0),                     // Dire tower: soft orange
+            _ => ([0.5, 0.5, 0.5], 1.0, 6.0),
+        };
+
+        // Spawn a light entity at the structure's position, elevated
+        let light_pos = Vec3::new(pos.x, pos.y + 3.0, pos.z);
+        let light_entity = world.spawn(euca_scene::LocalTransform(
+            Transform::from_translation(light_pos),
+        ));
+        world.insert(
+            light_entity,
+            euca_scene::GlobalTransform(Transform::from_translation(light_pos)),
+        );
+        world.insert(
+            light_entity,
+            PointLight {
+                color,
+                intensity,
+                range,
+            },
+        );
+    }
+
+    let count = structures.len();
+    if count > 0 {
+        log::info!("Added point lights to {count} structures");
+    }
 }
 
 /// Build health bar UI quads for all alive entities with Health + GlobalTransform.
