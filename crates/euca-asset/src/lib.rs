@@ -1,6 +1,6 @@
 pub mod ai_gen;
 pub mod animation;
-mod gltf_loader;
+pub mod gltf_loader;
 pub mod hot_reload;
 pub mod loader;
 pub mod lod;

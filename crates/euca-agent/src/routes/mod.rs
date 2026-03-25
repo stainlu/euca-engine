@@ -168,7 +168,7 @@ pub struct PendingMeshUpload {
     pub queue: Vec<PendingMeshEntry>,
 }
 
-/// A single mesh waiting for GPU upload.
+/// A single mesh waiting for GPU upload, with optional material/textures from GLB.
 pub struct PendingMeshEntry {
     /// The entity that should receive a `MeshRenderer` after upload.
     pub entity: Entity,
@@ -176,6 +176,13 @@ pub struct PendingMeshEntry {
     pub path: String,
     /// CPU-side mesh geometry, ready for upload.
     pub mesh: Mesh,
+    /// PBR material from the GLB file (if available).
+    pub material: Option<euca_render::Material>,
+    /// Texture images from the GLB (RGBA8 pixels). Indices correspond to
+    /// the `albedo_tex_index` etc. fields from `GltfMesh`.
+    pub images: Vec<euca_asset::gltf_loader::GltfImage>,
+    /// Index into `images` for the albedo texture.
+    pub albedo_tex_index: Option<usize>,
 }
 
 /// Returns true if the mesh name looks like a file path rather than a
@@ -253,6 +260,9 @@ pub(crate) fn resolve_mesh(
             entity,
             path: mesh_name.to_string(),
             mesh: gltf_mesh.mesh,
+            material: Some(gltf_mesh.material),
+            images: scene.images,
+            albedo_tex_index: gltf_mesh.albedo_tex_index,
         });
     }
 
@@ -304,9 +314,30 @@ pub fn drain_pending_mesh_uploads(
         // Only attach MeshRenderer + MaterialRef if the entity is still alive.
         if w.is_alive(entry.entity) {
             w.insert(entry.entity, euca_render::MeshRenderer { mesh: handle });
-            // Assign a material if the entity doesn't already have one.
-            // Use the default material from DefaultAssets.
-            if w.get::<euca_render::MaterialRef>(entry.entity).is_none() {
+
+            // Upload GLB material with textures if available, otherwise use default.
+            let mat_handle = if let Some(ref mat) = entry.material {
+                // Upload albedo texture from GLB if present.
+                let mut uploaded_mat = mat.clone();
+                if let Some(tex_idx) = entry.albedo_tex_index {
+                    if let Some(img) = entry.images.get(tex_idx) {
+                        let tex_handle = renderer.upload_texture(
+                            gpu,
+                            img.width,
+                            img.height,
+                            &img.pixels,
+                        );
+                        uploaded_mat.albedo_texture = Some(tex_handle);
+                    }
+                }
+                Some(renderer.upload_material(gpu, &uploaded_mat))
+            } else {
+                None
+            };
+
+            if let Some(mh) = mat_handle {
+                w.insert(entry.entity, euca_render::MaterialRef { handle: mh });
+            } else if w.get::<euca_render::MaterialRef>(entry.entity).is_none() {
                 if let Some(assets) = w.resource::<DefaultAssets>() {
                     w.insert(
                         entry.entity,

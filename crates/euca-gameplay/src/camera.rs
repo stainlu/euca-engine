@@ -182,11 +182,13 @@ pub fn moba_camera_system(world: &mut World) {
         let margin = cam.edge_pan_margin;
         let speed = cam.edge_pan_speed * dt;
 
-        // Horizontal panning (world X axis)
+        // Horizontal panning (world X axis).
+        // The camera looks from +Z toward −Z, so world +X is screen-left.
+        // Mouse at left edge → pan the view left → increase pan_offset.x.
         if mouse_x < margin {
-            new_pan_offset.x -= speed;
-        } else if mouse_x > screen_w - margin {
             new_pan_offset.x += speed;
+        } else if mouse_x > screen_w - margin {
+            new_pan_offset.x -= speed;
         }
 
         // Vertical panning (world Z axis) — screen top = forward (-Z or +Z
