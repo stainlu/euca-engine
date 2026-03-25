@@ -426,7 +426,12 @@ impl DotaClientApp {
         world.insert_resource(Events::default());
         world.insert_resource(euca_input::InputState::new());
         world.insert_resource(euca_input::InputContextStack::new());
-        world.insert_resource(MobaCamera::default());
+        // Start locked to prevent edge-pan drift during the 30s level load.
+        // Unlocked after level loading completes (in load_level).
+        world.insert_resource(MobaCamera {
+            locked: true,
+            ..MobaCamera::default()
+        });
         world.insert_resource(ViewportSize::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32));
         world.insert_resource(ScreenSize {
             width: WINDOW_WIDTH as f32,
@@ -474,10 +479,13 @@ impl DotaClientApp {
             apply_hero_template(&mut self.world, hero_entity, "Juggernaut");
             log::info!("Applied Juggernaut template to player hero (entity {PLAYER_HERO_INDEX})");
 
-            // Point the MOBA camera at the player hero with DotA-style key bindings
+            // Point the MOBA camera at the player hero with DotA-style key bindings.
+            // Reset pan_offset to zero — edge-pan may have drifted during the long
+            // level load (30s of GLB loading with the camera unlocked).
             if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
                 cam.follow_entity = Some(hero_entity);
                 cam.locked = false;
+                cam.pan_offset = Vec3::ZERO;
                 cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
                 cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
             }
@@ -517,6 +525,11 @@ impl DotaClientApp {
             self.world.insert_resource(mesh);
             log::info!("Navmesh built for DotA arena");
         }
+
+        // Reset the Time resource so the first frame after loading doesn't
+        // have a massive delta (30+ seconds of GLB loading). Without this,
+        // edge-pan speed * huge_delta drifts the camera hundreds of units.
+        self.world.resource_mut::<Time>().unwrap().update();
     }
 
     fn render_frame(&mut self) {
