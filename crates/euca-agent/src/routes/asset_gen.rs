@@ -3,6 +3,11 @@
 //! Delegates to [`euca_asset::GenerationService`] which manages providers
 //! (Tripo, Meshy, Rodin, Hunyuan3D), task lifecycle, downloads, and caching.
 //! The service is stored as a World resource.
+//!
+//! Provider methods use `reqwest::blocking::Client` internally, which cannot
+//! run on tokio worker threads (it creates a nested runtime). All handlers
+//! that trigger provider I/O use `tokio::task::spawn_blocking` to run the
+//! blocking work on a dedicated thread pool.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -16,7 +21,7 @@ use crate::state::SharedWorld;
 
 // ── Request / Response types ──
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct AssetGenerateRequest {
     pub prompt: String,
     #[serde(default = "default_provider")]
@@ -81,6 +86,9 @@ fn status_string(status: &GenerationStatus) -> &'static str {
 }
 
 /// Ensure a `GenerationService` resource exists in the World.
+///
+/// Must be called from a non-tokio thread (e.g. inside `spawn_blocking`)
+/// because provider constructors create `reqwest::blocking::Client`.
 fn ensure_service(w: &mut euca_ecs::World) {
     if w.resource::<GenerationService>().is_none() {
         w.insert_resource(GenerationService::new(PathBuf::from("assets/generated")));
@@ -90,28 +98,35 @@ fn ensure_service(w: &mut euca_ecs::World) {
 // ── Handlers ──
 
 /// POST /asset/generate -- start a new AI 3D generation task.
+///
+/// Runs on a blocking thread because `service.start()` may call
+/// `provider.generate()` which uses `reqwest::blocking`.
 pub async fn asset_generate(
     State(shared): State<SharedWorld>,
     Json(req): Json<AssetGenerateRequest>,
 ) -> Json<serde_json::Value> {
-    let result = shared.with(|w, _| {
-        ensure_service(w);
-        let service = w
-            .resource_mut::<GenerationService>()
-            .expect("service just ensured");
+    let result = tokio::task::spawn_blocking(move || {
+        shared.with(|w, _| {
+            ensure_service(w);
+            let service = w
+                .resource_mut::<GenerationService>()
+                .expect("service just ensured");
 
-        let provider_name = req.provider.to_lowercase();
-        let quality = parse_quality(req.quality.as_deref());
-        let gen_request = GenerationRequest {
-            prompt: Some(req.prompt.clone()),
-            image: None,
-            quality,
-        };
+            let provider_name = req.provider.to_lowercase();
+            let quality = parse_quality(req.quality.as_deref());
+            let gen_request = GenerationRequest {
+                prompt: Some(req.prompt.clone()),
+                image: None,
+                quality,
+            };
 
-        service
-            .start(&provider_name, &gen_request)
-            .map_err(|e| e.to_string())
-    });
+            service
+                .start(&provider_name, &gen_request)
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("task join error: {e}")));
 
     match result {
         Ok(task_id) => Json(serde_json::json!({
@@ -127,42 +142,46 @@ pub async fn asset_generate(
 
 /// GET /asset/status/{task_id} -- check the status of a generation task.
 ///
-/// Polls the provider for updated status if the task is still pending.
+/// Polls the provider for updated status. Runs on a blocking thread because
+/// `service.update()` calls `provider.poll()` which uses `reqwest::blocking`.
 pub async fn asset_status(
     State(shared): State<SharedWorld>,
     Path(task_id): Path<String>,
 ) -> Json<serde_json::Value> {
-    let result = shared.with(|w, _| {
-        ensure_service(w);
-        let service = w
-            .resource_mut::<GenerationService>()
-            .expect("service just ensured");
+    let result = tokio::task::spawn_blocking(move || {
+        shared.with(|w, _| {
+            ensure_service(w);
+            let service = w
+                .resource_mut::<GenerationService>()
+                .expect("service just ensured");
 
-        // Poll to update status (auto-downloads on completion).
-        let status = match service.update(&task_id) {
-            Ok(s) => s.clone(),
-            Err(e) => return Err(e.to_string()),
-        };
+            let status = match service.update(&task_id) {
+                Ok(s) => s.clone(),
+                Err(e) => return Err(e.to_string()),
+            };
 
-        let file_path = service
-            .file_path(&task_id)
-            .map(|p| p.to_string_lossy().into_owned());
+            let file_path = service
+                .file_path(&task_id)
+                .map(|p| p.to_string_lossy().into_owned());
 
-        let resp = AssetStatusResponse {
-            task_id: task_id.clone(),
-            status: status_string(&status).to_string(),
-            progress: match &status {
-                GenerationStatus::Pending { progress } => Some(*progress),
-                _ => None,
-            },
-            file_path,
-            error: match &status {
-                GenerationStatus::Failed { error } => Some(error.clone()),
-                _ => None,
-            },
-        };
-        Ok(resp)
-    });
+            let resp = AssetStatusResponse {
+                task_id: task_id.clone(),
+                status: status_string(&status).to_string(),
+                progress: match &status {
+                    GenerationStatus::Pending { progress } => Some(*progress),
+                    _ => None,
+                },
+                file_path,
+                error: match &status {
+                    GenerationStatus::Failed { error } => Some(error.clone()),
+                    _ => None,
+                },
+            };
+            Ok(resp)
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("task join error: {e}")));
 
     match result {
         Ok(resp) => Json(serde_json::json!(resp)),
@@ -174,60 +193,70 @@ pub async fn asset_status(
 }
 
 /// GET /asset/generated -- list all generation tasks.
+///
+/// Read-only — no provider I/O, safe to run on tokio thread.
+/// Still uses spawn_blocking for ensure_service consistency.
 pub async fn asset_generated(State(shared): State<SharedWorld>) -> Json<serde_json::Value> {
-    let entries = shared.with(|w, _| {
-        ensure_service(w);
-        let service = w
-            .resource::<GenerationService>()
-            .expect("service just ensured");
+    let entries = tokio::task::spawn_blocking(move || {
+        shared.with(|w, _| {
+            ensure_service(w);
+            let service = w
+                .resource::<GenerationService>()
+                .expect("service just ensured");
 
-        let mut entries: Vec<AssetListEntry> = service
-            .list_tasks()
-            .into_iter()
-            .map(|(task_id, prompt, status)| {
-                let file_path = service
-                    .file_path(task_id)
-                    .map(|p| p.to_string_lossy().into_owned());
-                AssetListEntry {
-                    task_id: task_id.to_string(),
-                    prompt: prompt.to_string(),
-                    provider: String::new(), // provider not exposed by list_tasks
-                    status: status_string(status).to_string(),
-                    file_path,
-                }
-            })
-            .collect();
+            let mut entries: Vec<AssetListEntry> = service
+                .list_tasks()
+                .into_iter()
+                .map(|(task_id, prompt, status)| {
+                    let file_path = service
+                        .file_path(task_id)
+                        .map(|p| p.to_string_lossy().into_owned());
+                    AssetListEntry {
+                        task_id: task_id.to_string(),
+                        prompt: prompt.to_string(),
+                        provider: String::new(),
+                        status: status_string(status).to_string(),
+                        file_path,
+                    }
+                })
+                .collect();
 
-        entries.sort_by(|a, b| a.task_id.cmp(&b.task_id));
-        entries
-    });
+            entries.sort_by(|a, b| a.task_id.cmp(&b.task_id));
+            entries
+        })
+    })
+    .await
+    .unwrap_or_default();
 
     Json(serde_json::json!(entries))
 }
 
 /// GET /asset/providers -- list available AI generation providers.
 pub async fn asset_providers(State(shared): State<SharedWorld>) -> Json<serde_json::Value> {
-    let resp = shared.with(|w, _| {
-        ensure_service(w);
-        let service = w
-            .resource::<GenerationService>()
-            .expect("service just ensured");
+    let resp = tokio::task::spawn_blocking(move || {
+        shared.with(|w, _| {
+            ensure_service(w);
+            let service = w
+                .resource::<GenerationService>()
+                .expect("service just ensured");
 
-        // GenerationService exposes available_providers() (names of configured
-        // providers). We also need the full list. Since the service creates all
-        // four providers internally, we list them all and mark availability.
-        let all_providers = ["tripo", "meshy", "rodin", "hunyuan"];
-        let available = service.available_providers();
+            let all_providers = ["tripo", "meshy", "rodin", "hunyuan"];
+            let available = service.available_providers();
 
-        let providers: Vec<ProviderInfo> = all_providers
-            .iter()
-            .map(|name| ProviderInfo {
-                name: name.to_string(),
-                available: available.contains(name),
-            })
-            .collect();
+            let providers: Vec<ProviderInfo> = all_providers
+                .iter()
+                .map(|name| ProviderInfo {
+                    name: name.to_string(),
+                    available: available.contains(name),
+                })
+                .collect();
 
-        ProvidersResponse { providers }
+            ProvidersResponse { providers }
+        })
+    })
+    .await
+    .unwrap_or_else(|_| ProvidersResponse {
+        providers: Vec::new(),
     });
 
     Json(serde_json::json!(resp))
