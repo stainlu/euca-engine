@@ -63,6 +63,8 @@ pub mod ssr;
 /// Temporal anti-aliasing resolve pass.
 pub mod taa;
 mod texture;
+/// Lightweight UI overlay — screen-space colored quads for HUD and health bars.
+pub mod ui_overlay;
 /// Per-pixel velocity buffer for motion vectors (TAA, motion blur, temporal SSGI).
 pub mod velocity;
 mod vertex;
@@ -125,6 +127,7 @@ pub use ssr::{
 };
 pub use taa::TaaPass;
 pub use texture::{TextureHandle, TextureStore};
+pub use ui_overlay::{UiOverlayRenderer, UiQuad};
 pub use velocity::{VELOCITY_FORMAT, VelocityPipeline, VelocitySceneUniforms, VelocityTextures};
 pub use vertex::Vertex;
 pub use volumetric::{VolumetricFogPass, VolumetricFogSettings};

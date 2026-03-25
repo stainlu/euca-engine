@@ -16,7 +16,7 @@ use euca_gameplay::{
     AbilityDef, AbilityEffect, AbilitySlot, GameState, HeroDef, HeroName, HeroRegistry, ItemDef,
     ItemRegistry,
 };
-use euca_math::{Transform, Vec3};
+use euca_math::{Mat4, Transform, Vec3, Vec4};
 use euca_physics::PhysicsConfig;
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
@@ -468,6 +468,7 @@ struct DotaClientApp {
     initialized: bool,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
+    ui_overlay: Option<UiOverlayRenderer>,
     window_attrs: WindowAttributes,
     level_loaded: bool,
 }
@@ -507,6 +508,7 @@ impl DotaClientApp {
             initialized: false,
             gpu: None,
             renderer: None,
+            ui_overlay: None,
             window_attrs: WindowAttributes::default()
                 .with_title("Euca Engine — DotA Client")
                 .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
@@ -750,6 +752,18 @@ impl DotaClientApp {
             &mut encoder,
         );
 
+        // UI overlay: health bars above entities + HUD
+        {
+            let vp = camera.view_projection_matrix(gpu.aspect_ratio());
+            let vw = gpu.surface_config.width as f32;
+            let vh = gpu.surface_config.height as f32;
+            let mut ui_quads = build_health_bar_quads(&self.world, &vp, vw, vh);
+            ui_quads.extend(build_hud_quads(&self.world, vw, vh));
+            if let Some(ui) = self.ui_overlay.as_mut() {
+                ui.render(&gpu.device, &gpu.queue, &mut encoder, &view, &ui_quads, vw, vh);
+            }
+        }
+
         gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
@@ -770,6 +784,247 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
         .collect()
 }
 
+/// Build health bar UI quads for all alive entities with Health + GlobalTransform.
+fn build_health_bar_quads(
+    world: &World,
+    view_proj: &Mat4,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> Vec<UiQuad> {
+    use euca_gameplay::{Dead, EntityRole, Health, Team};
+
+    let mut quads = Vec::new();
+    let query = Query::<(Entity, &GlobalTransform, &Health)>::new(world);
+
+    // Find which team the player is on (for color coding)
+    let player_team = {
+        let pq = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(world);
+        pq.iter()
+            .next()
+            .and_then(|(e, _)| world.get::<Team>(e).map(|t| t.0))
+            .unwrap_or(1)
+    };
+
+    for (entity, gt, health) in query.iter() {
+        if world.get::<Dead>(entity).is_some() {
+            continue;
+        }
+        if health.max <= 0.0 {
+            continue;
+        }
+
+        let world_pos = gt.0.translation;
+        // Project world position to clip space
+        let clip = *view_proj * euca_math::Vec4::new(world_pos.x, world_pos.y, world_pos.z, 1.0);
+        if clip.w <= 0.0 {
+            continue; // behind camera
+        }
+
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+
+        // NDC → screen pixels
+        let screen_x = (ndc_x + 1.0) * 0.5 * viewport_w;
+        let screen_y = (1.0 - ndc_y) * 0.5 * viewport_h; // Y flipped
+
+        // Bar dimensions based on entity role
+        let role = world.get::<EntityRole>(entity);
+        let (bar_w, bar_h, y_offset) = match role {
+            Some(EntityRole::Hero) => (60.0, 8.0, -45.0),
+            Some(EntityRole::Tower) | Some(EntityRole::Structure) => (80.0, 6.0, -60.0),
+            _ => (40.0, 5.0, -30.0), // minions, neutrals
+        };
+
+        let bar_x = screen_x - bar_w * 0.5;
+        let bar_y = screen_y + y_offset;
+
+        // Skip if off-screen
+        if bar_x + bar_w < 0.0 || bar_x > viewport_w || bar_y + bar_h < 0.0 || bar_y > viewport_h
+        {
+            continue;
+        }
+
+        let fill = (health.current / health.max).clamp(0.0, 1.0);
+        let team = world.get::<Team>(entity).map(|t| t.0).unwrap_or(0);
+
+        // Background (dark)
+        quads.push(UiQuad {
+            x: bar_x,
+            y: bar_y,
+            w: bar_w,
+            h: bar_h,
+            color: [0.1, 0.1, 0.1, 0.7],
+        });
+
+        // Fill bar — green for allies, red for enemies, yellow for neutrals
+        let fill_color = if team == 0 {
+            [0.8, 0.8, 0.0, 0.9] // neutral: yellow
+        } else if team == player_team {
+            [0.1, 0.9, 0.1, 0.9] // ally: green
+        } else {
+            [0.9, 0.1, 0.1, 0.9] // enemy: red
+        };
+
+        quads.push(UiQuad {
+            x: bar_x,
+            y: bar_y,
+            w: bar_w * fill,
+            h: bar_h,
+            color: fill_color,
+        });
+    }
+
+    quads
+}
+
+/// Build HUD quads: ability cooldowns, gold, level display.
+fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQuad> {
+    let mut quads = Vec::new();
+
+    // Find the player hero
+    let hero = {
+        let pq = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(world);
+        pq.iter().next().map(|(e, _)| e)
+    };
+    let hero = match hero {
+        Some(h) => h,
+        None => return quads,
+    };
+
+    // ── Ability bar (bottom-center) ──
+    let ability_bar_y = viewport_h - 60.0;
+    let slot_size = 50.0;
+    let gap = 8.0;
+    let total_w = slot_size * 4.0 + gap * 3.0;
+    let start_x = (viewport_w - total_w) * 0.5;
+
+    let abilities = world.get::<euca_gameplay::AbilitySet>(hero);
+    let _slot_labels = ["Q", "W", "E", "R"];
+
+    for i in 0..4u32 {
+        let x = start_x + (slot_size + gap) * i as f32;
+
+        // Slot background
+        quads.push(UiQuad {
+            x,
+            y: ability_bar_y,
+            w: slot_size,
+            h: slot_size,
+            color: [0.15, 0.15, 0.2, 0.85],
+        });
+
+        // Cooldown overlay (darken when on cooldown)
+        if let Some(ability_set) = abilities {
+            let slot = match i {
+                0 => euca_gameplay::AbilitySlot::Q,
+                1 => euca_gameplay::AbilitySlot::W,
+                2 => euca_gameplay::AbilitySlot::E,
+                _ => euca_gameplay::AbilitySlot::R,
+            };
+            if let Some(ability) = ability_set.get(slot) {
+                if ability.cooldown_remaining > 0.0 {
+                    let cd_frac = (ability.cooldown_remaining / ability.cooldown).clamp(0.0, 1.0);
+                    quads.push(UiQuad {
+                        x,
+                        y: ability_bar_y,
+                        w: slot_size,
+                        h: slot_size * cd_frac,
+                        color: [0.0, 0.0, 0.0, 0.6], // dark overlay for cooldown portion
+                    });
+                } else {
+                    // Ready indicator: bright border at bottom
+                    quads.push(UiQuad {
+                        x,
+                        y: ability_bar_y + slot_size - 3.0,
+                        w: slot_size,
+                        h: 3.0,
+                        color: [0.3, 0.8, 1.0, 0.9], // cyan ready indicator
+                    });
+                }
+            }
+        }
+    }
+
+    // ── Gold display (bottom-left) ──
+    let gold = world
+        .get::<euca_gameplay::Gold>(hero)
+        .map(|g| g.0)
+        .unwrap_or(0);
+    // Gold bar: width proportional to gold (max display 5000)
+    let gold_bar_w = (gold as f32 / 5000.0).clamp(0.0, 1.0) * 150.0;
+    quads.push(UiQuad {
+        x: 20.0,
+        y: viewport_h - 30.0,
+        w: 150.0,
+        h: 20.0,
+        color: [0.15, 0.15, 0.15, 0.7],
+    });
+    quads.push(UiQuad {
+        x: 20.0,
+        y: viewport_h - 30.0,
+        w: gold_bar_w,
+        h: 20.0,
+        color: [1.0, 0.84, 0.0, 0.9], // gold color
+    });
+
+    // ── Hero health/mana bars (bottom-center, above abilities) ──
+    if let Some(health) = world.get::<euca_gameplay::Health>(hero) {
+        let bar_w = total_w;
+        let bar_h = 10.0;
+        let bar_x = start_x;
+        let bar_y = ability_bar_y - bar_h - 4.0;
+        let fill = (health.current / health.max).clamp(0.0, 1.0);
+
+        // HP background
+        quads.push(UiQuad {
+            x: bar_x,
+            y: bar_y,
+            w: bar_w,
+            h: bar_h,
+            color: [0.15, 0.05, 0.05, 0.8],
+        });
+        // HP fill
+        quads.push(UiQuad {
+            x: bar_x,
+            y: bar_y,
+            w: bar_w * fill,
+            h: bar_h,
+            color: [0.1, 0.8, 0.1, 0.9],
+        });
+    }
+
+    if let Some(mana) = world.get::<euca_gameplay::Mana>(hero) {
+        let bar_w = total_w;
+        let bar_h = 8.0;
+        let bar_x = start_x;
+        let bar_y = ability_bar_y - 10.0 - bar_h - 8.0;
+        let fill = if mana.max > 0.0 {
+            (mana.current / mana.max).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        // Mana background
+        quads.push(UiQuad {
+            x: bar_x,
+            y: bar_y,
+            w: bar_w,
+            h: bar_h,
+            color: [0.05, 0.05, 0.15, 0.8],
+        });
+        // Mana fill
+        quads.push(UiQuad {
+            x: bar_x,
+            y: bar_y,
+            w: bar_w * fill,
+            h: bar_h,
+            color: [0.2, 0.4, 1.0, 0.9],
+        });
+    }
+
+    quads
+}
+
 // ── Window event handling ───────────────────────────────────────────────────
 
 impl ApplicationHandler for DotaClientApp {
@@ -784,8 +1039,10 @@ impl ApplicationHandler for DotaClientApp {
             .expect("Failed to create window");
         let gpu = GpuContext::new(window, &survey, &wgpu_instance);
         let renderer = Renderer::new(&gpu);
+        let ui_overlay = UiOverlayRenderer::new(&gpu.device, gpu.surface_config.format);
         self.gpu = Some(gpu);
         self.renderer = Some(renderer);
+        self.ui_overlay = Some(ui_overlay);
         self.initialized = true;
 
         // Upload meshes, materials, and create the ground plane + light
