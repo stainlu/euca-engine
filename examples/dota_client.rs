@@ -824,11 +824,11 @@ fn day_night_system(world: &mut World, _dt: f32) {
         .map(|gs| gs.elapsed)
         .unwrap_or(0.0);
 
-    // 4-minute day/night cycle (240 seconds)
-    let cycle = (elapsed / 240.0 * std::f32::consts::TAU).sin(); // -1..1
-    let day_factor = cycle * 0.5 + 0.5; // 0 (night) to 1 (day)
+    // 5-minute day/night cycle (300 seconds), starts at full day
+    let cycle = (elapsed / 300.0 * std::f32::consts::TAU + std::f32::consts::FRAC_PI_2).sin();
+    let day_factor = cycle * 0.5 + 0.5; // 0 (night) to 1 (day), starts at 1.0
 
-    // Interpolate directional light
+    // Interpolate directional light — subtle variation, never too dark
     let query_entities: Vec<Entity> = {
         let query = Query::<(Entity, &DirectionalLight)>::new(world);
         query.iter().map(|(e, _)| e).collect()
@@ -836,35 +836,35 @@ fn day_night_system(world: &mut World, _dt: f32) {
     for entity in query_entities {
         if let Some(light) = world.get_mut::<DirectionalLight>(entity) {
             // Day: warm white (1.0, 0.95, 0.88), intensity 2.5
-            // Night: cool blue (0.3, 0.35, 0.5), intensity 0.8
+            // Night: slightly cooler (0.8, 0.82, 0.9), intensity 1.5
             light.color = [
-                0.3 + 0.7 * day_factor,
-                0.35 + 0.6 * day_factor,
-                0.5 + 0.38 * day_factor,
+                0.8 + 0.2 * day_factor,
+                0.82 + 0.13 * day_factor,
+                0.9 - 0.02 * day_factor,
             ];
-            light.intensity = 0.8 + 1.7 * day_factor;
+            light.intensity = 1.5 + 1.0 * day_factor;
         }
     }
 
-    // Interpolate ambient light
+    // Interpolate ambient light — very subtle
     if let Some(ambient) = world.resource_mut::<AmbientLight>() {
-        ambient.intensity = 0.08 + 0.12 * day_factor;
+        ambient.intensity = 0.15 + 0.05 * day_factor;
         ambient.color = [
-            0.6 + 0.4 * day_factor,
-            0.65 + 0.35 * day_factor,
-            0.8 + 0.2 * day_factor,
+            0.9 + 0.1 * day_factor,
+            0.9 + 0.1 * day_factor,
+            0.95 + 0.05 * day_factor,
         ];
     }
 
-    // Radiant vs Dire color grading: shift temperature based on camera X
+    // Radiant vs Dire color grading: very subtle temperature shift
     let cam_x = world
         .resource::<Camera>()
         .map(|c| c.eye.x)
         .unwrap_or(0.0);
     if let Some(pps) = world.resource_mut::<PostProcessSettings>() {
-        // Radiant side (x < 0): warm (+200K), Dire side (x > 0): cool (-200K)
-        let blend = (cam_x / 30.0).clamp(-1.0, 1.0); // -1 to 1
-        pps.temperature = -200.0 * blend; // warm when negative x, cool when positive x
+        // Radiant side (x < 0): slightly warm (+50K), Dire side (x > 0): slightly cool (-50K)
+        let blend = (cam_x / 30.0).clamp(-1.0, 1.0);
+        pps.temperature = -50.0 * blend;
     }
 }
 
@@ -886,11 +886,11 @@ fn add_structure_lights(world: &mut World) {
 
     for &(_entity, pos, team, role) in &structures {
         let (color, intensity, range) = match (team, role) {
-            (1, EntityRole::Structure) => ([0.2, 0.9, 0.9], 3.0, 12.0), // Radiant ancient: bright cyan
-            (2, EntityRole::Structure) => ([0.9, 0.2, 0.1], 3.0, 12.0), // Dire ancient: bright red
-            (1, _) => ([0.3, 0.7, 0.8], 1.5, 8.0),                     // Radiant tower: soft cyan
-            (2, _) => ([0.8, 0.3, 0.1], 1.5, 8.0),                     // Dire tower: soft orange
-            _ => ([0.5, 0.5, 0.5], 1.0, 6.0),
+            (1, EntityRole::Structure) => ([0.2, 0.8, 0.8], 2.0, 10.0), // Radiant ancient: cyan
+            (2, EntityRole::Structure) => ([0.8, 0.2, 0.1], 2.0, 10.0), // Dire ancient: red
+            (1, _) => ([0.3, 0.6, 0.7], 1.0, 6.0),                     // Radiant tower: soft cyan
+            (2, _) => ([0.7, 0.3, 0.1], 1.0, 6.0),                     // Dire tower: soft orange
+            _ => ([0.5, 0.5, 0.5], 0.8, 5.0),
         };
 
         // Spawn a light entity at the structure's position, elevated
