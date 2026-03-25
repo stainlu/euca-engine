@@ -48,8 +48,10 @@ pub struct MobaCamera {
     pub edge_pan_margin: f32,
     /// When `true`, the camera is always centered on the hero (no edge pan).
     pub locked: bool,
-    /// Accumulated displacement from edge panning (world XZ plane).
-    pub pan_offset: Vec3,
+    /// Absolute world position the camera orbits around.
+    /// In free mode this stays put (hero can walk off-screen).
+    /// In locked / follow-key mode it snaps to the hero each frame.
+    pub center: Vec3,
 
     /// Key that, when HELD, temporarily centers camera on the follow entity.
     /// Overrides edge-pan while held. Release returns to free camera.
@@ -73,7 +75,7 @@ impl Default for MobaCamera {
             edge_pan_speed: 15.0,
             edge_pan_margin: 50.0,
             locked: false,
-            pan_offset: Vec3::ZERO,
+            center: Vec3::ZERO,
             follow_key: None,
             toggle_lock_key: None,
         }
@@ -91,7 +93,7 @@ impl Default for MobaCamera {
 ///
 /// Writes:
 /// - [`euca_render::Camera`] resource — eye and target positions
-/// - [`MobaCamera`] resource — zoom and pan_offset
+/// - [`MobaCamera`] resource — zoom and center
 ///
 /// Gracefully degrades when optional resources are missing: without `InputState`
 /// or `ScreenSize` the camera still follows the entity but does not pan or zoom.
@@ -156,9 +158,11 @@ pub fn moba_camera_system(world: &mut World) {
             .map(|gt| gt.0.translation)
     });
 
+    // Use the hero position when available, otherwise fall back to current
+    // center (allows the camera to remain usable even without a follow entity).
     let hero_pos = match hero_pos {
         Some(p) => p,
-        None => return, // nothing to follow
+        None => return,
     };
 
     // ── Compute zoom ────────────────────────────────────────────────────
@@ -170,41 +174,46 @@ pub fn moba_camera_system(world: &mut World) {
         new_zoom = new_zoom.clamp(cam.min_zoom, cam.max_zoom);
     }
 
-    // ── Compute edge-pan delta ──────────────────────────────────────────
+    // ── Compute center ──────────────────────────────────────────────────
 
-    let mut new_pan_offset = cam.pan_offset;
     let effectively_locked = cam.locked || follow_held;
 
-    if effectively_locked {
-        // Locked mode or follow key held: always reset pan offset
-        new_pan_offset = Vec3::ZERO;
-    } else if !mouse_x.is_nan() && !screen_w.is_nan() {
+    let mut new_center = if effectively_locked {
+        // Locked mode or follow key held: snap center to hero position.
+        hero_pos
+    } else {
+        // Free camera mode: center stays where it is.
+        cam.center
+    };
+
+    // Edge-pan moves the center directly (only in free mode).
+    if !effectively_locked && !mouse_x.is_nan() && !screen_w.is_nan() {
         let margin = cam.edge_pan_margin;
         let speed = cam.edge_pan_speed * dt;
 
         // Horizontal panning (world X axis).
         // The camera looks from +Z toward −Z, so world +X is screen-left.
-        // Mouse at left edge → pan the view left → increase pan_offset.x.
+        // Mouse at left edge → pan the view left → increase center.x.
         if mouse_x < margin {
-            new_pan_offset.x += speed;
+            new_center.x += speed;
         } else if mouse_x > screen_w - margin {
-            new_pan_offset.x -= speed;
+            new_center.x -= speed;
         }
 
         // Vertical panning (world Z axis) — screen top = forward (-Z or +Z
         // depending on convention). In a typical top-down MOBA:
         // screen-top → move camera forward (−Z), screen-bottom → backward (+Z).
         if mouse_y < margin {
-            new_pan_offset.z -= speed;
+            new_center.z -= speed;
         } else if mouse_y > screen_h - margin {
-            new_pan_offset.z += speed;
+            new_center.z += speed;
         }
     }
 
-    // ── Compute final camera position ───────────────────────────────────
+    // ── Compute final camera position from center (NOT from hero_pos) ───
 
-    let eye = hero_pos + cam.offset * new_zoom + new_pan_offset;
-    let target = hero_pos + cam.look_at_offset + new_pan_offset;
+    let eye = new_center + cam.offset * new_zoom;
+    let target = new_center + cam.look_at_offset;
 
     // ── Toggle lock state ───────────────────────────────────────────────
 
@@ -218,7 +227,7 @@ pub fn moba_camera_system(world: &mut World) {
 
     if let Some(moba) = world.resource_mut::<MobaCamera>() {
         moba.zoom = new_zoom;
-        moba.pan_offset = new_pan_offset;
+        moba.center = new_center;
         moba.locked = new_locked;
     }
 
@@ -257,11 +266,20 @@ mod tests {
     fn camera_follows_entity() {
         let (mut world, _hero) = setup_world();
 
+        // setup_world sets locked = false and center = ZERO.
+        // With no InputState, the camera stays at cam.center (ZERO) in free mode.
+        // But since center is (0,0,0) and hero is at (10,0,5), the camera
+        // will be at center, not hero. To test follow behavior, lock the camera.
+        if let Some(moba) = world.resource_mut::<MobaCamera>() {
+            moba.locked = true;
+        }
+
         moba_camera_system(&mut world);
 
         let cam = world.resource::<euca_render::Camera>().unwrap();
 
-        // Eye = hero_pos + offset * zoom = (10,0,5) + (0,12,8)*1.0 = (10,12,13)
+        // In locked mode: center snaps to hero_pos (10,0,5).
+        // Eye = center + offset * zoom = (10,0,5) + (0,12,8)*1.0 = (10,12,13)
         let expected_eye = Vec3::new(10.0, 12.0, 13.0);
         assert!(
             (cam.eye.x - expected_eye.x).abs() < 1e-5,
@@ -282,7 +300,7 @@ mod tests {
             cam.eye.z
         );
 
-        // Target = hero_pos + look_at_offset = (10,0,5)
+        // Target = center + look_at_offset = (10,0,5) + (0,0,0) = (10,0,5)
         assert!(
             (cam.target.x - 10.0).abs() < 1e-5,
             "target.x: expected 10.0, got {}",
@@ -299,9 +317,13 @@ mod tests {
             cam.target.z
         );
 
-        // Pan offset should remain zero (no InputState → edge-pan cannot trigger)
+        // Center should have snapped to hero position.
         let moba = world.resource::<MobaCamera>().unwrap();
-        assert_eq!(moba.pan_offset, Vec3::ZERO);
+        assert!(
+            (moba.center.x - 10.0).abs() < 1e-5 && (moba.center.z - 5.0).abs() < 1e-5,
+            "locked mode should snap center to hero position, got {:?}",
+            moba.center
+        );
     }
 
     #[test]
@@ -344,34 +366,38 @@ mod tests {
     }
 
     #[test]
-    fn locked_resets_pan_offset() {
+    fn locked_snaps_center_to_hero() {
         let (mut world, _hero) = setup_world();
 
-        // Manually set a non-zero pan offset, then run with locked = true
+        // Set center far from the hero, then run with locked = true.
+        // Hero is at (10, 0, 5) from setup_world.
         if let Some(moba) = world.resource_mut::<MobaCamera>() {
             moba.locked = true;
-            moba.pan_offset = Vec3::new(100.0, 0.0, 200.0);
+            moba.center = Vec3::new(100.0, 0.0, 200.0);
         }
 
         moba_camera_system(&mut world);
 
         let moba = world.resource::<MobaCamera>().unwrap();
-        assert_eq!(
-            moba.pan_offset,
-            Vec3::ZERO,
-            "locked mode should reset pan_offset to zero"
+        assert!(
+            (moba.center.x - 10.0).abs() < 1e-5 && (moba.center.z - 5.0).abs() < 1e-5,
+            "locked mode should snap center to hero position, got {:?}",
+            moba.center
         );
     }
 
     #[test]
-    fn edge_pan_moves_offset_when_unlocked() {
+    fn edge_pan_moves_center() {
         let (mut world, _hero) = setup_world();
 
-        // Unlock camera and place mouse in the left margin
+        // Unlock camera and set center to a known position.
+        let initial_center = Vec3::new(5.0, 0.0, 5.0);
         if let Some(moba) = world.resource_mut::<MobaCamera>() {
             moba.locked = false;
+            moba.center = initial_center;
         }
 
+        // Place mouse in the left margin to trigger edge pan.
         let mut input = euca_input::InputState::new();
         input.set_mouse_position(10.0, 500.0); // x < margin (50)
         world.insert_resource(input);
@@ -388,17 +414,19 @@ mod tests {
         moba_camera_system(&mut world);
 
         let moba = world.resource::<MobaCamera>().unwrap();
-        // Pan offset X should have decreased (panned left)
+        // Edge-pan left should increase center.x (pan view left).
         assert!(
-            moba.pan_offset.x < 0.0,
-            "edge pan left should decrease pan_offset.x, got {}",
-            moba.pan_offset.x
+            moba.center.x > initial_center.x,
+            "edge pan left should increase center.x, got {} (was {})",
+            moba.center.x,
+            initial_center.x
         );
-        // Z should be unchanged (mouse not in top/bottom margin)
+        // Z should be unchanged (mouse not in top/bottom margin).
         assert!(
-            moba.pan_offset.z.abs() < 1e-5,
-            "pan_offset.z should remain ~0, got {}",
-            moba.pan_offset.z
+            (moba.center.z - initial_center.z).abs() < 1e-5,
+            "center.z should remain ~{}, got {}",
+            initial_center.z,
+            moba.center.z
         );
     }
 
@@ -420,14 +448,20 @@ mod tests {
 
     #[test]
     fn graceful_without_input_state() {
-        // System should still follow without InputState — just no panning/zoom
+        // System should still work without InputState — just no panning/zoom.
+        // With locked = true it snaps center to hero.
         let (mut world, _hero) = setup_world();
 
-        // No InputState inserted — should not panic
+        if let Some(moba) = world.resource_mut::<MobaCamera>() {
+            moba.locked = true;
+        }
+
+        // No InputState inserted — should not panic.
         moba_camera_system(&mut world);
 
         let cam = world.resource::<euca_render::Camera>().unwrap();
-        // Should still have moved to follow hero
+        // Locked mode: center snaps to hero (10,0,5).
+        // Eye = center + offset * zoom = (10,0,5) + (0,12,8)*1.0 = (10,12,13)
         let expected_eye = Vec3::new(10.0, 12.0, 13.0);
         assert!((cam.eye.x - expected_eye.x).abs() < 1e-5);
         assert!((cam.eye.y - expected_eye.y).abs() < 1e-5);
@@ -435,15 +469,16 @@ mod tests {
     }
 
     #[test]
-    fn follow_key_held_centers_camera() {
+    fn follow_key_held_snaps_center_to_hero() {
         let (mut world, _hero) = setup_world();
 
-        // Configure follow key and set camera to unlocked with an existing pan offset
+        // Configure follow key and set camera to unlocked with center far from hero.
+        // Hero is at (10, 0, 5) from setup_world.
         let follow_key = euca_input::InputKey::Key("1".into());
         if let Some(moba) = world.resource_mut::<MobaCamera>() {
             moba.locked = false;
             moba.follow_key = Some(follow_key.clone());
-            moba.pan_offset = Vec3::new(50.0, 0.0, -30.0);
+            moba.center = Vec3::new(50.0, 0.0, -30.0);
         }
 
         // Hold the follow key
@@ -456,10 +491,10 @@ mod tests {
         moba_camera_system(&mut world);
 
         let moba = world.resource::<MobaCamera>().unwrap();
-        assert_eq!(
-            moba.pan_offset,
-            Vec3::ZERO,
-            "follow key held should reset pan_offset to zero"
+        assert!(
+            (moba.center.x - 10.0).abs() < 1e-5 && (moba.center.z - 5.0).abs() < 1e-5,
+            "follow key held should snap center to hero position, got {:?}",
+            moba.center
         );
         // locked state should remain false (follow key does not toggle)
         assert!(!moba.locked, "follow key should not change locked state");
@@ -469,14 +504,17 @@ mod tests {
     fn follow_key_released_allows_edge_pan() {
         let (mut world, _hero) = setup_world();
 
-        // Configure follow key but do NOT press it; unlock camera
+        // Configure follow key but do NOT press it; unlock camera.
+        // Set center to a known position so we can detect movement.
         let follow_key = euca_input::InputKey::Key("1".into());
+        let initial_center = Vec3::new(5.0, 0.0, 5.0);
         if let Some(moba) = world.resource_mut::<MobaCamera>() {
             moba.locked = false;
             moba.follow_key = Some(follow_key);
+            moba.center = initial_center;
         }
 
-        // Place mouse in the left margin to trigger edge pan
+        // Place mouse in the left margin to trigger edge pan.
         let mut input = euca_input::InputState::new();
         input.set_mouse_position(10.0, 500.0);
         world.insert_resource(input);
@@ -490,9 +528,10 @@ mod tests {
 
         let moba = world.resource::<MobaCamera>().unwrap();
         assert!(
-            moba.pan_offset.x < 0.0,
-            "with follow key released, edge pan should work — got pan_offset.x = {}",
-            moba.pan_offset.x
+            moba.center.x > initial_center.x,
+            "with follow key released, edge pan should move center — got center.x = {} (was {})",
+            moba.center.x,
+            initial_center.x
         );
     }
 

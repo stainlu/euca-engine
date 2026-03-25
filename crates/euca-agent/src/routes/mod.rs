@@ -321,12 +321,8 @@ pub fn drain_pending_mesh_uploads(
                 let mut uploaded_mat = mat.clone();
                 if let Some(tex_idx) = entry.albedo_tex_index {
                     if let Some(img) = entry.images.get(tex_idx) {
-                        let tex_handle = renderer.upload_texture(
-                            gpu,
-                            img.width,
-                            img.height,
-                            &img.pixels,
-                        );
+                        let tex_handle =
+                            renderer.upload_texture(gpu, img.width, img.height, &img.pixels);
                         uploaded_mat.albedo_texture = Some(tex_handle);
                     }
                 }

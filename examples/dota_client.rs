@@ -473,12 +473,27 @@ impl DotaClientApp {
 
         if let Some(hero) = hero_entity {
             apply_hero_template(&mut self.world, hero, "Juggernaut");
-            log::info!("Applied Juggernaut template to player hero (entity {})", hero.index());
+            log::info!(
+                "Applied Juggernaut template to player hero (entity {})",
+                hero.index()
+            );
+
+            // Read the hero's world position so we can initialize the camera center.
+            let hero_world_pos = self
+                .world
+                .get::<GlobalTransform>(hero)
+                .map(|gt| gt.0.translation)
+                .or_else(|| {
+                    self.world
+                        .get::<LocalTransform>(hero)
+                        .map(|lt| lt.0.translation)
+                })
+                .unwrap_or(Vec3::ZERO);
 
             if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
                 cam.follow_entity = Some(hero);
                 cam.locked = false;
-                cam.pan_offset = Vec3::ZERO;
+                cam.center = hero_world_pos;
                 cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
                 cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
             }

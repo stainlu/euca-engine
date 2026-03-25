@@ -166,6 +166,17 @@ pub fn player_input_system(world: &mut World) {
     if !commands.is_empty()
         && let Some(queue) = world.get_mut::<PlayerCommandQueue>(player_entity)
     {
+        for cmd in &commands {
+            // Movement and attack commands interrupt any in-progress command
+            // (standard MOBA/RTS behavior: clicking ground always cancels).
+            if matches!(
+                cmd,
+                PlayerCommand::MoveTo(_) | PlayerCommand::AttackTarget(_)
+            ) {
+                queue.current = None;
+                queue.commands.clear();
+            }
+        }
         for cmd in commands {
             queue.push(cmd);
         }
