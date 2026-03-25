@@ -7,8 +7,8 @@
 //! All provider methods are **synchronous and blocking** — callers are
 //! responsible for scheduling them on a background thread or task pool.
 
+pub mod meshy;
 pub mod tripo;
-// Other providers will add their modules here.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
