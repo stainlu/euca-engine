@@ -155,19 +155,42 @@ echo ""
 
 echo "  3 heroes registered."
 
-# ── 3b. Apply hero templates to spawned hero entities ──
+# ── 3b. Apply hero templates — find heroes dynamically by role, never hardcode IDs ──
 echo "Selecting heroes..."
-# Entity 16 = Team 1 hero (Radiant), Entity 17 = Team 2 hero (Dire)
-# (2 ancients + 12 towers + 2 spawn points = 16 entities before heroes)
-curl -s -X POST "${SERVER}/hero/select" \
-  -H 'Content-Type: application/json' \
-  -d '{"entity_id": 16, "hero_name": "Juggernaut"}'
-echo ""
-curl -s -X POST "${SERVER}/hero/select" \
-  -H 'Content-Type: application/json' \
-  -d '{"entity_id": 17, "hero_name": "Sven"}'
-echo ""
-echo "  Heroes selected: Juggernaut (Radiant) vs Sven (Dire)"
+OBSERVE=$(curl -s "${SERVER}/observe")
+
+# Find hero entity IDs by role + team (entities with EntityRole::Hero)
+HERO_T1=$(echo "$OBSERVE" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for e in data:
+    c = e.get('components', {})
+    if c.get('EntityRole') == 'Hero' and c.get('Team', {}).get('0', 0) == 1:
+        print(e['id']); break
+" 2>/dev/null)
+
+HERO_T2=$(echo "$OBSERVE" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for e in data:
+    c = e.get('components', {})
+    if c.get('EntityRole') == 'Hero' and c.get('Team', {}).get('0', 0) == 2:
+        print(e['id']); break
+" 2>/dev/null)
+
+if [ -n "$HERO_T1" ]; then
+  curl -s -X POST "${SERVER}/hero/select" \
+    -H 'Content-Type: application/json' \
+    -d "{\"entity_id\": $HERO_T1, \"hero_name\": \"Juggernaut\"}"
+  echo ""
+fi
+if [ -n "$HERO_T2" ]; then
+  curl -s -X POST "${SERVER}/hero/select" \
+    -H 'Content-Type: application/json' \
+    -d "{\"entity_id\": $HERO_T2, \"hero_name\": \"Sven\"}"
+  echo ""
+fi
+echo "  Heroes: Juggernaut (id=$HERO_T1) vs Sven (id=$HERO_T2)"
 
 # ── 4. Spawn neutral jungle camps ──
 echo "Spawning neutral camps..."
@@ -184,13 +207,35 @@ $E entity create --mesh assets/generated/neutral_troll.glb --position=24,0.5,-10
 
 echo "  6 neutral camps spawned."
 
-# ── 5. Add win condition rules on Ancients ──
-# Entity 0 = Team 1 Ancient (first entity in level file)
-# Entity 1 = Team 2 Ancient (second entity in level file)
+# ── 5. Add win condition rules on Ancients — find dynamically ──
 echo "Setting up win conditions..."
 
-$E rule create --when death --filter entity:0 --do-action "endgame 2" 2>/dev/null
-$E rule create --when death --filter entity:1 --do-action "endgame 1" 2>/dev/null
+# Find Ancient entity IDs by role=structure + team
+ANCIENT_T1=$(echo "$OBSERVE" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for e in data:
+    c = e.get('components', {})
+    if c.get('EntityRole') == 'Structure' and c.get('Team', {}).get('0', 0) == 1:
+        print(e['id']); break
+" 2>/dev/null)
+
+ANCIENT_T2=$(echo "$OBSERVE" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for e in data:
+    c = e.get('components', {})
+    if c.get('EntityRole') == 'Structure' and c.get('Team', {}).get('0', 0) == 2:
+        print(e['id']); break
+" 2>/dev/null)
+
+if [ -n "$ANCIENT_T1" ]; then
+  $E rule create --when death --filter "entity:$ANCIENT_T1" --do-action "endgame 2" 2>/dev/null
+fi
+if [ -n "$ANCIENT_T2" ]; then
+  $E rule create --when death --filter "entity:$ANCIENT_T2" --do-action "endgame 1" 2>/dev/null
+fi
+echo "  Ancients: T1=$ANCIENT_T1, T2=$ANCIENT_T2"
 
 echo "  Ancient death → game over."
 

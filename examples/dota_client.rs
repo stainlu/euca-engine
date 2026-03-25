@@ -35,11 +35,8 @@ const WINDOW_HEIGHT: u32 = 720;
 /// Fixed timestep for gameplay systems (60 Hz).
 const DT: f32 = 1.0 / 60.0;
 
-/// Entity index of the player hero in `levels/dota.json`.
-///
-/// The level file spawns entities in order. Entity 16 (0-indexed) is the first
-/// hero with `"player": true` — a Radiant (team 1) hero at (-28, 0.5, 0).
-const PLAYER_HERO_INDEX: u32 = 16;
+// NOTE: No hardcoded entity indices. All entities are found by their
+// ECS components (PlayerHero, Team, EntityRole, etc.), not by creation order.
 
 // ── Item definitions (same as dota.sh) ──────────────────────────────────────
 
@@ -328,13 +325,6 @@ fn apply_hero_template(world: &mut World, entity: Entity, hero_name: &str) {
     world.insert(entity, ability_set);
 }
 
-// ── Find entity by index ────────────────────────────────────────────────────
-
-fn find_entity_by_index(world: &World, index: u32) -> Option<Entity> {
-    let query = Query::<Entity>::new(world);
-    query.iter().find(|e| e.index() == index)
-}
-
 // ── DefaultAssets setup ─────────────────────────────────────────────────────
 
 fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Renderer) {
@@ -474,37 +464,26 @@ impl DotaClientApp {
             }
         }
 
-        // Apply Juggernaut hero template to the player hero entity
-        if let Some(hero_entity) = find_entity_by_index(&self.world, PLAYER_HERO_INDEX) {
-            apply_hero_template(&mut self.world, hero_entity, "Juggernaut");
-            log::info!("Applied Juggernaut template to player hero (entity {PLAYER_HERO_INDEX})");
+        // Find the player hero by its PlayerHero marker component — never
+        // hardcode entity indices (creation order varies between client/server).
+        let hero_entity = {
+            let q = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(&self.world);
+            q.iter().map(|(e, _)| e).next()
+        };
 
-            // Point the MOBA camera at the player hero with DotA-style key bindings.
-            // Reset pan_offset to zero — edge-pan may have drifted during the long
-            // level load (30s of GLB loading with the camera unlocked).
+        if let Some(hero) = hero_entity {
+            apply_hero_template(&mut self.world, hero, "Juggernaut");
+            log::info!("Applied Juggernaut template to player hero (entity {})", hero.index());
+
             if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
-                cam.follow_entity = Some(hero_entity);
+                cam.follow_entity = Some(hero);
                 cam.locked = false;
                 cam.pan_offset = Vec3::ZERO;
                 cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
                 cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
             }
         } else {
-            log::warn!("Player hero entity {PLAYER_HERO_INDEX} not found in level");
-            // Fall back: find any PlayerHero marker
-            let hero = {
-                let q = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(&self.world);
-                q.iter().map(|(e, _)| e).next()
-            };
-            if let Some(hero) = hero {
-                apply_hero_template(&mut self.world, hero, "Juggernaut");
-                if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
-                    cam.follow_entity = Some(hero);
-                    cam.locked = false;
-                    cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
-                    cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
-                }
-            }
+            log::error!("No PlayerHero entity found in level — check dota.json has 'player': true");
         }
 
         // Start the game
