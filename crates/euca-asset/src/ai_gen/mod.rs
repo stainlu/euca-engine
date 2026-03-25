@@ -10,6 +10,7 @@
 pub mod hunyuan;
 pub mod meshy;
 pub mod rodin;
+pub mod service;
 pub mod tripo;
 
 use serde::{Deserialize, Serialize};

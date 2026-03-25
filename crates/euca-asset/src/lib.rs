@@ -16,3 +16,5 @@ pub use lod::{generate_lod_chain, simplify_mesh};
 pub use mesh_opt::{compute_tangents, deduplicate_vertices, optimize_mesh, optimize_vertex_cache};
 pub use skeleton::Skeleton;
 pub use systems::{AnimationLibrary, BoneTransforms, SkeletalAnimator, skeletal_animation_system};
+
+pub use ai_gen::service::{AssetGeneratedEvent, GenerationService, PendingAsset};
