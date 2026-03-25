@@ -217,8 +217,9 @@ fn find_blocker(shadow_uv: vec2<f32>, receiver_depth: f32, search_radius: f32,
     for (var i = 0; i < 16; i++) {
         let offset = rotate_poisson(POISSON_16[i], rotation) * search_radius;
         let sample_uv = shadow_uv + offset;
+        // Note: depth textures require i32 level (not f32).
         let shadow_depth = textureSampleLevel(
-            shadow_map, shadow_depth_sampler, sample_uv, cascade_index, 0.0
+            shadow_map, shadow_depth_sampler, sample_uv, cascade_index, 0
         );
         if shadow_depth < receiver_depth {
             blocker_sum += shadow_depth;
