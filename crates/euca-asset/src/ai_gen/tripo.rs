@@ -136,8 +136,11 @@ impl AssetGenerator for TripoGenerator {
 
         match status {
             "success" => {
-                let download_url = data["output"]["model"]
+                // Tripo v2 returns the PBR GLB at `output.pbr_model` (direct URL string)
+                // or at `result.pbr_model.url` (nested object). Try both.
+                let download_url = data["output"]["pbr_model"]
                     .as_str()
+                    .or_else(|| data["result"]["pbr_model"]["url"].as_str())
                     .ok_or_else(|| {
                         GenError::ProviderError("missing model URL in completed task".into())
                     })?
