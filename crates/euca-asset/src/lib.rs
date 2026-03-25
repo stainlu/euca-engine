@@ -1,3 +1,4 @@
+pub mod ai_gen;
 pub mod animation;
 mod gltf_loader;
 pub mod hot_reload;

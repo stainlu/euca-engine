@@ -12,7 +12,9 @@ euca-math = { path = "../euca-math" }
 euca-render = { path = "../euca-render" }
 gltf = "1.4"
 log = "0.4"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 env_logger = "0.11"
