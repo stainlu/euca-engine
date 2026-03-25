@@ -386,6 +386,21 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
     world.insert(g, euca_physics::PhysicsBody::fixed());
     world.insert(g, euca_physics::Collider::aabb(40.0, 0.01, 40.0));
 
+    // River — reflective water strip across the center of the map
+    let river_mesh = renderer.upload_mesh(gpu, &Mesh::plane(1.0));
+    let river_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.15, 0.25, 0.45, 0.85], 0.6, 0.15), // blue, metallic, smooth
+    );
+    let r = world.spawn(LocalTransform({
+        let mut t = Transform::from_translation(Vec3::new(0.0, 0.05, 0.0));
+        t.scale = Vec3::new(70.0, 1.0, 4.0); // wide and narrow
+        t
+    }));
+    world.insert(r, GlobalTransform::default());
+    world.insert(r, MeshRenderer { mesh: river_mesh });
+    world.insert(r, MaterialRef { handle: river_mat });
+
     // Directional light — warm sun for the DotA arena
     world.spawn(DirectionalLight {
         direction: [0.4, -0.9, 0.25],
@@ -697,6 +712,9 @@ impl DotaClientApp {
             input.begin_frame();
         }
 
+        // Day/night cycle + Radiant/Dire color grading
+        day_night_system(&mut self.world, dt);
+
         // Transform propagation
         euca_scene::transform_propagation_system(&mut self.world);
 
@@ -796,6 +814,58 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
             aabb: None,
         })
         .collect()
+}
+
+/// Day/night cycle: slowly oscillate lighting over a 4-minute cycle.
+/// Also applies subtle Radiant vs Dire color grading based on camera position.
+fn day_night_system(world: &mut World, _dt: f32) {
+    let elapsed = world
+        .resource::<euca_gameplay::GameState>()
+        .map(|gs| gs.elapsed)
+        .unwrap_or(0.0);
+
+    // 4-minute day/night cycle (240 seconds)
+    let cycle = (elapsed / 240.0 * std::f32::consts::TAU).sin(); // -1..1
+    let day_factor = cycle * 0.5 + 0.5; // 0 (night) to 1 (day)
+
+    // Interpolate directional light
+    let query_entities: Vec<Entity> = {
+        let query = Query::<(Entity, &DirectionalLight)>::new(world);
+        query.iter().map(|(e, _)| e).collect()
+    };
+    for entity in query_entities {
+        if let Some(light) = world.get_mut::<DirectionalLight>(entity) {
+            // Day: warm white (1.0, 0.95, 0.88), intensity 2.5
+            // Night: cool blue (0.3, 0.35, 0.5), intensity 0.8
+            light.color = [
+                0.3 + 0.7 * day_factor,
+                0.35 + 0.6 * day_factor,
+                0.5 + 0.38 * day_factor,
+            ];
+            light.intensity = 0.8 + 1.7 * day_factor;
+        }
+    }
+
+    // Interpolate ambient light
+    if let Some(ambient) = world.resource_mut::<AmbientLight>() {
+        ambient.intensity = 0.08 + 0.12 * day_factor;
+        ambient.color = [
+            0.6 + 0.4 * day_factor,
+            0.65 + 0.35 * day_factor,
+            0.8 + 0.2 * day_factor,
+        ];
+    }
+
+    // Radiant vs Dire color grading: shift temperature based on camera X
+    let cam_x = world
+        .resource::<Camera>()
+        .map(|c| c.eye.x)
+        .unwrap_or(0.0);
+    if let Some(pps) = world.resource_mut::<PostProcessSettings>() {
+        // Radiant side (x < 0): warm (+200K), Dire side (x > 0): cool (-200K)
+        let blend = (cam_x / 30.0).clamp(-1.0, 1.0); // -1 to 1
+        pps.temperature = -200.0 * blend; // warm when negative x, cool when positive x
+    }
 }
 
 /// Add glowing point lights on towers and structures for atmosphere.
@@ -1090,7 +1160,7 @@ fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQua
 }
 
 /// Build minimap quads: dark background + colored dots for entities.
-fn build_minimap_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQuad> {
+fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<UiQuad> {
     use euca_gameplay::{Dead, EntityRole, Team};
 
     let mut quads = Vec::new();
