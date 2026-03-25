@@ -22,6 +22,7 @@ fn run_diagnostics(w: &World) -> serde_json::Value {
     let mut teams_with_spawn_points: std::collections::HashSet<u8> =
         std::collections::HashSet::new();
     let mut teams_seen: std::collections::HashSet<u8> = std::collections::HashSet::new();
+    let mut positions: Vec<(u32, euca_math::Vec3)> = Vec::new();
 
     // Scan spawn points
     let query = Query::<(Entity, &euca_gameplay::SpawnPoint)>::new(w);
@@ -105,6 +106,33 @@ fn run_diagnostics(w: &World) -> serde_json::Value {
                 "E{eid}: has MeshRenderer but no GlobalTransform — invisible"
             ));
         }
+
+        // Check: MeshRenderer without MaterialRef (will use default — likely unintended)
+        if w.get::<euca_render::MeshRenderer>(entity).is_some()
+            && w.get::<euca_render::MaterialRef>(entity).is_none()
+        {
+            warnings.push(format!(
+                "E{eid}: has MeshRenderer but no MaterialRef — missing material"
+            ));
+        }
+
+        // Check: alive entity with zero health (should be Dead)
+        if let Some(health) = w.get::<euca_gameplay::Health>(entity) {
+            if health.current <= 0.0 && w.get::<euca_gameplay::Dead>(entity).is_none() {
+                warnings.push(format!(
+                    "E{eid}: Health={:.0}/{:.0} but not Dead — death_check_system may not be running",
+                    health.current, health.max
+                ));
+            }
+        }
+
+        // Track positions for overlap detection
+        if let Some(gt) = w.get::<euca_scene::GlobalTransform>(entity) {
+            let pos = gt.0.translation;
+            if w.get::<euca_render::MeshRenderer>(entity).is_some() {
+                positions.push((eid, pos));
+            }
+        }
     }
 
     // Check: teams without spawn points
@@ -116,9 +144,47 @@ fn run_diagnostics(w: &World) -> serde_json::Value {
         }
     }
 
+    // Check: entities at same position (z-fighting / accidental overlap)
+    let overlap_threshold = 0.01f32;
+    for i in 0..positions.len() {
+        for j in (i + 1)..positions.len() {
+            let dist = (positions[i].1 - positions[j].1).length();
+            if dist < overlap_threshold {
+                warnings.push(format!(
+                    "E{} and E{} are at the same position ({:.1},{:.1},{:.1}) — z-fighting",
+                    positions[i].0,
+                    positions[j].0,
+                    positions[i].1.x,
+                    positions[i].1.y,
+                    positions[i].1.z,
+                ));
+            }
+        }
+    }
+
     // Check: GameState
     if w.resource::<euca_gameplay::GameState>().is_none() {
         info.push("No GameState — scoring and respawn won't work".into());
+    }
+
+    // Assertion summary
+    {
+        let query = Query::<(Entity, &euca_gameplay::assertions::Assertion)>::new(w);
+        let assertion_count = query.iter().count();
+        if assertion_count > 0 {
+            let with_results = query
+                .iter()
+                .filter(|(_, a)| a.last_result.is_some())
+                .count();
+            let passed = query
+                .iter()
+                .filter(|(_, a)| a.last_result.as_ref().is_some_and(|r| r.passed))
+                .count();
+            let failed = with_results - passed;
+            info.push(format!(
+                "Assertions: {assertion_count} defined, {with_results} evaluated ({passed} pass, {failed} fail)"
+            ));
+        }
     }
 
     // Physics summary

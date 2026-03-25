@@ -10,6 +10,8 @@
 //! = a deathmatch game
 //! ```
 
+/// Engine-level assertions — testable expectations as ECS entities.
+pub mod assertions;
 /// Cooldown-based abilities (Q/W/E/R) with mana costs and effects.
 pub mod abilities;
 /// AI behaviors and goal-driven entity logic.
@@ -64,6 +66,10 @@ pub mod visibility;
 pub mod zones;
 
 // Re-export key types at crate root for convenience
+pub use assertions::{
+    Assertion, AssertCondition, AssertResult, CompareOp, EntityFilter, EvaluationReport, Severity,
+    evaluate_assertions, parse_entity_filter,
+};
 pub use ai::{AiBehavior, AiGoal, ai_system};
 pub use combat::{
     AttackStyle, AutoCombat, CurrentTarget, EntityRole, MarchDirection, Projectile,

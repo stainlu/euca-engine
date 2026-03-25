@@ -1,4 +1,5 @@
 mod animation;
+mod assertions;
 mod asset_gen;
 mod audio;
 mod camera;
@@ -11,17 +12,20 @@ mod hero;
 mod input;
 mod inventory;
 pub mod level;
+mod manifest;
 mod material;
 mod nav;
 mod net;
 mod particle;
 mod postprocess;
 mod prefab;
+mod probe;
 mod profile;
 mod scene_auth;
 mod script;
 mod shop;
 mod sim;
+mod snapshot;
 mod status_effects;
 mod templates;
 mod terrain;
@@ -31,6 +35,7 @@ pub use animation::{
     animation_list, animation_load, animation_montage, animation_play, animation_state_machine,
     animation_stop,
 };
+pub use assertions::{assert_create, assert_delete, assert_evaluate, assert_list, assert_results};
 pub use asset_gen::{asset_generate, asset_generated, asset_providers, asset_status};
 pub use audio::{audio_list, audio_play, audio_stop};
 pub use camera::{camera_focus, camera_get, camera_set, camera_view};
@@ -48,16 +53,21 @@ pub use gameplay::{
 pub use hero::{hero_define, hero_list, hero_select};
 pub use input::{input_bind, input_context_pop, input_context_push, input_list, input_unbind};
 pub use inventory::{item_define, item_equip, item_give, item_list};
+pub use manifest::{manifest_feature_update, manifest_get, manifest_set};
 pub use material::material_set;
 pub use nav::{navmesh_generate, path_compute, path_set};
 pub use net::net_status;
 pub use particle::{particle_create, particle_list, particle_stop};
 pub use postprocess::{postprocess_get, postprocess_preset, postprocess_set};
 pub use prefab::{prefab_list, prefab_spawn};
+pub use probe::probe;
 pub use profile::profile;
 pub use scene_auth::{auth_login, auth_status, scene_load, scene_save, screenshot};
 pub use script::{script_list, script_load};
 pub use shop::{shop_buy, shop_list, shop_sell};
+pub use snapshot::{
+    game_summary, snapshot_create, snapshot_diff, snapshot_latest, snapshot_list,
+};
 pub use sim::{pause, play, step};
 pub use status_effects::{effect_apply, effect_cleanse, effect_list};
 pub use templates::{template_create, template_list, template_spawn};

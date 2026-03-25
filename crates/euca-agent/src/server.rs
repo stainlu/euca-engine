@@ -137,6 +137,24 @@ impl AgentServer {
             .route("/asset/status/{task_id}", get(routes::asset_status))
             .route("/asset/generated", get(routes::asset_generated))
             .route("/asset/providers", get(routes::asset_providers))
+            // Assertions — testable expectations for game evaluation
+            .route("/assert/create", post(routes::assert_create))
+            .route("/assert/evaluate", post(routes::assert_evaluate))
+            .route("/assert/results", get(routes::assert_results))
+            .route("/assert/list", get(routes::assert_list))
+            .route("/assert/{id}", axum::routing::delete(routes::assert_delete))
+            // Snapshots — labeled world state captures for structured handoffs
+            .route("/snapshot", post(routes::snapshot_create))
+            .route("/snapshot/list", get(routes::snapshot_list))
+            .route("/snapshot/latest", get(routes::snapshot_latest))
+            .route("/snapshot/diff", get(routes::snapshot_diff))
+            .route("/game/summary", get(routes::game_summary))
+            // Probe — advance simulation + evaluate assertions in one call
+            .route("/probe", post(routes::probe))
+            // Manifest — game sprint contracts with feature-level completion tracking
+            .route("/manifest", post(routes::manifest_set))
+            .route("/manifest", get(routes::manifest_get))
+            .route("/manifest/feature", post(routes::manifest_feature_update))
             .with_state(self.shared.clone())
     }
 
