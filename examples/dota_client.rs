@@ -364,6 +364,9 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
     }
     let blue = blue.expect("blue material");
 
+    // Capture material handles before moving materials into DefaultAssets
+    let tree_mat = *materials.get("green").unwrap();
+
     let mut meshes = HashMap::new();
     meshes.insert("cube".to_string(), cube);
     meshes.insert("sphere".to_string(), sphere);
@@ -390,6 +393,72 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
         intensity: 2.5,
         ..Default::default()
     });
+
+    // Tree lines between lanes — defines MOBA map geography
+    spawn_tree_lines(world, cube, tree_mat);
+}
+
+/// Spawn tree entities between the 3 lanes to define map geography.
+/// Trees are placed in the gaps: between top lane (z=20) and mid (z=0),
+/// and between mid (z=0) and bot lane (z=-20), plus jungle flanks.
+fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandle) {
+    // Tree zones: (x_min, x_max, z_min, z_max) — areas between lanes
+    let zones: &[(f32, f32, f32, f32)] = &[
+        // Between top and mid lanes (z=6..14)
+        (-28.0, 28.0, 6.0, 14.0),
+        // Between mid and bot lanes (z=-14..-6)
+        (-28.0, 28.0, -14.0, -6.0),
+        // Top flank (above top lane)
+        (-28.0, 28.0, 24.0, 28.0),
+        // Bot flank (below bot lane)
+        (-28.0, 28.0, -28.0, -24.0),
+    ];
+
+    let spacing = 3.0f32;
+    let mut seed: u32 = 42;
+
+    for &(x_min, x_max, z_min, z_max) in zones {
+        let mut x = x_min;
+        while x <= x_max {
+            let mut z = z_min;
+            while z <= z_max {
+                // Pseudo-random offset for natural look
+                seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let ox = ((seed >> 16) as f32 / 65536.0 - 0.5) * 1.5;
+                seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let oz = ((seed >> 16) as f32 / 65536.0 - 0.5) * 1.5;
+                seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let scale = 0.8 + ((seed >> 16) as f32 / 65536.0) * 1.2;
+
+                let px = x + ox;
+                let pz = z + oz;
+
+                // Skip trees on lane paths (z≈20, z≈0, z≈-20, ±3 wide)
+                let on_lane = (pz.abs() < 3.0)
+                    || ((pz - 20.0).abs() < 3.0)
+                    || ((pz + 20.0).abs() < 3.0);
+                if !on_lane {
+                    let pos = Vec3::new(px, scale * 0.5, pz);
+                    let mut xform = Transform::from_translation(pos);
+                    xform.scale = Vec3::new(0.8, scale, 0.8);
+                    let t = world.spawn(LocalTransform(xform));
+                    world.insert(t, GlobalTransform::default());
+                    world.insert(t, MeshRenderer { mesh });
+                    world.insert(t, MaterialRef { handle: material });
+                    world.insert(
+                        t,
+                        euca_physics::PhysicsBody {
+                            body_type: euca_physics::RigidBodyType::Static,
+                        },
+                    );
+                    world.insert(t, euca_physics::Collider::aabb(0.4, scale * 0.5, 0.4));
+                }
+
+                z += spacing;
+            }
+            x += spacing;
+        }
+    }
 }
 
 // ── Application ─────────────────────────────────────────────────────────────
@@ -427,7 +496,7 @@ impl DotaClientApp {
             width: WINDOW_WIDTH as f32,
             height: WINDOW_HEIGHT as f32,
         });
-        world.insert_resource(PostProcessSettings::default());
+        world.insert_resource(euca_render::RenderQuality::Medium.to_settings());
 
         // Register items and heroes
         world.insert_resource(define_items());
@@ -665,6 +734,12 @@ impl DotaClientApp {
         let camera = self.world.resource::<Camera>().unwrap().clone();
 
         let renderer = self.renderer.as_mut().unwrap();
+
+        // Sync post-process settings from world resource to renderer
+        if let Some(pps) = self.world.resource::<PostProcessSettings>().cloned() {
+            renderer.set_post_process_settings(pps);
+        }
+
         renderer.render_to_view(
             gpu,
             &camera,
