@@ -1262,6 +1262,7 @@ dependencies = [
 name = "euca-asset"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "env_logger",
  "euca-core",
  "euca-ecs",

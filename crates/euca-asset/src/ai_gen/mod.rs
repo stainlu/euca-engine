@@ -8,6 +8,7 @@
 //! responsible for scheduling them on a background thread or task pool.
 
 pub mod meshy;
+pub mod rodin;
 pub mod tripo;
 
 use serde::{Deserialize, Serialize};
