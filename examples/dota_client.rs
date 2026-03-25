@@ -772,6 +772,7 @@ impl DotaClientApp {
             let vh = gpu.surface_config.height as f32;
             let mut ui_quads = build_health_bar_quads(&self.world, &vp, vw, vh);
             ui_quads.extend(build_hud_quads(&self.world, vw, vh));
+            ui_quads.extend(build_minimap_quads(&self.world, vw, vh));
             if let Some(ui) = self.ui_overlay.as_mut() {
                 ui.render(&gpu.device, &gpu.queue, &mut encoder, &view, &ui_quads, vw, vh);
             }
@@ -1082,6 +1083,115 @@ fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQua
             w: bar_w * fill,
             h: bar_h,
             color: [0.2, 0.4, 1.0, 0.9],
+        });
+    }
+
+    quads
+}
+
+/// Build minimap quads: dark background + colored dots for entities.
+fn build_minimap_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQuad> {
+    use euca_gameplay::{Dead, EntityRole, Team};
+
+    let mut quads = Vec::new();
+
+    // Minimap dimensions and position (bottom-left corner)
+    let map_size = 160.0f32;
+    let map_x = 10.0;
+    let map_y = viewport_h - map_size - 10.0;
+    let padding = 4.0;
+
+    // Background border
+    quads.push(UiQuad {
+        x: map_x - padding,
+        y: map_y - padding,
+        w: map_size + padding * 2.0,
+        h: map_size + padding * 2.0,
+        color: [0.2, 0.2, 0.2, 0.8],
+    });
+    // Background fill (darker)
+    quads.push(UiQuad {
+        x: map_x,
+        y: map_y,
+        w: map_size,
+        h: map_size,
+        color: [0.05, 0.1, 0.05, 0.9],
+    });
+
+    // Lane lines on minimap (3 horizontal lines at z=20, 0, -20)
+    let world_min_x = -35.0f32;
+    let world_max_x = 35.0f32;
+    let world_min_z = -25.0f32;
+    let world_max_z = 25.0f32;
+
+    let to_minimap = |wx: f32, wz: f32| -> (f32, f32) {
+        let u = (wx - world_min_x) / (world_max_x - world_min_x);
+        let v = (wz - world_min_z) / (world_max_z - world_min_z);
+        (map_x + u * map_size, map_y + (1.0 - v) * map_size)
+    };
+
+    // Draw lane paths as thin horizontal rectangles
+    for lane_z in [20.0f32, 0.0, -20.0] {
+        let (lx, ly) = to_minimap(world_min_x, lane_z);
+        let (rx, _) = to_minimap(world_max_x, lane_z);
+        quads.push(UiQuad {
+            x: lx,
+            y: ly - 1.0,
+            w: rx - lx,
+            h: 2.0,
+            color: [0.3, 0.25, 0.15, 0.6], // dirt-colored lane
+        });
+    }
+
+    // Entity dots
+    let query = Query::<(Entity, &GlobalTransform)>::new(world);
+    for (entity, gt) in query.iter() {
+        if world.get::<Dead>(entity).is_some() {
+            continue;
+        }
+
+        let pos = gt.0.translation;
+        // Skip entities outside map bounds
+        if pos.x < world_min_x || pos.x > world_max_x || pos.z < world_min_z || pos.z > world_max_z
+        {
+            continue;
+        }
+
+        let (mx, my) = to_minimap(pos.x, pos.z);
+        let team = world.get::<Team>(entity).map(|t| t.0).unwrap_or(0);
+        let role = world.get::<EntityRole>(entity);
+
+        let (dot_size, dot_color) = match role {
+            Some(EntityRole::Hero) => {
+                if team == 1 {
+                    (6.0, [0.0, 1.0, 1.0, 1.0]) // Radiant hero: bright cyan
+                } else {
+                    (6.0, [1.0, 0.2, 0.2, 1.0]) // Dire hero: bright red
+                }
+            }
+            Some(EntityRole::Tower) | Some(EntityRole::Structure) => {
+                if team == 1 {
+                    (4.0, [0.2, 0.7, 0.7, 0.9]) // Radiant structure: soft cyan
+                } else {
+                    (4.0, [0.7, 0.2, 0.1, 0.9]) // Dire structure: soft red
+                }
+            }
+            Some(EntityRole::Minion) => {
+                if team == 1 {
+                    (2.0, [0.3, 0.8, 0.8, 0.7]) // Radiant minion
+                } else {
+                    (2.0, [0.8, 0.3, 0.2, 0.7]) // Dire minion
+                }
+            }
+            _ => continue, // Skip non-gameplay entities (trees, ground, lights)
+        };
+
+        quads.push(UiQuad {
+            x: mx - dot_size * 0.5,
+            y: my - dot_size * 0.5,
+            w: dot_size,
+            h: dot_size,
+            color: dot_color,
         });
     }
 
