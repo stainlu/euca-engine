@@ -47,11 +47,7 @@ fn evaluate_manifest(manifest: &GameManifest, w: &World) -> serde_json::Value {
     let query = Query::<(Entity, &euca_gameplay::assertions::Assertion)>::new(w);
     let assertion_map: std::collections::HashMap<String, bool> = query
         .iter()
-        .filter_map(|(_, a)| {
-            a.last_result
-                .as_ref()
-                .map(|r| (a.name.clone(), r.passed))
-        })
+        .filter_map(|(_, a)| a.last_result.as_ref().map(|r| (a.name.clone(), r.passed)))
         .collect();
 
     let features: Vec<serde_json::Value> = manifest
@@ -74,10 +70,14 @@ fn evaluate_manifest(manifest: &GameManifest, w: &World) -> serde_json::Value {
                 })
                 .collect();
 
-            let all_pass = f.assertions.iter().all(|name| {
-                assertion_map.get(name).copied().unwrap_or(false)
-            });
-            let any_evaluated = f.assertions.iter().any(|name| assertion_map.contains_key(name));
+            let all_pass = f
+                .assertions
+                .iter()
+                .all(|name| assertion_map.get(name).copied().unwrap_or(false));
+            let any_evaluated = f
+                .assertions
+                .iter()
+                .any(|name| assertion_map.contains_key(name));
 
             let effective_status = if all_pass && any_evaluated && !f.assertions.is_empty() {
                 "verified"
@@ -147,21 +147,19 @@ pub async fn manifest_set(
 
 /// GET /manifest — read the manifest with assertion evaluation inlined
 pub async fn manifest_get(State(world): State<SharedWorld>) -> Json<serde_json::Value> {
-    let result = world.with_world(|w| {
-        match w.resource::<GameManifest>() {
-            Some(manifest) => {
-                let evaluated = evaluate_manifest(manifest, w);
-                serde_json::json!({
-                    "ok": true,
-                    "manifest": evaluated,
-                })
-            }
-            None => {
-                serde_json::json!({
-                    "ok": false,
-                    "error": "No manifest set. Use POST /manifest first.",
-                })
-            }
+    let result = world.with_world(|w| match w.resource::<GameManifest>() {
+        Some(manifest) => {
+            let evaluated = evaluate_manifest(manifest, w);
+            serde_json::json!({
+                "ok": true,
+                "manifest": evaluated,
+            })
+        }
+        None => {
+            serde_json::json!({
+                "ok": false,
+                "error": "No manifest set. Use POST /manifest first.",
+            })
         }
     });
 

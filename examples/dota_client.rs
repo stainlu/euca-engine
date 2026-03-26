@@ -449,9 +449,8 @@ fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandl
                 let pz = z + oz;
 
                 // Skip trees on lane paths (z≈20, z≈0, z≈-20, ±3 wide)
-                let on_lane = (pz.abs() < 3.0)
-                    || ((pz - 20.0).abs() < 3.0)
-                    || ((pz + 20.0).abs() < 3.0);
+                let on_lane =
+                    (pz.abs() < 3.0) || ((pz - 20.0).abs() < 3.0) || ((pz + 20.0).abs() < 3.0);
                 if !on_lane {
                     let pos = Vec3::new(px, scale * 0.5, pz);
                     let mut xform = Transform::from_translation(pos);
@@ -576,16 +575,17 @@ impl DotaClientApp {
                 .map(|lt| lt.0.translation)
                 .unwrap_or(Vec3::ZERO);
 
-            let (offset, zoom, look_at_offset) = if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
-                cam.follow_entity = Some(hero);
-                cam.locked = true;
-                cam.center = hero_world_pos;
-                cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
-                cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
-                (cam.offset, cam.zoom, cam.look_at_offset)
-            } else {
-                (Vec3::new(0.0, 12.0, 8.0), 1.0, Vec3::ZERO)
-            };
+            let (offset, zoom, look_at_offset) =
+                if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
+                    cam.follow_entity = Some(hero);
+                    cam.locked = true;
+                    cam.center = hero_world_pos;
+                    cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
+                    cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
+                    (cam.offset, cam.zoom, cam.look_at_offset)
+                } else {
+                    (Vec3::new(0.0, 12.0, 8.0), 1.0, Vec3::ZERO)
+                };
 
             // Sync render Camera immediately so the first frame shows
             // the hero, not sky. Without this, Camera stays at its init
@@ -780,7 +780,10 @@ impl DotaClientApp {
         // Collect point lights from the world
         let point_lights: Vec<(euca_math::Vec3, PointLight)> = {
             let query = Query::<(&GlobalTransform, &PointLight)>::new(&self.world);
-            query.iter().map(|(gt, pl)| (gt.0.translation, pl.clone())).collect()
+            query
+                .iter()
+                .map(|(gt, pl)| (gt.0.translation, pl.clone()))
+                .collect()
         };
         let pl_refs: Vec<(euca_math::Vec3, &PointLight)> =
             point_lights.iter().map(|(pos, pl)| (*pos, pl)).collect();
@@ -806,7 +809,15 @@ impl DotaClientApp {
             ui_quads.extend(build_hud_quads(&self.world, vw, vh));
             ui_quads.extend(build_minimap_quads(&self.world, vw, vh));
             if let Some(ui) = self.ui_overlay.as_mut() {
-                ui.render(&gpu.device, &gpu.queue, &mut encoder, &view, &ui_quads, vw, vh);
+                ui.render(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut encoder,
+                    &view,
+                    &ui_quads,
+                    vw,
+                    vh,
+                );
             }
         }
 
@@ -883,9 +894,7 @@ fn add_structure_lights(world: &mut World) {
         let query = Query::<(Entity, &GlobalTransform, &Team, &EntityRole)>::new(world);
         query
             .iter()
-            .filter(|(_, _, _, role)| {
-                matches!(role, EntityRole::Tower | EntityRole::Structure)
-            })
+            .filter(|(_, _, _, role)| matches!(role, EntityRole::Tower | EntityRole::Structure))
             .map(|(e, gt, t, r)| (e, gt.0.translation, t.0, *r))
             .collect()
     };
@@ -894,16 +903,16 @@ fn add_structure_lights(world: &mut World) {
         let (color, intensity, range) = match (team, role) {
             (1, EntityRole::Structure) => ([0.2, 0.8, 0.8], 2.0, 10.0), // Radiant ancient: cyan
             (2, EntityRole::Structure) => ([0.8, 0.2, 0.1], 2.0, 10.0), // Dire ancient: red
-            (1, _) => ([0.3, 0.6, 0.7], 1.0, 6.0),                     // Radiant tower: soft cyan
-            (2, _) => ([0.7, 0.3, 0.1], 1.0, 6.0),                     // Dire tower: soft orange
+            (1, _) => ([0.3, 0.6, 0.7], 1.0, 6.0),                      // Radiant tower: soft cyan
+            (2, _) => ([0.7, 0.3, 0.1], 1.0, 6.0),                      // Dire tower: soft orange
             _ => ([0.5, 0.5, 0.5], 0.8, 5.0),
         };
 
         // Spawn a light entity at the structure's position, elevated
         let light_pos = Vec3::new(pos.x, pos.y + 3.0, pos.z);
-        let light_entity = world.spawn(euca_scene::LocalTransform(
-            Transform::from_translation(light_pos),
-        ));
+        let light_entity = world.spawn(euca_scene::LocalTransform(Transform::from_translation(
+            light_pos,
+        )));
         world.insert(
             light_entity,
             euca_scene::GlobalTransform(Transform::from_translation(light_pos)),
@@ -979,8 +988,7 @@ fn build_health_bar_quads(
         let bar_y = screen_y + y_offset;
 
         // Skip if off-screen
-        if bar_x + bar_w < 0.0 || bar_x > viewport_w || bar_y + bar_h < 0.0 || bar_y > viewport_h
-        {
+        if bar_x + bar_w < 0.0 || bar_x > viewport_w || bar_y + bar_h < 0.0 || bar_y > viewport_h {
             continue;
         }
 

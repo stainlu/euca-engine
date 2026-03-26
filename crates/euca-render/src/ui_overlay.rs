@@ -167,11 +167,7 @@ impl UiOverlayRenderer {
             });
         }
 
-        queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&instances),
-        );
+        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

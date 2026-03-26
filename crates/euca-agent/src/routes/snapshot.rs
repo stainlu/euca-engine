@@ -302,16 +302,10 @@ pub async fn snapshot_diff(
                 let mut role_changes: std::collections::HashMap<String, (u32, u32)> =
                     std::collections::HashMap::new();
                 for (role, count) in &from.summary.entity_counts_by_role {
-                    role_changes
-                        .entry(role.clone())
-                        .or_insert((0, 0))
-                        .0 = *count;
+                    role_changes.entry(role.clone()).or_insert((0, 0)).0 = *count;
                 }
                 for (role, count) in &to.summary.entity_counts_by_role {
-                    role_changes
-                        .entry(role.clone())
-                        .or_insert((0, 0))
-                        .1 = *count;
+                    role_changes.entry(role.clone()).or_insert((0, 0)).1 = *count;
                 }
 
                 let role_diffs: Vec<_> = role_changes
@@ -337,14 +331,12 @@ pub async fn snapshot_diff(
                             .iter()
                             .find(|fa| fa.name == to_a.name);
                         match from_a {
-                            Some(fa) if fa.passed != to_a.passed => {
-                                Some(serde_json::json!({
-                                    "name": to_a.name,
-                                    "from_passed": fa.passed,
-                                    "to_passed": to_a.passed,
-                                    "message": to_a.message,
-                                }))
-                            }
+                            Some(fa) if fa.passed != to_a.passed => Some(serde_json::json!({
+                                "name": to_a.name,
+                                "from_passed": fa.passed,
+                                "to_passed": to_a.passed,
+                                "message": to_a.message,
+                            })),
                             None => Some(serde_json::json!({
                                 "name": to_a.name,
                                 "from_passed": null,

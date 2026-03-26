@@ -65,10 +65,8 @@ pub use profile::profile;
 pub use scene_auth::{auth_login, auth_status, scene_load, scene_save, screenshot};
 pub use script::{script_list, script_load};
 pub use shop::{shop_buy, shop_list, shop_sell};
-pub use snapshot::{
-    game_summary, snapshot_create, snapshot_diff, snapshot_latest, snapshot_list,
-};
 pub use sim::{pause, play, step};
+pub use snapshot::{game_summary, snapshot_create, snapshot_diff, snapshot_latest, snapshot_list};
 pub use status_effects::{effect_apply, effect_cleanse, effect_list};
 pub use templates::{template_create, template_list, template_spawn};
 pub use terrain::{terrain_create, terrain_edit};

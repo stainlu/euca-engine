@@ -23,14 +23,9 @@ pub async fn probe(
     State(world): State<SharedWorld>,
     Json(req): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let ticks = req
-        .get("ticks")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let filter_names: Option<Vec<String>> = req
-        .get("assertions")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
+    let ticks = req.get("ticks").and_then(|v| v.as_u64()).unwrap_or(0);
+    let filter_names: Option<Vec<String>> =
+        req.get("assertions").and_then(|v| v.as_array()).map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect()
@@ -47,7 +42,10 @@ pub async fn probe(
     let result = world.with(|w, schedule| {
         // Optionally capture before-snapshot
         let before = if snapshot_before {
-            Some(super::snapshot::capture_snapshot_from_world(w, "probe_before".into()))
+            Some(super::snapshot::capture_snapshot_from_world(
+                w,
+                "probe_before".into(),
+            ))
         } else {
             None
         };
@@ -80,7 +78,10 @@ pub async fn probe(
 
         // Optionally capture after-snapshot
         let after = if snapshot_after {
-            Some(super::snapshot::capture_snapshot_from_world(w, "probe_after".into()))
+            Some(super::snapshot::capture_snapshot_from_world(
+                w,
+                "probe_after".into(),
+            ))
         } else {
             None
         };

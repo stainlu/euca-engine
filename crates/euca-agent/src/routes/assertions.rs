@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 
 use euca_ecs::{Entity, Query};
-use euca_gameplay::assertions::{self, Assertion, AssertCondition, Severity};
+use euca_gameplay::assertions::{self, AssertCondition, Assertion, Severity};
 
 use crate::state::SharedWorld;
 
@@ -191,9 +191,7 @@ fn parse_condition_from_shorthand(
         .unwrap_or(assertions::EntityFilter::Any);
 
     match shorthand {
-        "entity-exists" | "exists" => {
-            Some(AssertCondition::EntityExists { filter })
-        }
+        "entity-exists" | "exists" => Some(AssertCondition::EntityExists { filter }),
         "entity-count" | "count" => {
             let min = req.get("min").and_then(|v| v.as_u64()).map(|v| v as u32);
             let max = req.get("max").and_then(|v| v.as_u64()).map(|v| v as u32);
@@ -205,7 +203,10 @@ fn parse_condition_from_shorthand(
                 .get("min_distance")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.5) as f32;
-            Some(AssertCondition::NoOverlap { filter, min_distance })
+            Some(AssertCondition::NoOverlap {
+                filter,
+                min_distance,
+            })
         }
         "none-dead" | "alive" => Some(AssertCondition::NoneAreDead { filter }),
         "no-zero-health" => Some(AssertCondition::NoZeroHealthAlive),
@@ -231,7 +232,12 @@ fn parse_condition_from_shorthand(
                 _ => return None,
             };
             let value = req.get("value").and_then(|v| v.as_f64())?;
-            Some(AssertCondition::FieldCheck { filter, field, op, value })
+            Some(AssertCondition::FieldCheck {
+                filter,
+                field,
+                op,
+                value,
+            })
         }
         _ => None,
     }
