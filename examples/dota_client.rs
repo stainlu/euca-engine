@@ -578,7 +578,7 @@ impl DotaClientApp {
 
             let (offset, zoom, look_at_offset) = if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
                 cam.follow_entity = Some(hero);
-                cam.locked = false;
+                cam.locked = true;
                 cam.center = hero_world_pos;
                 cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
                 cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
