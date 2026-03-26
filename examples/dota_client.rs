@@ -401,11 +401,11 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
     world.insert(r, MeshRenderer { mesh: river_mesh });
     world.insert(r, MaterialRef { handle: river_mat });
 
-    // Directional light — warm sun for the DotA arena
+    // Directional light — neutral white sun for the DotA arena
     world.spawn(DirectionalLight {
         direction: [0.4, -0.9, 0.25],
-        color: [1.0, 0.95, 0.88],
-        intensity: 2.5,
+        color: [1.0, 1.0, 1.0],
+        intensity: 2.0,
         ..Default::default()
     });
 
@@ -512,7 +512,10 @@ impl DotaClientApp {
             width: WINDOW_WIDTH as f32,
             height: WINDOW_HEIGHT as f32,
         });
-        world.insert_resource(euca_render::RenderQuality::Medium.to_settings());
+        // Use Medium quality but disable SSAO (causes diamond artifacts on flat terrain)
+        let mut pps = euca_render::RenderQuality::Medium.to_settings();
+        pps.ssao_enabled = false;
+        world.insert_resource(pps);
 
         // Register items and heroes
         world.insert_resource(define_items());
@@ -573,12 +576,23 @@ impl DotaClientApp {
                 .map(|lt| lt.0.translation)
                 .unwrap_or(Vec3::ZERO);
 
-            if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
+            let (offset, zoom, look_at_offset) = if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
                 cam.follow_entity = Some(hero);
                 cam.locked = false;
                 cam.center = hero_world_pos;
                 cam.follow_key = Some(euca_input::InputKey::Key("1".into()));
                 cam.toggle_lock_key = Some(euca_input::InputKey::Key("Y".into()));
+                (cam.offset, cam.zoom, cam.look_at_offset)
+            } else {
+                (Vec3::new(0.0, 12.0, 8.0), 1.0, Vec3::ZERO)
+            };
+
+            // Sync render Camera immediately so the first frame shows
+            // the hero, not sky. Without this, Camera stays at its init
+            // position until moba_camera_system runs.
+            if let Some(render_cam) = self.world.resource_mut::<Camera>() {
+                render_cam.eye = hero_world_pos + offset * zoom;
+                render_cam.target = hero_world_pos + look_at_offset;
             }
         } else {
             log::error!("No PlayerHero entity found in level — check dota.json has 'player': true");
@@ -835,36 +849,28 @@ fn day_night_system(world: &mut World, _dt: f32) {
     };
     for entity in query_entities {
         if let Some(light) = world.get_mut::<DirectionalLight>(entity) {
-            // Day: warm white (1.0, 0.95, 0.88), intensity 2.5
-            // Night: slightly cooler (0.8, 0.82, 0.9), intensity 1.5
+            // Day: neutral white (1.0, 1.0, 1.0), intensity 2.0
+            // Night: slightly cool blue (0.85, 0.88, 0.95), intensity 1.2
             light.color = [
-                0.8 + 0.2 * day_factor,
-                0.82 + 0.13 * day_factor,
-                0.9 - 0.02 * day_factor,
+                0.85 + 0.15 * day_factor,
+                0.88 + 0.12 * day_factor,
+                0.95 + 0.05 * day_factor,
             ];
-            light.intensity = 1.5 + 1.0 * day_factor;
+            light.intensity = 1.2 + 0.8 * day_factor;
         }
     }
 
     // Interpolate ambient light — very subtle
     if let Some(ambient) = world.resource_mut::<AmbientLight>() {
         ambient.intensity = 0.15 + 0.05 * day_factor;
-        ambient.color = [
-            0.9 + 0.1 * day_factor,
-            0.9 + 0.1 * day_factor,
-            0.95 + 0.05 * day_factor,
-        ];
+        ambient.color = [1.0, 1.0, 1.0];
     }
 
-    // Radiant vs Dire color grading: very subtle temperature shift
-    let cam_x = world
-        .resource::<Camera>()
-        .map(|c| c.eye.x)
-        .unwrap_or(0.0);
+    // Keep temperature neutral — the shader's temperature implementation
+    // shifts +0.005 red / -0.005 blue per Kelvin, which is too aggressive
+    // for subtle color grading. Even ±50K creates a visible orange/blue cast.
     if let Some(pps) = world.resource_mut::<PostProcessSettings>() {
-        // Radiant side (x < 0): slightly warm (+50K), Dire side (x > 0): slightly cool (-50K)
-        let blend = (cam_x / 30.0).clamp(-1.0, 1.0);
-        pps.temperature = -50.0 * blend;
+        pps.temperature = 0.0;
     }
 }
 
