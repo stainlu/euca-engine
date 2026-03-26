@@ -16,7 +16,7 @@ use euca_gameplay::{
     AbilityDef, AbilityEffect, AbilitySlot, GameState, HeroDef, HeroName, HeroRegistry, ItemDef,
     ItemRegistry,
 };
-use euca_math::{Mat4, Transform, Vec3, Vec4};
+use euca_math::{Mat4, Transform, Vec3};
 use euca_physics::PhysicsConfig;
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
