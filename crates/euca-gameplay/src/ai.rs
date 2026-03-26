@@ -4,7 +4,7 @@
 //! Systems: `ai_system`.
 
 use euca_ecs::{Entity, Query, World};
-use euca_math::Vec3;
+use euca_math::{Quat, Vec3};
 use euca_physics::Velocity;
 use euca_scene::LocalTransform;
 
@@ -155,6 +155,18 @@ pub fn ai_system(world: &mut World, _dt: f32) {
         if let Some(vel) = world.get_mut::<Velocity>(ai.entity) {
             vel.linear.x = desired_velocity.x;
             vel.linear.z = desired_velocity.z;
+        }
+
+        // Face movement direction
+        let speed_sq =
+            desired_velocity.x * desired_velocity.x + desired_velocity.z * desired_velocity.z;
+        if speed_sq > 0.001 {
+            let dir = Vec3::new(desired_velocity.x, 0.0, desired_velocity.z).normalize();
+            let yaw = (-dir.x).atan2(-dir.z);
+            let rot = Quat::from_axis_angle(Vec3::Y, yaw);
+            if let Some(lt) = world.get_mut::<LocalTransform>(ai.entity) {
+                lt.0.rotation = rot;
+            }
         }
     }
 }

@@ -4,9 +4,16 @@
 //! Systems: `player_command_system`.
 
 use euca_ecs::{Entity, Events, Query, World};
-use euca_math::Vec3;
+use euca_math::{Quat, Vec3};
 use euca_physics::Velocity;
 use euca_scene::LocalTransform;
+
+/// Convert an XZ direction vector into a Y-axis rotation quaternion.
+/// Models are assumed to face the -Z direction by default (standard glTF convention).
+fn facing_rotation(dir: Vec3) -> Quat {
+    let yaw = (-dir.x).atan2(-dir.z);
+    Quat::from_axis_angle(Vec3::Y, yaw)
+}
 
 use crate::abilities::AbilitySlot;
 use crate::combat::AutoCombat;
@@ -111,6 +118,7 @@ pub fn player_command_system(world: &mut World, dt: f32) {
     };
 
     let mut velocity_updates: Vec<(Entity, Vec3)> = Vec::new();
+    let mut rotation_updates: Vec<(Entity, Quat)> = Vec::new();
     let mut damage_events: Vec<DamageEvent> = Vec::new();
     let mut cooldown_resets: Vec<Entity> = Vec::new();
     let mut ability_events: Vec<crate::abilities::UseAbilityEvent> = Vec::new();
@@ -155,6 +163,7 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                     let speed = combat.map(|c| c.speed).unwrap_or(3.0);
                     let dir = diff_xz.normalize();
                     velocity_updates.push((entity, Vec3::new(dir.x * speed, 0.0, dir.z * speed)));
+                    rotation_updates.push((entity, facing_rotation(dir)));
                 }
             }
 
@@ -183,6 +192,11 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                     Some(c) => c,
                     None => continue,
                 };
+
+                // Face the target regardless of range
+                if dist > 0.01 {
+                    rotation_updates.push((entity, facing_rotation(diff_xz.normalize())));
+                }
 
                 if dist <= ac.range {
                     // In attack range — deal damage if cooldown ready.
@@ -242,6 +256,13 @@ pub fn player_command_system(world: &mut World, dt: f32) {
     for (entity, vel) in velocity_updates {
         if let Some(v) = world.get_mut::<Velocity>(entity) {
             v.linear = vel;
+        }
+    }
+
+    // Apply rotation updates — face movement/attack direction.
+    for (entity, rot) in rotation_updates {
+        if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+            lt.0.rotation = rot;
         }
     }
 
