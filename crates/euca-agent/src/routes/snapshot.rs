@@ -96,13 +96,11 @@ fn compute_summary(w: &World) -> GameSummary {
             summary.entity_count += 1;
 
             let is_dead = w.get::<euca_gameplay::Dead>(entity).is_some();
-            if !is_dead {
-                if let Some(role) = w.get::<euca_gameplay::EntityRole>(entity) {
-                    match role {
-                        euca_gameplay::EntityRole::Hero => summary.heroes_alive += 1,
-                        euca_gameplay::EntityRole::Tower => summary.towers_alive += 1,
-                        _ => {}
-                    }
+            if !is_dead && let Some(role) = w.get::<euca_gameplay::EntityRole>(entity) {
+                match role {
+                    euca_gameplay::EntityRole::Hero => summary.heroes_alive += 1,
+                    euca_gameplay::EntityRole::Tower => summary.towers_alive += 1,
+                    _ => {}
                 }
             }
         }
@@ -113,12 +111,11 @@ fn compute_summary(w: &World) -> GameSummary {
         for (entity_idx, score) in gs.scoreboard() {
             // Find which team this entity is on
             let entity_opt = super::find_entity(w, entity_idx);
-            if let Some(entity) = entity_opt {
-                if let Some(team) = w.get::<euca_gameplay::Team>(entity) {
-                    if let Some(summary) = teams.get_mut(&team.0) {
-                        summary.score = score;
-                    }
-                }
+            if let Some(entity) = entity_opt
+                && let Some(team) = w.get::<euca_gameplay::Team>(entity)
+                && let Some(summary) = teams.get_mut(&team.0)
+            {
+                summary.score = score;
             }
         }
     }

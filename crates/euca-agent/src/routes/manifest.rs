@@ -201,11 +201,10 @@ pub async fn manifest_feature_update(
                 // Add new assertions if provided
                 if let Some(assertions) = req.get("assertions").and_then(|v| v.as_array()) {
                     for a in assertions {
-                        if let Some(name) = a.as_str() {
-                            if !feature.assertions.contains(&name.to_string()) {
+                        if let Some(name) = a.as_str()
+                            && !feature.assertions.contains(&name.to_string()) {
                                 feature.assertions.push(name.to_string());
                             }
-                        }
                     }
                 }
                 serde_json::json!({"ok": true, "message": format!("Feature '{name}' updated")})

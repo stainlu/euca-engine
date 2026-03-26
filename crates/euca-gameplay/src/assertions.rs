@@ -57,9 +57,7 @@ pub enum EntityFilter {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssertCondition {
     /// At least one entity matching the filter exists.
-    EntityExists {
-        filter: EntityFilter,
-    },
+    EntityExists { filter: EntityFilter },
     /// Entity count matching filter is within [min, max].
     EntityCount {
         filter: EntityFilter,
@@ -83,21 +81,15 @@ pub enum AssertCondition {
         min_distance: f32,
     },
     /// No entity matching the filter has the `Dead` component.
-    NoneAreDead {
-        filter: EntityFilter,
-    },
+    NoneAreDead { filter: EntityFilter },
     /// Every entity with Health has Health.current > 0 (unless Dead).
     NoZeroHealthAlive,
     /// Every entity with MeshRenderer also has GlobalTransform (i.e. is renderable).
     AllRenderableHaveTransform,
     /// Game is in a specific phase.
-    GamePhase {
-        phase: String,
-    },
+    GamePhase { phase: String },
     /// Total entity count is below a budget.
-    EntityBudget {
-        max: u32,
-    },
+    EntityBudget { max: u32 },
 }
 
 /// Comparison operator for field checks.
@@ -170,9 +162,7 @@ pub struct AssertionResult {
 pub fn matches_filter(entity: Entity, filter: &EntityFilter, world: &World) -> bool {
     match filter {
         EntityFilter::Any => true,
-        EntityFilter::Team { team } => {
-            world.get::<Team>(entity).is_some_and(|t| t.0 == *team)
-        }
+        EntityFilter::Team { team } => world.get::<Team>(entity).is_some_and(|t| t.0 == *team),
         EntityFilter::Role { role } => {
             let expected = parse_role(role);
             match expected {
@@ -180,13 +170,11 @@ pub fn matches_filter(entity: Entity, filter: &EntityFilter, world: &World) -> b
                 None => false,
             }
         }
-        EntityFilter::Tag { tag } => {
-            world.get::<Tags>(entity).is_some_and(|tags| tags.0.contains(tag))
-        }
+        EntityFilter::Tag { tag } => world
+            .get::<Tags>(entity)
+            .is_some_and(|tags| tags.0.contains(tag)),
         EntityFilter::HasComponent { component } => has_component(entity, component, world),
-        EntityFilter::And { filters } => {
-            filters.iter().all(|f| matches_filter(entity, f, world))
-        }
+        EntityFilter::And { filters } => filters.iter().all(|f| matches_filter(entity, f, world)),
     }
 }
 
@@ -211,7 +199,9 @@ fn has_component(entity: Entity, name: &str, world: &World) -> bool {
         "entityrole" | "entity_role" | "role" => world.get::<EntityRole>(entity).is_some(),
         "tags" => world.get::<Tags>(entity).is_some(),
         "velocity" => world.get::<euca_physics::Velocity>(entity).is_some(),
-        "meshrenderer" | "mesh_renderer" => world.get::<euca_render::MeshRenderer>(entity).is_some(),
+        "meshrenderer" | "mesh_renderer" => {
+            world.get::<euca_render::MeshRenderer>(entity).is_some()
+        }
         _ => false,
     }
 }
@@ -220,29 +210,25 @@ fn has_component(entity: Entity, name: &str, world: &World) -> bool {
 
 fn extract_field(entity: Entity, field: &str, world: &World) -> Option<f64> {
     match field.to_lowercase().as_str() {
-        "health" | "health.current" => {
-            world.get::<Health>(entity).map(|h| h.current as f64)
-        }
-        "health.max" => {
-            world.get::<Health>(entity).map(|h| h.max as f64)
-        }
-        "health.percent" | "health.pct" => {
-            world.get::<Health>(entity).map(|h| {
-                if h.max > 0.0 { (h.current / h.max * 100.0) as f64 } else { 0.0 }
-            })
-        }
+        "health" | "health.current" => world.get::<Health>(entity).map(|h| h.current as f64),
+        "health.max" => world.get::<Health>(entity).map(|h| h.max as f64),
+        "health.percent" | "health.pct" => world.get::<Health>(entity).map(|h| {
+            if h.max > 0.0 {
+                (h.current / h.max * 100.0) as f64
+            } else {
+                0.0
+            }
+        }),
         "team" => world.get::<Team>(entity).map(|t| t.0 as f64),
-        "position.x" | "pos.x" | "x" => {
-            get_position(entity, world).map(|p| p.x as f64)
-        }
-        "position.y" | "pos.y" | "y" => {
-            get_position(entity, world).map(|p| p.y as f64)
-        }
-        "position.z" | "pos.z" | "z" => {
-            get_position(entity, world).map(|p| p.z as f64)
-        }
-        "gold" => world.get::<crate::economy::Gold>(entity).map(|g| g.0 as f64),
-        "level" => world.get::<crate::leveling::Level>(entity).map(|l| l.level as f64),
+        "position.x" | "pos.x" | "x" => get_position(entity, world).map(|p| p.x as f64),
+        "position.y" | "pos.y" | "y" => get_position(entity, world).map(|p| p.y as f64),
+        "position.z" | "pos.z" | "z" => get_position(entity, world).map(|p| p.z as f64),
+        "gold" => world
+            .get::<crate::economy::Gold>(entity)
+            .map(|g| g.0 as f64),
+        "level" => world
+            .get::<crate::leveling::Level>(entity)
+            .map(|l| l.level as f64),
         _ => None,
     }
 }
@@ -251,7 +237,11 @@ fn get_position(entity: Entity, world: &World) -> Option<Vec3> {
     world
         .get::<GlobalTransform>(entity)
         .map(|gt| gt.0.translation)
-        .or_else(|| world.get::<LocalTransform>(entity).map(|lt| lt.0.translation))
+        .or_else(|| {
+            world
+                .get::<LocalTransform>(entity)
+                .map(|lt| lt.0.translation)
+        })
 }
 
 fn compare(lhs: f64, op: CompareOp, rhs: f64) -> bool {
@@ -288,36 +278,53 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
         AssertCondition::EntityExists { filter } => {
             let count = count_matching(filter, world);
             if count > 0 {
-                AssertResult { passed: true, message: format!("Found {count} matching entities"), tick }
-            } else {
-                AssertResult { passed: false, message: "No matching entities found".into(), tick }
-            }
-        }
-
-        AssertCondition::EntityCount { filter, min, max } => {
-            let count = count_matching(filter, world);
-            let min_ok = min.map_or(true, |m| count >= m);
-            let max_ok = max.map_or(true, |m| count <= m);
-            if min_ok && max_ok {
                 AssertResult {
                     passed: true,
-                    message: format!("Count {count} is within bounds (min={}, max={})",
-                        min.map_or("none".into(), |m| m.to_string()),
-                        max.map_or("none".into(), |m| m.to_string())),
+                    message: format!("Found {count} matching entities"),
                     tick,
                 }
             } else {
                 AssertResult {
                     passed: false,
-                    message: format!("Count {count} out of bounds (min={}, max={})",
-                        min.map_or("none".into(), |m| m.to_string()),
-                        max.map_or("none".into(), |m| m.to_string())),
+                    message: "No matching entities found".into(),
                     tick,
                 }
             }
         }
 
-        AssertCondition::FieldCheck { filter, field, op, value } => {
+        AssertCondition::EntityCount { filter, min, max } => {
+            let count = count_matching(filter, world);
+            let min_ok = min.is_none_or(|m| count >= m);
+            let max_ok = max.is_none_or(|m| count <= m);
+            if min_ok && max_ok {
+                AssertResult {
+                    passed: true,
+                    message: format!(
+                        "Count {count} is within bounds (min={}, max={})",
+                        min.map_or("none".into(), |m| m.to_string()),
+                        max.map_or("none".into(), |m| m.to_string())
+                    ),
+                    tick,
+                }
+            } else {
+                AssertResult {
+                    passed: false,
+                    message: format!(
+                        "Count {count} out of bounds (min={}, max={})",
+                        min.map_or("none".into(), |m| m.to_string()),
+                        max.map_or("none".into(), |m| m.to_string())
+                    ),
+                    tick,
+                }
+            }
+        }
+
+        AssertCondition::FieldCheck {
+            filter,
+            field,
+            op,
+            value,
+        } => {
             let query = Query::<Entity>::new(world);
             let mut checked = 0u32;
             let mut failures = Vec::new();
@@ -328,21 +335,31 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
                 if let Some(actual) = extract_field(entity, field, world) {
                     checked += 1;
                     if !compare(actual, *op, *value) {
-                        failures.push(format!("E{}: {field}={actual} (expected {}{value})",
-                            entity.index(), op_symbol(*op)));
+                        failures.push(format!(
+                            "E{}: {field}={actual} (expected {}{value})",
+                            entity.index(),
+                            op_symbol(*op)
+                        ));
                     }
                 }
             }
             if failures.is_empty() {
                 AssertResult {
                     passed: true,
-                    message: format!("All {checked} entities satisfy {field} {}{value}", op_symbol(*op)),
+                    message: format!(
+                        "All {checked} entities satisfy {field} {}{value}",
+                        op_symbol(*op)
+                    ),
                     tick,
                 }
             } else {
                 AssertResult {
                     passed: false,
-                    message: format!("{} of {checked} failed: {}", failures.len(), failures.join("; ")),
+                    message: format!(
+                        "{} of {checked} failed: {}",
+                        failures.len(),
+                        failures.join("; ")
+                    ),
                     tick,
                 }
             }
@@ -350,7 +367,8 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
 
         AssertCondition::AllTeamsHaveSpawnPoints => {
             let mut teams_seen: std::collections::HashSet<u8> = std::collections::HashSet::new();
-            let mut teams_with_spawns: std::collections::HashSet<u8> = std::collections::HashSet::new();
+            let mut teams_with_spawns: std::collections::HashSet<u8> =
+                std::collections::HashSet::new();
 
             let team_query = Query::<(Entity, &Team)>::new(world);
             for (_, team) in team_query.iter() {
@@ -378,10 +396,14 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
             }
         }
 
-        AssertCondition::NoOverlap { filter, min_distance } => {
+        AssertCondition::NoOverlap {
+            filter,
+            min_distance,
+        } => {
             let positions: Vec<(Entity, Vec3)> = {
                 let query = Query::<Entity>::new(world);
-                query.iter()
+                query
+                    .iter()
                     .filter(|e| matches_filter(*e, filter, world))
                     .filter_map(|e| get_position(e, world).map(|p| (e, p)))
                     .collect()
@@ -392,8 +414,11 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
                 for j in (i + 1)..positions.len() {
                     let dist = (positions[i].1 - positions[j].1).length();
                     if dist < *min_distance {
-                        overlaps.push(format!("E{} and E{} are {dist:.2} apart (min={min_distance})",
-                            positions[i].0.index(), positions[j].0.index()));
+                        overlaps.push(format!(
+                            "E{} and E{} are {dist:.2} apart (min={min_distance})",
+                            positions[i].0.index(),
+                            positions[j].0.index()
+                        ));
                     }
                 }
             }
@@ -417,14 +442,16 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
             let query = Query::<Entity>::new(world);
             let mut dead_entities = Vec::new();
             for entity in query.iter() {
-                if matches_filter(entity, filter, world)
-                    && world.get::<Dead>(entity).is_some()
-                {
+                if matches_filter(entity, filter, world) && world.get::<Dead>(entity).is_some() {
                     dead_entities.push(entity.index());
                 }
             }
             if dead_entities.is_empty() {
-                AssertResult { passed: true, message: "No matching dead entities".into(), tick }
+                AssertResult {
+                    passed: true,
+                    message: "No matching dead entities".into(),
+                    tick,
+                }
             } else {
                 AssertResult {
                     passed: false,
@@ -443,11 +470,19 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
                 }
             }
             if violations.is_empty() {
-                AssertResult { passed: true, message: "No alive entities with zero health".into(), tick }
+                AssertResult {
+                    passed: true,
+                    message: "No alive entities with zero health".into(),
+                    tick,
+                }
             } else {
                 AssertResult {
                     passed: false,
-                    message: format!("{} alive entities with health <= 0: {:?}", violations.len(), violations),
+                    message: format!(
+                        "{} alive entities with health <= 0: {:?}",
+                        violations.len(),
+                        violations
+                    ),
                     tick,
                 }
             }
@@ -464,43 +499,50 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
                 }
             }
             if missing.is_empty() {
-                AssertResult { passed: true, message: "All renderable entities have transforms".into(), tick }
+                AssertResult {
+                    passed: true,
+                    message: "All renderable entities have transforms".into(),
+                    tick,
+                }
             } else {
                 AssertResult {
                     passed: false,
-                    message: format!("{} entities with MeshRenderer but no GlobalTransform: {:?}", missing.len(), missing),
+                    message: format!(
+                        "{} entities with MeshRenderer but no GlobalTransform: {:?}",
+                        missing.len(),
+                        missing
+                    ),
                     tick,
                 }
             }
         }
 
         AssertCondition::GamePhase { phase } => {
-            let current = world.resource::<crate::game_state::GameState>().map(|gs| {
-                match &gs.phase {
-                    crate::game_state::GamePhase::Lobby => "lobby",
-                    crate::game_state::GamePhase::Countdown { .. } => "countdown",
-                    crate::game_state::GamePhase::Playing => "playing",
-                    crate::game_state::GamePhase::PostMatch { .. } => "post_match",
-                }
-            });
+            let current =
+                world
+                    .resource::<crate::game_state::GameState>()
+                    .map(|gs| match &gs.phase {
+                        crate::game_state::GamePhase::Lobby => "lobby",
+                        crate::game_state::GamePhase::Countdown { .. } => "countdown",
+                        crate::game_state::GamePhase::Playing => "playing",
+                        crate::game_state::GamePhase::PostMatch { .. } => "post_match",
+                    });
             match current {
-                Some(actual) if actual == phase.as_str() => {
-                    AssertResult { passed: true, message: format!("Game is in '{phase}' phase"), tick }
-                }
-                Some(actual) => {
-                    AssertResult {
-                        passed: false,
-                        message: format!("Expected phase '{phase}', got '{actual}'"),
-                        tick,
-                    }
-                }
-                None => {
-                    AssertResult {
-                        passed: false,
-                        message: "No GameState resource — game not initialized".into(),
-                        tick,
-                    }
-                }
+                Some(actual) if actual == phase.as_str() => AssertResult {
+                    passed: true,
+                    message: format!("Game is in '{phase}' phase"),
+                    tick,
+                },
+                Some(actual) => AssertResult {
+                    passed: false,
+                    message: format!("Expected phase '{phase}', got '{actual}'"),
+                    tick,
+                },
+                None => AssertResult {
+                    passed: false,
+                    message: "No GameState resource — game not initialized".into(),
+                    tick,
+                },
             }
         }
 
@@ -525,7 +567,10 @@ fn evaluate_condition(condition: &AssertCondition, world: &World) -> AssertResul
 
 fn count_matching(filter: &EntityFilter, world: &World) -> u32 {
     let query = Query::<Entity>::new(world);
-    query.iter().filter(|e| matches_filter(*e, filter, world)).count() as u32
+    query
+        .iter()
+        .filter(|e| matches_filter(*e, filter, world))
+        .count() as u32
 }
 
 // ── Public API ──
@@ -535,7 +580,8 @@ pub fn evaluate_assertions(world: &mut World) -> EvaluationReport {
     // Collect assertion data (avoids borrow conflict during mutation).
     let assertions: Vec<(Entity, String, AssertCondition, Severity)> = {
         let query = Query::<(Entity, &Assertion)>::new(world);
-        query.iter()
+        query
+            .iter()
             .map(|(e, a)| (e, a.name.clone(), a.condition.clone(), a.severity))
             .collect()
     };
@@ -610,13 +656,19 @@ fn parse_single_filter(s: &str) -> Option<EntityFilter> {
         return Some(EntityFilter::Team { team });
     }
     if let Some(rest) = s.strip_prefix("role:") {
-        return Some(EntityFilter::Role { role: rest.to_string() });
+        return Some(EntityFilter::Role {
+            role: rest.to_string(),
+        });
     }
     if let Some(rest) = s.strip_prefix("tag:") {
-        return Some(EntityFilter::Tag { tag: rest.to_string() });
+        return Some(EntityFilter::Tag {
+            tag: rest.to_string(),
+        });
     }
     if let Some(rest) = s.strip_prefix("component:") {
-        return Some(EntityFilter::HasComponent { component: rest.to_string() });
+        return Some(EntityFilter::HasComponent {
+            component: rest.to_string(),
+        });
     }
     None
 }
@@ -658,25 +710,32 @@ mod tests {
 
     fn setup_world() -> World {
         let mut world = World::new();
-        world.insert_resource(crate::game_state::GameState::new(crate::game_state::MatchConfig {
-            mode: "deathmatch".into(),
-            score_limit: 10,
-            time_limit: 300.0,
-            respawn_delay: 3.0,
-        }));
+        world.insert_resource(crate::game_state::GameState::new(
+            crate::game_state::MatchConfig {
+                mode: "deathmatch".into(),
+                score_limit: 10,
+                time_limit: 300.0,
+                respawn_delay: 3.0,
+            },
+        ));
         world
     }
 
     #[test]
     fn entity_exists_passes_when_present() {
         let mut world = setup_world();
-        let e = world.spawn(Health { current: 100.0, max: 100.0 });
+        let e = world.spawn(Health {
+            current: 100.0,
+            max: 100.0,
+        });
         world.insert(e, Team(1));
         world.insert(e, EntityRole::Hero);
         world.spawn(Assertion {
             name: "hero-exists".into(),
             condition: AssertCondition::EntityExists {
-                filter: EntityFilter::Role { role: "hero".into() },
+                filter: EntityFilter::Role {
+                    role: "hero".into(),
+                },
             },
             severity: Severity::Error,
             last_result: None,
@@ -694,7 +753,9 @@ mod tests {
         world.spawn(Assertion {
             name: "hero-exists".into(),
             condition: AssertCondition::EntityExists {
-                filter: EntityFilter::Role { role: "hero".into() },
+                filter: EntityFilter::Role {
+                    role: "hero".into(),
+                },
             },
             severity: Severity::Error,
             last_result: None,
@@ -708,9 +769,15 @@ mod tests {
     #[test]
     fn entity_count_within_bounds() {
         let mut world = setup_world();
-        let e1 = world.spawn(Health { current: 100.0, max: 100.0 });
+        let e1 = world.spawn(Health {
+            current: 100.0,
+            max: 100.0,
+        });
         world.insert(e1, Team(1));
-        let e2 = world.spawn(Health { current: 100.0, max: 100.0 });
+        let e2 = world.spawn(Health {
+            current: 100.0,
+            max: 100.0,
+        });
         world.insert(e2, Team(1));
         world.spawn(Assertion {
             name: "team1-count".into(),
@@ -748,9 +815,15 @@ mod tests {
     #[test]
     fn field_check_health_above_zero() {
         let mut world = setup_world();
-        let e1 = world.spawn(Health { current: 50.0, max: 100.0 });
+        let e1 = world.spawn(Health {
+            current: 50.0,
+            max: 100.0,
+        });
         world.insert(e1, Team(1));
-        let e2 = world.spawn(Health { current: 80.0, max: 100.0 });
+        let e2 = world.spawn(Health {
+            current: 80.0,
+            max: 100.0,
+        });
         world.insert(e2, Team(1));
         world.spawn(Assertion {
             name: "team1-healthy".into(),
@@ -795,8 +868,14 @@ mod tests {
         world.insert(e1, GlobalTransform(Transform::from_translation(Vec3::ZERO)));
 
         let e2 = world.spawn(Team(1));
-        world.insert(e2, LocalTransform(Transform::from_translation(Vec3::new(0.1, 0.0, 0.0))));
-        world.insert(e2, GlobalTransform(Transform::from_translation(Vec3::new(0.1, 0.0, 0.0))));
+        world.insert(
+            e2,
+            LocalTransform(Transform::from_translation(Vec3::new(0.1, 0.0, 0.0))),
+        );
+        world.insert(
+            e2,
+            GlobalTransform(Transform::from_translation(Vec3::new(0.1, 0.0, 0.0))),
+        );
 
         world.spawn(Assertion {
             name: "no-overlap".into(),
@@ -815,7 +894,10 @@ mod tests {
     #[test]
     fn none_dead_passes_when_all_alive() {
         let mut world = setup_world();
-        let e = world.spawn(Health { current: 100.0, max: 100.0 });
+        let e = world.spawn(Health {
+            current: 100.0,
+            max: 100.0,
+        });
         world.insert(e, Team(1));
         world.spawn(Assertion {
             name: "team1-alive".into(),
@@ -833,7 +915,10 @@ mod tests {
     #[test]
     fn none_dead_fails_when_dead_entity() {
         let mut world = setup_world();
-        let e = world.spawn(Health { current: 0.0, max: 100.0 });
+        let e = world.spawn(Health {
+            current: 0.0,
+            max: 100.0,
+        });
         world.insert(e, Team(1));
         world.insert(e, Dead);
         world.spawn(Assertion {
@@ -853,7 +938,10 @@ mod tests {
     fn no_zero_health_alive_detects_violation() {
         let mut world = setup_world();
         // Alive entity with 0 health = violation
-        world.spawn(Health { current: 0.0, max: 100.0 });
+        world.spawn(Health {
+            current: 0.0,
+            max: 100.0,
+        });
         world.spawn(Assertion {
             name: "no-zero-hp".into(),
             condition: AssertCondition::NoZeroHealthAlive,
@@ -883,11 +971,26 @@ mod tests {
 
     #[test]
     fn parse_entity_filter_works() {
-        assert!(matches!(parse_entity_filter("any"), Some(EntityFilter::Any)));
-        assert!(matches!(parse_entity_filter("team:1"), Some(EntityFilter::Team { team: 1 })));
-        assert!(matches!(parse_entity_filter("role:hero"), Some(EntityFilter::Role { .. })));
-        assert!(matches!(parse_entity_filter("tag:ground"), Some(EntityFilter::Tag { .. })));
-        assert!(matches!(parse_entity_filter("component:Health"), Some(EntityFilter::HasComponent { .. })));
+        assert!(matches!(
+            parse_entity_filter("any"),
+            Some(EntityFilter::Any)
+        ));
+        assert!(matches!(
+            parse_entity_filter("team:1"),
+            Some(EntityFilter::Team { team: 1 })
+        ));
+        assert!(matches!(
+            parse_entity_filter("role:hero"),
+            Some(EntityFilter::Role { .. })
+        ));
+        assert!(matches!(
+            parse_entity_filter("tag:ground"),
+            Some(EntityFilter::Tag { .. })
+        ));
+        assert!(matches!(
+            parse_entity_filter("component:Health"),
+            Some(EntityFilter::HasComponent { .. })
+        ));
         assert!(parse_entity_filter("invalid").is_none());
     }
 
@@ -904,13 +1007,21 @@ mod tests {
     fn and_filter_matches_correctly() {
         let mut world = setup_world();
         let e = world.spawn(Team(1));
-        world.insert(e, Health { current: 100.0, max: 100.0 });
+        world.insert(
+            e,
+            Health {
+                current: 100.0,
+                max: 100.0,
+            },
+        );
         world.insert(e, EntityRole::Hero);
 
         let filter = EntityFilter::And {
             filters: vec![
                 EntityFilter::Team { team: 1 },
-                EntityFilter::Role { role: "hero".into() },
+                EntityFilter::Role {
+                    role: "hero".into(),
+                },
             ],
         };
         assert!(matches_filter(e, &filter, &world));
@@ -918,7 +1029,9 @@ mod tests {
         let filter_wrong = EntityFilter::And {
             filters: vec![
                 EntityFilter::Team { team: 2 }, // wrong team
-                EntityFilter::Role { role: "hero".into() },
+                EntityFilter::Role {
+                    role: "hero".into(),
+                },
             ],
         };
         assert!(!matches_filter(e, &filter_wrong, &world));
@@ -927,7 +1040,10 @@ mod tests {
     #[test]
     fn multiple_assertions_evaluated() {
         let mut world = setup_world();
-        let e = world.spawn(Health { current: 100.0, max: 100.0 });
+        let e = world.spawn(Health {
+            current: 100.0,
+            max: 100.0,
+        });
         world.insert(e, Team(1));
         world.spawn(Assertion {
             name: "assert-1".into(),
@@ -955,7 +1071,10 @@ mod tests {
     #[test]
     fn evaluate_updates_last_result() {
         let mut world = setup_world();
-        let e = world.spawn(Health { current: 100.0, max: 100.0 });
+        let e = world.spawn(Health {
+            current: 100.0,
+            max: 100.0,
+        });
         world.insert(e, Team(1));
         let assert_entity = world.spawn(Assertion {
             name: "check".into(),

@@ -126,6 +126,7 @@ impl UiOverlayRenderer {
     ///
     /// Call this AFTER the main 3D render and post-processing, on the same
     /// encoder before `encoder.finish()`.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         device: &wgpu::Device,

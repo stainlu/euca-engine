@@ -327,12 +327,12 @@ pub fn drain_pending_mesh_uploads(
             let mat_handle = if let Some(ref mat) = entry.material {
                 // Upload albedo texture from GLB if present.
                 let mut uploaded_mat = mat.clone();
-                if let Some(tex_idx) = entry.albedo_tex_index {
-                    if let Some(img) = entry.images.get(tex_idx) {
-                        let tex_handle =
-                            renderer.upload_texture(gpu, img.width, img.height, &img.pixels);
-                        uploaded_mat.albedo_texture = Some(tex_handle);
-                    }
+                if let Some(tex_idx) = entry.albedo_tex_index
+                    && let Some(img) = entry.images.get(tex_idx)
+                {
+                    let tex_handle =
+                        renderer.upload_texture(gpu, img.width, img.height, &img.pixels);
+                    uploaded_mat.albedo_texture = Some(tex_handle);
                 }
                 Some(renderer.upload_material(gpu, &uploaded_mat))
             } else {
@@ -341,15 +341,15 @@ pub fn drain_pending_mesh_uploads(
 
             if let Some(mh) = mat_handle {
                 w.insert(entry.entity, euca_render::MaterialRef { handle: mh });
-            } else if w.get::<euca_render::MaterialRef>(entry.entity).is_none() {
-                if let Some(assets) = w.resource::<DefaultAssets>() {
-                    w.insert(
-                        entry.entity,
-                        euca_render::MaterialRef {
-                            handle: assets.default_material,
-                        },
-                    );
-                }
+            } else if w.get::<euca_render::MaterialRef>(entry.entity).is_none()
+                && let Some(assets) = w.resource::<DefaultAssets>()
+            {
+                w.insert(
+                    entry.entity,
+                    euca_render::MaterialRef {
+                        handle: assets.default_material,
+                    },
+                );
             }
         }
     }

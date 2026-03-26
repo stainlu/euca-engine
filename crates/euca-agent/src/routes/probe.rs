@@ -66,7 +66,7 @@ pub async fn probe(
             report
                 .results
                 .iter()
-                .filter(|r| names.iter().any(|n| r.name == *n))
+                .filter(|r| names.contains(&r.name))
                 .cloned()
                 .collect()
         } else {

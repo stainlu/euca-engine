@@ -117,13 +117,14 @@ fn run_diagnostics(w: &World) -> serde_json::Value {
         }
 
         // Check: alive entity with zero health (should be Dead)
-        if let Some(health) = w.get::<euca_gameplay::Health>(entity) {
-            if health.current <= 0.0 && w.get::<euca_gameplay::Dead>(entity).is_none() {
-                warnings.push(format!(
-                    "E{eid}: Health={:.0}/{:.0} but not Dead — death_check_system may not be running",
-                    health.current, health.max
-                ));
-            }
+        if let Some(health) = w.get::<euca_gameplay::Health>(entity)
+            && health.current <= 0.0
+            && w.get::<euca_gameplay::Dead>(entity).is_none()
+        {
+            warnings.push(format!(
+                "E{eid}: Health={:.0}/{:.0} but not Dead — death_check_system may not be running",
+                health.current, health.max
+            ));
         }
 
         // Track positions for overlap detection

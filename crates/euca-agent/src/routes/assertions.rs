@@ -159,11 +159,11 @@ pub async fn assert_delete(
     Path(id): Path<u32>,
 ) -> Json<MessageResponse> {
     let ok = world.with(|w, _| {
-        if let Some(entity) = find_entity(w, id) {
-            if w.get::<Assertion>(entity).is_some() {
-                w.despawn(entity);
-                return true;
-            }
+        if let Some(entity) = find_entity(w, id)
+            && w.get::<Assertion>(entity).is_some()
+        {
+            w.despawn(entity);
+            return true;
         }
         false
     });
