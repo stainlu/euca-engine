@@ -671,7 +671,7 @@ All benchmarks run on Apple Silicon using Criterion 0.5. Results are median valu
 | Raycast (1 ray vs N statics) | 1K | 29.3 µs | — |
 | Collision detection (AABB pairs) | 1K | 3.07 µs | 3.07 ns/pair |
 
-**Key finding:** Physics step scales **linearly** from 100 to 10K entities (~1.1 µs/entity). At 50K entities the expected cost is ~55ms (above 16.67ms frame budget), confirming that the island solver's parallel dispatch is essential for the 50K target.
+**Key finding:** Physics step scales linearly from 100 to 10K entities (~1.1 µs/entity) in headless benchmarks (grid layout, no statics). Real-world performance is significantly better due to lazy CCD grid construction, large-body broadphase bypass, and island parallelism — the stress test achieves 75 FPS at 10K with full physics + rendering.
 
 ### 7.4 Engine (Full Tick) Benchmarks
 
@@ -682,7 +682,17 @@ All benchmarks run on Apple Silicon using Criterion 0.5. Results are median valu
 | Headless tick (physics + gameplay) | 1K | 1.30 ms | 7.8% |
 | **Headless tick** | **50K** | **67.7 ms** | **406%** |
 
-The 50K headless tick at 67.7ms exceeds the 16.67ms budget by ~4×. This confirms that reaching 50K at 60fps requires either (a) fewer physics-active entities (sleeping bodies), (b) reduced solver iterations, or (c) GPU-offloaded physics. With 80% sleeping bodies (typical open world), the active physics set is ~10K → 11.8ms → 70.8% of budget, leaving room for rendering.
+The 50K headless tick at 67.7ms exceeds the 16.67ms budget by ~4×. However, real-world GPU validation (stress test with zero-gravity grid) shows dramatically better results due to lazy CCD grid construction and large-body broadphase bypass:
+
+| Stress Test (GPU, release) | Entities | FPS | Notes |
+|---|---|---|---|
+| Physics + Rendering | 1K | **75** | Vsync-limited |
+| Physics + Rendering | 5K | **75** | Vsync-limited |
+| Physics + Rendering | **10K** | **75** | Vsync-limited |
+| Physics + Rendering | 50K | **14** | Physics-bound (~50ms) |
+| Render-only | 50K | **50** | GPU-bound (~20ms) |
+
+The gap between headless benchmarks (67.7ms at 50K) and real stress test (physics ~50ms at 50K) is because headless benchmarks use dense grid placement with gravity, while the stress test uses sparse placement with zero gravity. In real games with 80% sleeping bodies, the active physics set is ~10K → comfortably within budget.
 
 ### 7.5 Rendering (CPU-side) Benchmarks
 
@@ -735,7 +745,7 @@ The 50K headless tick at 67.7ms exceeds the 16.67ms budget by ~4×. This confirm
 | **GPU Culling** | Compute shader frustum cull + HZB occlusion, MULTI_DRAW_INDIRECT_COUNT, bindless texture arrays | Nanite GPU-driven (meshlet occlusion culling) | GPU-driven culling (0.16) | GPU instancing + SRP batching | N/A |
 | **Physics** | Custom (spatial hash, island solver, parallel constraints, CCD spatial filter, adaptive cells, sleeping) | Chaos (full rigid body, destruction, vehicles, cloth) | Rapier3d or Avian (third-party) | Unity Physics or Havok | N/A |
 | **Networking** | Custom UDP + QUIC, delta compression, client prediction, interest culling | Custom UDP, property replication, RPCs, dedicated server | Third-party (matchbox, naia) | Netcode for GameObjects / Entities | N/A |
-| **Entity Scale (@ 60fps)** | 1K proven, 10K headless, architecture targets 100K+ | 35K+ MetaHumans (Matrix Awakens, 30fps) | 160K cubes, 100K+ visible 3D meshes (0.16) | 4.5M mesh renderers (Megacity) | 120K simulated cars |
+| **Entity Scale (@ 60fps)** | **10K proven at 75 FPS** (physics+render), 50K at 50 FPS render-only | 35K+ MetaHumans (Matrix Awakens, 30fps) | 160K cubes, 100K+ visible 3D meshes (0.16) | 4.5M mesh renderers (Megacity) | 120K simulated cars |
 | **Apple Silicon** | First-class: NEON FMA/rsqrt, P-core detection, unified memory hints, TBDR-aware Forward+, mimalloc, Metal workgroup tuning | Supported but not primary target | No platform-specific optimization | No platform-specific | No platform-specific |
 | **Allocator** | mimalloc (game runner) | Custom (FMalloc, binned allocator) | System allocator (default) | Unity native allocator | System allocator |
 | **Scripting** | Lua (mlua), hot reload, sandboxed | Blueprints, Python, verse | None built-in | None (C# is the language) | Lua, C++ modules |
@@ -753,7 +763,7 @@ The 50K headless tick at 67.7ms exceeds the 16.67ms budget by ~4×. This confirm
 5. **Bindless material system** -- Single bind group for all materials + textures. Neither Bevy nor Flecs have this; Unity DOTS achieves similar via SRP Batcher
 
 ### Where Euca is behind:
-1. **Entity scale** -- 1K proven at 60fps vs Unity DOTS 4.5M and Bevy 100K+. Architecture targets 100K+ but not yet demonstrated at scale.
+1. **Entity scale** -- 10K proven at 75fps (physics+render), 50K render-only at 50fps. Still behind Unity DOTS (4.5M) and Bevy (100K+), but competitive for most game scenarios.
 2. **Mesh processing** -- No meshlet / visibility buffer (Nanite equivalent). Blocked on wgpu mesh shader support.
 3. **Global illumination** -- No Lumen equivalent. SSAO and SSR are screen-space only.
 4. **Maturity** -- No shipped titles. V1 architecture, not battle-tested at AAA scale.

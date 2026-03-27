@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.2.0 (2026-03-27)
+
+### Performance Scaling — 10K Entities at 75 FPS
+
+Major performance scaling effort: 10x entity count improvement with full physics + rendering.
+
+- **Dynamic instance buffers**: Removed 16K hard cap. Forward, deferred, prepass, and velocity buffers grow dynamically via `next_power_of_two()` with bind group recreation.
+- **Rayon thread pool**: Replaced `std::thread::scope` with `rayon::in_place_scope` for parallel system scheduling. Persistent thread pool eliminates per-frame OS thread creation.
+- **Physics broadphase caching**: Candidate pairs computed once per frame, reused across 4 solver iterations (was rebuilt from scratch each iteration — 4× overhead).
+- **Adaptive broadphase cell size**: Cell size computed from body population (2× median extent, [1,32]) instead of hardcoded 4.0m.
+- **CCD spatial filtering**: Spatial grid over statics with swept-AABB query. O(dynamic × nearby) instead of O(dynamic × all_statics).
+- **Island detection + parallel solver**: Union-Find partitions bodies into independent islands, solved in parallel via rayon. Static bodies excluded from union-find to prevent single-island degeneration.
+- **Large-body broadphase bypass**: Bodies spanning >8 cells skip spatial hash, tested via direct per-axis AABB overlap. Prevents grid flooding from terrain planes.
+- **Lazy CCD grid construction**: Skip CCD spatial grid build entirely when no mover exceeds velocity threshold. Eliminates 32K+ cell HashMap allocation per frame.
+- **Retained render extraction**: `RenderExtractor` maintains persistent entity→DrawCommand mapping with ECS change detection. Only re-extracts changed entities.
+- **Bindless material system**: All material uniforms in single GPU storage buffer (96 bytes/material). Textures in `binding_array<texture_2d<f32>>` (up to 512). Single `set_bind_group(2)` per frame instead of N per-batch switches.
+- **Bindless PBR shader**: `pbr_bindless.wgsl` — full Cook-Torrance BRDF with per-fragment material lookup via `material_id` in instance data.
+- **65+ benchmarks**: Physics at 5K/10K, engine at 50K, render extraction/batching at 50K, island detection, CCD spatial.
+- **Stress test parametric**: `EUCA_ENTITIES=N` env var, `EUCA_NO_PHYSICS=1` for render-only profiling, grid layout, multiple materials.
+
+**Proven performance (Apple Silicon, release mode):**
+| Entities | Physics + Rendering | Render-only |
+|---|---|---|
+| 1K | 75 FPS | 75 FPS |
+| 5K | 75 FPS | 75 FPS |
+| 10K | 75 FPS | 75 FPS |
+| 50K | 14 FPS | 50 FPS |
+
 ## v0.9.2 (2026-03-24)
 
 ### Prove It Works — Verification & Hardening

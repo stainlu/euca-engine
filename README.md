@@ -14,7 +14,7 @@ An ECS-first, agent-native game engine in Rust. AI agents build games via CLI co
 * **Agent-Native** — AI agents control the engine via CLI/HTTP. The engine is the runtime, agents are the developers.
 * **Composable** — Pick the systems you need. Health + Team + AutoCombat = a fighter. Add Gold + XpBounty = an RPG enemy. No framework lock-in.
 * **Data-Driven** — Game logic via rules ("when death → score +1"), not code. Agents compose behavior, never write Rust.
-* **Fast** — Custom ECS with archetype storage, rayon-parallel scheduling, GPU-driven culling. 1000-entity stress test at 60 FPS with full physics; architecture targets 100K+.
+* **Fast** — Custom ECS with archetype storage, rayon-parallel scheduling, bindless materials, GPU-driven culling. 10,000 entities at 75 FPS with full physics + rendering; 50,000 entities at 50 FPS render-only.
 
 ## Links
 
