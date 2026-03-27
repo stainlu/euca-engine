@@ -753,7 +753,10 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
         unsafe impl Sync for SendSlice {}
 
         impl SendSlice {
-            /// Reconstruct the mutable slice. Caller must ensure exclusive access.
+            /// Reconstruct the mutable slice. Caller must ensure exclusive access
+            /// to the indices they touch. Multiple callers may hold overlapping
+            /// slices as long as they access disjoint index ranges (island solver).
+            #[allow(clippy::mut_from_ref)]
             unsafe fn get(&self) -> &mut [Body] {
                 unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
             }
