@@ -1,4 +1,4 @@
-struct InstanceData { model: mat4x4<f32>, normal_matrix: mat4x4<f32> }
+struct InstanceData { model: mat4x4<f32>, normal_matrix: mat4x4<f32>, material_id: u32, _pad0: u32, _pad1: u32, _pad2: u32 }
 struct MaterialUniforms { albedo: vec4<f32>, metallic: f32, roughness: f32, has_normal_map: f32, has_metallic_roughness_tex: f32, emissive: vec3<f32>, has_emissive_tex: f32, has_ao_tex: f32, alpha_mode: f32, alpha_cutoff: f32 }
 struct GBufferSceneUniforms { camera_vp: mat4x4<f32> }
 @group(0) @binding(0) var<storage, read> instances: array<InstanceData>;

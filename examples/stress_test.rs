@@ -11,8 +11,14 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{WindowAttributes, WindowId};
 
-const ENTITY_COUNT: u32 = 1000;
-const AREA_SIZE: f32 = 50.0;
+/// Read entity count from EUCA_ENTITIES env var. Default: 1000.
+fn entity_count() -> u32 {
+    std::env::var("EUCA_ENTITIES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000)
+}
+
 const FPS_PRINT_INTERVAL: u64 = 60;
 
 /// Simple PCG-based pseudo-random number generator (no external dependency).
@@ -54,23 +60,30 @@ struct StressTestApp {
     wgpu_instance: wgpu::Instance,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
+    extractor: RenderExtractor,
     window_attrs: WindowAttributes,
     fps_frame_count: u64,
     fps_last_printed: f64,
     current_fps: f32,
+    num_entities: u32,
 }
 
 impl StressTestApp {
     fn new() -> Self {
         let (survey, wgpu_instance) = HardwareSurvey::detect();
+        let num_entities = entity_count();
+        let area_size = (num_entities as f32).sqrt() * 2.0;
 
         let mut world = World::new();
         world.insert_resource(Time::new());
         world.insert_resource(Camera::new(
-            Vec3::new(25.0, 30.0, 25.0),
-            Vec3::new(25.0, 0.0, 25.0),
+            Vec3::new(area_size / 2.0, area_size * 0.6, area_size / 2.0),
+            Vec3::new(0.0, 0.0, 0.0),
         ));
-        world.insert_resource(PhysicsConfig::new());
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO, // Zero gravity: entities drift freely, no pile-up.
+            ..PhysicsConfig::new()
+        });
         world.insert_resource(AmbientLight {
             color: [1.0, 1.0, 1.0],
             intensity: 0.3,
@@ -82,14 +95,16 @@ impl StressTestApp {
             wgpu_instance,
             gpu: None,
             renderer: None,
+            extractor: RenderExtractor::new(),
             window_attrs: WindowAttributes::default()
                 .with_title(format!(
-                    "Euca Engine -- Stress Test ({ENTITY_COUNT} entities) | FPS: --"
+                    "Euca Engine -- Stress Test ({num_entities} entities) | FPS: --"
                 ))
                 .with_inner_size(winit::dpi::LogicalSize::new(1280, 720)),
             fps_frame_count: 0,
             fps_last_printed: 0.0,
             current_fps: 0.0,
+            num_entities,
         }
     }
 
@@ -97,20 +112,63 @@ impl StressTestApp {
         let gpu = self.gpu.as_ref().unwrap();
         let renderer = self.renderer.as_mut().unwrap();
 
+        // Enable bindless materials if GPU supports it.
+        renderer.enable_bindless(gpu);
+
         let cube_mesh = renderer.upload_mesh(gpu, &Mesh::cube());
-        let mat = renderer.upload_material(gpu, &Material::gray());
 
+        // Multiple materials to exercise bindless path.
+        let materials = [
+            renderer.upload_material(gpu, &Material::gray()),
+            renderer.upload_material(
+                gpu,
+                &Material {
+                    albedo: [0.8, 0.2, 0.2, 1.0],
+                    ..Material::default()
+                },
+            ),
+            renderer.upload_material(
+                gpu,
+                &Material {
+                    albedo: [0.2, 0.6, 0.8, 1.0],
+                    ..Material::default()
+                },
+            ),
+            renderer.upload_material(
+                gpu,
+                &Material {
+                    albedo: [0.3, 0.8, 0.3, 1.0],
+                    ..Material::default()
+                },
+            ),
+            renderer.upload_material(
+                gpu,
+                &Material {
+                    albedo: [0.9, 0.7, 0.2, 1.0],
+                    ..Material::default()
+                },
+            ),
+        ];
+
+        let area_size = (self.num_entities as f32).sqrt() * 2.0;
+        let side = (self.num_entities as f32).sqrt().ceil() as u32;
+        let spacing = 2.5_f32;
         let mut rng = PcgRng::new(42);
-        let half = AREA_SIZE / 2.0;
 
-        for _ in 0..ENTITY_COUNT {
-            let x = rng.range(-half, half);
-            let y = rng.range(0.0, 10.0);
-            let z = rng.range(-half, half);
+        for i in 0..self.num_entities {
+            // Grid placement: entities rest on ground, spaced to avoid pile-up.
+            let row = i / side;
+            let col = i % side;
+            let x = (col as f32 - side as f32 / 2.0) * spacing;
+            let y = 0.0; // On the ground surface
+            let z = (row as f32 - side as f32 / 2.0) * spacing;
 
-            let vx = rng.range(-0.5, 0.5);
-            let vy = rng.range(-0.2, 0.2);
-            let vz = rng.range(-0.5, 0.5);
+            // Horizontal-only velocity — no vertical drop that causes pile-up.
+            let vx = rng.range(-0.2, 0.2);
+            let vy = 0.0;
+            let vz = rng.range(-0.2, 0.2);
+
+            let mat = materials[(i as usize) % materials.len()];
 
             let e = self
                 .world
@@ -132,7 +190,7 @@ impl StressTestApp {
         }
 
         // Ground plane (static)
-        let plane_mesh = renderer.upload_mesh(gpu, &Mesh::plane(AREA_SIZE * 2.0));
+        let plane_mesh = renderer.upload_mesh(gpu, &Mesh::plane(area_size * 2.0));
         let ground_mat = renderer.upload_material(gpu, &Material::green());
         let ground = self
             .world
@@ -145,7 +203,7 @@ impl StressTestApp {
             .insert(ground, MaterialRef { handle: ground_mat });
         self.world.insert(ground, PhysicsBody::fixed());
         self.world
-            .insert(ground, Collider::aabb(AREA_SIZE, 0.01, AREA_SIZE));
+            .insert(ground, Collider::aabb(area_size, 0.01, area_size));
 
         // Directional light
         self.world.spawn(DirectionalLight {
@@ -154,6 +212,16 @@ impl StressTestApp {
             intensity: 2.0,
             ..Default::default()
         });
+
+        if renderer.is_bindless() {
+            println!("[stress_test] Bindless materials ENABLED");
+        } else {
+            println!("[stress_test] Bindless materials not available — using traditional path");
+        }
+        println!(
+            "[stress_test] {} entities, area {:.0}×{:.0}",
+            self.num_entities, area_size, area_size
+        );
     }
 
     fn update_and_render(&mut self) {
@@ -162,44 +230,46 @@ impl StressTestApp {
         let elapsed = time.elapsed;
         let frame_count = time.frame_count;
 
-        // FPS tracking: print every FPS_PRINT_INTERVAL frames
+        // FPS tracking
         self.fps_frame_count += 1;
         if self.fps_frame_count >= FPS_PRINT_INTERVAL {
             let dt = elapsed - self.fps_last_printed;
             if dt > 0.0 {
                 self.current_fps = self.fps_frame_count as f32 / dt as f32;
                 println!(
-                    "[frame {}] {ENTITY_COUNT} entities | FPS: {:.1}",
-                    frame_count, self.current_fps
+                    "[frame {}] {} entities | FPS: {:.1}",
+                    frame_count, self.num_entities, self.current_fps
                 );
             }
             self.fps_frame_count = 0;
             self.fps_last_printed = elapsed;
 
-            // Update window title
             if let Some(gpu) = &self.gpu {
                 gpu.window.set_title(&format!(
-                    "Euca Engine -- Stress Test ({ENTITY_COUNT} entities) | FPS: {:.0}",
-                    self.current_fps
+                    "Euca Engine -- Stress Test ({} entities) | FPS: {:.0}",
+                    self.num_entities, self.current_fps
                 ));
             }
         }
 
-        // Step physics
-        physics_step_system(&mut self.world);
+        // Step physics (disable for render-only profiling with EUCA_NO_PHYSICS=1)
+        if std::env::var("EUCA_NO_PHYSICS").is_err() {
+            physics_step_system(&mut self.world);
+        }
 
         // Transform propagation
         euca_scene::transform_propagation_system(&mut self.world);
 
         // Orbit camera
+        let area_size = (self.num_entities as f32).sqrt() * 2.0;
         let elapsed_f32 = elapsed as f32;
         let cam = self.world.resource_mut::<Camera>().unwrap();
         let angle = elapsed_f32 * 0.15;
-        let radius = 60.0;
-        cam.eye = Vec3::new(angle.cos() * radius, 30.0, angle.sin() * radius);
+        let radius = area_size * 1.2;
+        cam.eye = Vec3::new(angle.cos() * radius, area_size * 0.6, angle.sin() * radius);
         cam.target = Vec3::new(0.0, 0.0, 0.0);
 
-        // Collect draw commands
+        // Direct extraction (bypassing RenderExtractor for debugging).
         let draw_commands: Vec<DrawCommand> = {
             let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
             query
@@ -229,6 +299,9 @@ impl StressTestApp {
         let gpu = self.gpu.as_ref().unwrap();
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw(gpu, &camera, &light, &ambient, &draw_commands);
+
+        // Advance ECS tick for change detection.
+        self.world.tick();
     }
 }
 

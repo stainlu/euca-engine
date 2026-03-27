@@ -311,11 +311,15 @@ struct Body {
 /// Spatial hash broadphase: returns candidate pairs (indices into bodies slice).
 /// Only pairs sharing at least one grid cell are returned. Eliminates most
 /// non-colliding pairs for O(n * avg_neighbors) instead of O(n^2).
+/// Maximum number of cells a single body can occupy in the spatial hash.
+/// Bodies larger than this (e.g. terrain planes) are tracked separately and
+/// tested against all other bodies, avoiding grid flooding.
+const MAX_CELLS_PER_BODY: i32 = 8;
+
 fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize)> {
     use std::collections::HashMap;
 
     if bodies.len() < 20 {
-        // For small body counts, O(n^2) is faster than hashing overhead
         let mut pairs = Vec::new();
         for i in 0..bodies.len() {
             for j in (i + 1)..bodies.len() {
@@ -327,9 +331,11 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
 
     let inv_cell = 1.0 / cell_size;
 
-    // Map: cell_key -> list of body indices. Pre-allocate for typical density.
     let mut grid: HashMap<(i32, i32, i32), Vec<usize>> =
         HashMap::with_capacity(bodies.len());
+
+    // Bodies whose AABB spans too many cells are tested against everyone.
+    let mut large_bodies: Vec<usize> = Vec::new();
 
     for (idx, body) in bodies.iter().enumerate() {
         let ext = shape_extent(&body.shape);
@@ -340,6 +346,16 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
         let min_z = ((body.pos.z - ext) * inv_cell).floor() as i32;
         let max_z = ((body.pos.z + ext) * inv_cell).floor() as i32;
 
+        let span_x = max_x - min_x + 1;
+        let span_y = max_y - min_y + 1;
+        let span_z = max_z - min_z + 1;
+
+        if span_x > MAX_CELLS_PER_BODY || span_y > MAX_CELLS_PER_BODY || span_z > MAX_CELLS_PER_BODY
+        {
+            large_bodies.push(idx);
+            continue;
+        }
+
         for cx in min_x..=max_x {
             for cy in min_y..=max_y {
                 for cz in min_z..=max_z {
@@ -349,8 +365,7 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
         }
     }
 
-    // Collect unique pairs using a sorted Vec instead of HashSet.
-    // For typical broadphase pair counts this is faster than hashing.
+    // Collect unique pairs from grid cells.
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     for cell_bodies in grid.values() {
         for i in 0..cell_bodies.len() {
@@ -362,6 +377,27 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
             }
         }
     }
+
+    // Large bodies generate pairs with every other body (cheap AABB pre-check).
+    for &li in &large_bodies {
+        let l_ext = shape_extent(&bodies[li].shape);
+        for (oi, other) in bodies.iter().enumerate() {
+            if oi == li {
+                continue;
+            }
+            let o_ext = shape_extent(&other.shape);
+            // Quick AABB overlap check before adding pair.
+            let dx = (bodies[li].pos.x - other.pos.x).abs();
+            let dy = (bodies[li].pos.y - other.pos.y).abs();
+            let dz = (bodies[li].pos.z - other.pos.z).abs();
+            let sx = l_ext + o_ext;
+            if dx <= sx && dy <= sx && dz <= sx {
+                let pair = if li < oi { (li, oi) } else { (oi, li) };
+                pairs.push(pair);
+            }
+        }
+    }
+
     pairs.sort_unstable();
     pairs.dedup();
     pairs

@@ -143,13 +143,20 @@ impl BindlessMaterialSystem {
 
         let initial_cap = (64 * std::mem::size_of::<BindlessMaterialGpu>()) as u64;
         let bind_group_layout = Self::create_layout(device, enabled);
-        // Initial bind group with just the fallback texture.
+        // Initial bind group: pad texture views to MAX_BINDLESS_TEXTURES with fallback.
+        let initial_views: Vec<&wgpu::TextureView> = if enabled {
+            (0..MAX_BINDLESS_TEXTURES as usize)
+                .map(|_| &fallback_view)
+                .collect()
+        } else {
+            vec![&fallback_view]
+        };
         let bind_group = Self::create_bind_group(
             device,
             &bind_group_layout,
             &material_buffer,
             &sampler,
-            &[&fallback_view],
+            &initial_views,
             enabled,
         );
 
