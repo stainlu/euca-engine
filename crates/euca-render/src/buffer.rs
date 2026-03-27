@@ -24,10 +24,14 @@ pub enum BufferKind {
 /// A GPU buffer that transparently optimizes for unified memory.
 ///
 /// Create with [`SmartBuffer::new`], write with [`SmartBuffer::write`].
-/// Access the underlying `wgpu::Buffer` via [`SmartBuffer::raw`] for
+/// Access the underlying buffer via [`SmartBuffer::raw`] for
 /// bind group creation, slicing, etc.
-pub struct SmartBuffer {
-    buffer: wgpu::Buffer,
+///
+/// Generic over [`RenderDevice`] — defaults to [`WgpuDevice`] for
+/// backward compatibility. When the Metal backend arrives, this type
+/// will work with `SmartBuffer<MetalDevice>` as well.
+pub struct SmartBuffer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    buffer: D::Buffer,
     /// True when the buffer was created with `MAP_WRITE` (unified memory path).
     unified: bool,
 }

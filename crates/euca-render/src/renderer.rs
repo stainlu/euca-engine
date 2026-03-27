@@ -160,9 +160,9 @@ impl RenderQuality {
     }
 }
 
-struct GpuMesh {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+struct GpuMesh<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    vertex_buffer: D::Buffer,
+    index_buffer: D::Buffer,
     index_count: u32,
 }
 
@@ -265,9 +265,9 @@ struct SceneUniforms {
     ibl_params: [f32; 4],
 }
 
-struct GpuMaterial {
-    bind_group: wgpu::BindGroup,
-    _buffer: wgpu::Buffer,
+struct GpuMaterial<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    bind_group: D::BindGroup,
+    _buffer: D::Buffer,
     is_transparent: bool,
 }
 
@@ -282,9 +282,9 @@ struct DrawBatch {
 const INITIAL_INSTANCE_CAPACITY: usize = 16384;
 
 /// State for the bindless rendering path.
-struct BindlessState {
+struct BindlessState<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     system: crate::bindless::BindlessMaterialSystem,
-    pipeline: wgpu::RenderPipeline,
+    pipeline: D::RenderPipeline,
 }
 const SHADOW_MAP_SIZE: u32 = 2048;
 const NUM_SHADOW_CASCADES: u32 = 3;
@@ -309,33 +309,33 @@ const CASCADE_ORTHO_SIZES: [f32; 3] = [8.0, 20.0, 50.0];
 /// 6. **Post-processing** -- SSAO, bloom, color grading, FXAA.
 /// 7. **TAA resolve** -- temporal anti-aliasing jitter and history blending.
 #[allow(dead_code)]
-pub struct Renderer {
-    pipeline: wgpu::RenderPipeline,
-    transparent_pipeline: wgpu::RenderPipeline,
-    instance_buffer: SmartBuffer,
-    instance_bind_group: wgpu::BindGroup,
-    instance_bgl: wgpu::BindGroupLayout,
-    scene_buffer: SmartBuffer,
-    scene_bgl: wgpu::BindGroupLayout,
-    scene_bind_group: wgpu::BindGroup,
-    material_bgl: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    materials: Vec<GpuMaterial>,
+pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::RenderPipeline,
+    transparent_pipeline: D::RenderPipeline,
+    instance_buffer: SmartBuffer<D>,
+    instance_bind_group: D::BindGroup,
+    instance_bgl: D::BindGroupLayout,
+    scene_buffer: SmartBuffer<D>,
+    scene_bgl: D::BindGroupLayout,
+    scene_bind_group: D::BindGroup,
+    material_bgl: D::BindGroupLayout,
+    sampler: D::Sampler,
+    materials: Vec<GpuMaterial<D>>,
     textures: TextureStore,
-    sky_pipeline: wgpu::RenderPipeline,
-    shadow_pipeline: wgpu::RenderPipeline,
-    shadow_map: wgpu::Texture,
-    shadow_map_view: wgpu::TextureView,
-    shadow_cascade_views: Vec<wgpu::TextureView>,
-    shadow_sampler: wgpu::Sampler,
-    shadow_depth_sampler: wgpu::Sampler,
-    shadow_instance_buffer: SmartBuffer,
-    shadow_instance_bind_group: wgpu::BindGroup,
-    msaa_hdr_view: wgpu::TextureView,
+    sky_pipeline: D::RenderPipeline,
+    shadow_pipeline: D::RenderPipeline,
+    shadow_map: D::Texture,
+    shadow_map_view: D::TextureView,
+    shadow_cascade_views: Vec<D::TextureView>,
+    shadow_sampler: D::Sampler,
+    shadow_depth_sampler: D::Sampler,
+    shadow_instance_buffer: SmartBuffer<D>,
+    shadow_instance_bind_group: D::BindGroup,
+    msaa_hdr_view: D::TextureView,
     #[allow(dead_code)]
-    msaa_hdr_texture: wgpu::Texture,
-    meshes: Vec<GpuMesh>,
-    depth_texture: wgpu::TextureView,
+    msaa_hdr_texture: D::Texture,
+    meshes: Vec<GpuMesh<D>>,
+    depth_texture: D::TextureView,
     depth_format: wgpu::TextureFormat,
     surface_format: wgpu::TextureFormat,
     /// Advanced post-process stack (SSAO, FXAA, color grading, bloom).
@@ -363,11 +363,11 @@ pub struct Renderer {
     /// GPU resources for decal projection volumes.
     decal_renderer: DecalRenderer,
     /// Per-decal uniform buffer (model_matrix + opacity), written before each draw.
-    decal_uniform_buffer: SmartBuffer,
+    decal_uniform_buffer: SmartBuffer<D>,
     /// Bind group layout for the per-decal uniform buffer.
-    decal_bgl: wgpu::BindGroupLayout,
+    decal_bgl: D::BindGroupLayout,
     /// Bind group exposing the per-decal uniform buffer to shaders.
-    decal_bind_group: wgpu::BindGroup,
+    decal_bind_group: D::BindGroup,
     /// Decal draw commands staged by the caller for the current frame.
     pending_decals: Vec<DecalDrawCommand>,
     /// GPU compute particle systems.
@@ -375,14 +375,14 @@ pub struct Renderer {
     /// Velocity buffer textures for TAA / motion blur / DoF.
     velocity_textures: crate::velocity::VelocityTextures,
     /// Fallback 1x1 black cubemap view (used when no IBL resources are set).
-    ibl_dummy_cube_view: wgpu::TextureView,
+    ibl_dummy_cube_view: D::TextureView,
     /// Fallback 1x1 black BRDF LUT view (used when no IBL resources are set).
-    ibl_dummy_brdf_view: wgpu::TextureView,
+    ibl_dummy_brdf_view: D::TextureView,
     /// Fallback trilinear sampler for IBL textures.
-    ibl_sampler: wgpu::Sampler,
+    ibl_sampler: D::Sampler,
     /// Optional bindless material system + render pipeline.
     /// When active, the opaque pass uses a single bind group for all materials.
-    bindless: Option<BindlessState>,
+    bindless: Option<BindlessState<D>>,
     /// Current capacity (in instances) of the main instance buffer.
     instance_capacity: usize,
     /// Current capacity (in instances) of the shadow instance buffer.
@@ -394,8 +394,8 @@ pub struct Renderer {
     /// IBL intensity multiplier (default 1.0).
     ibl_intensity: f32,
     // Keep fallback textures alive so their views remain valid.
-    _ibl_dummy_cube: wgpu::Texture,
-    _ibl_dummy_brdf: wgpu::Texture,
+    _ibl_dummy_cube: D::Texture,
+    _ibl_dummy_brdf: D::Texture,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
