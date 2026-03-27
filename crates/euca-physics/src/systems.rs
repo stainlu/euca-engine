@@ -138,36 +138,64 @@ fn integrate_positions(world: &mut World, dt: f32) {
             .collect()
     };
 
-    // Collect static/kinematic colliders for CCD raycasting
-    let statics: Vec<(Entity, Vec3, Collider)> = {
-        let query = Query::<(Entity, &LocalTransform, &Collider, &PhysicsBody)>::new(world);
-        query
-            .iter()
-            .filter(|(_, _, _, body)| body.body_type != RigidBodyType::Dynamic)
-            .map(|(e, lt, col, _)| (e, lt.0.translation, col.clone()))
-            .collect()
-    };
+    // Check if ANY mover needs CCD before building the expensive static grid.
+    let any_needs_ccd = movers.iter().any(|(entity, _, linear_vel, _, extent)| {
+        let speed = (*linear_vel * dt).length();
+        let is_dynamic = world
+            .get::<PhysicsBody>(*entity)
+            .is_some_and(|b| b.body_type == RigidBodyType::Dynamic);
+        is_dynamic && speed > extent * 0.5 && speed > 1e-6
+    });
 
-    // Build a spatial grid over statics for CCD filtering (avoids O(dynamic * static)).
-    let ccd_cell_size = DEFAULT_CELL_SIZE;
-    let ccd_inv_cell = 1.0 / ccd_cell_size;
-    let mut ccd_grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>> =
-        std::collections::HashMap::with_capacity(statics.len());
-    for (idx, (_, pos, col)) in statics.iter().enumerate() {
-        let ext = shape_extent(&col.shape);
-        let min_x = ((pos.x - ext) * ccd_inv_cell).floor() as i32;
-        let max_x = ((pos.x + ext) * ccd_inv_cell).floor() as i32;
-        let min_y = ((pos.y - ext) * ccd_inv_cell).floor() as i32;
-        let max_y = ((pos.y + ext) * ccd_inv_cell).floor() as i32;
-        let min_z = ((pos.z - ext) * ccd_inv_cell).floor() as i32;
-        let max_z = ((pos.z + ext) * ccd_inv_cell).floor() as i32;
-        for cx in min_x..=max_x {
-            for cy in min_y..=max_y {
-                for cz in min_z..=max_z {
-                    ccd_grid.entry((cx, cy, cz)).or_default().push(idx);
+    // Only build the CCD spatial grid if at least one mover is fast enough.
+    // This avoids O(cells) overhead from large static bodies (ground planes)
+    // when all entities are moving slowly.
+    let statics: Vec<(Entity, Vec3, Collider)>;
+    let ccd_grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>>;
+    let ccd_inv_cell: f32;
+
+    if any_needs_ccd {
+        statics = {
+            let query = Query::<(Entity, &LocalTransform, &Collider, &PhysicsBody)>::new(world);
+            query
+                .iter()
+                .filter(|(_, _, _, body)| body.body_type != RigidBodyType::Dynamic)
+                .map(|(e, lt, col, _)| (e, lt.0.translation, col.clone()))
+                .collect()
+        };
+
+        let ccd_cell_size = DEFAULT_CELL_SIZE;
+        ccd_inv_cell = 1.0 / ccd_cell_size;
+        let mut grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>> =
+            std::collections::HashMap::with_capacity(statics.len());
+        for (idx, (_, pos, col)) in statics.iter().enumerate() {
+            let (hx, hy, hz) = shape_half_extents(&col.shape);
+            let min_x = ((pos.x - hx) / ccd_cell_size).floor() as i32;
+            let max_x = ((pos.x + hx) / ccd_cell_size).floor() as i32;
+            let min_y = ((pos.y - hy) / ccd_cell_size).floor() as i32;
+            let max_y = ((pos.y + hy) / ccd_cell_size).floor() as i32;
+            let min_z = ((pos.z - hz) / ccd_cell_size).floor() as i32;
+            let max_z = ((pos.z + hz) / ccd_cell_size).floor() as i32;
+            // Cap cells per body to avoid grid flooding from large statics.
+            let span = (max_x - min_x + 1).max(1) as i64
+                * (max_y - min_y + 1).max(1) as i64
+                * (max_z - min_z + 1).max(1) as i64;
+            if span > (MAX_CELLS_PER_BODY as i64).pow(3) {
+                continue; // Skip; CCD will fall back to brute-force for this static
+            }
+            for cx in min_x..=max_x {
+                for cy in min_y..=max_y {
+                    for cz in min_z..=max_z {
+                        grid.entry((cx, cy, cz)).or_default().push(idx);
+                    }
                 }
             }
         }
+        ccd_grid = grid;
+    } else {
+        statics = Vec::new();
+        ccd_grid = std::collections::HashMap::new();
+        ccd_inv_cell = 1.0 / DEFAULT_CELL_SIZE;
     }
 
     for (entity, old_pos, linear_vel, angular_vel, extent) in movers {
@@ -283,7 +311,7 @@ fn adaptive_cell_size(bodies: &[Body]) -> f32 {
     (median * 2.0).clamp(1.0, 32.0)
 }
 
-/// Compute the AABB extents for any collider shape.
+/// Compute the max AABB half-extent for any collider shape.
 fn shape_extent(shape: &ColliderShape) -> f32 {
     match shape {
         ColliderShape::Aabb { hx, hy, hz } => hx.max(*hy).max(*hz),
@@ -292,6 +320,18 @@ fn shape_extent(shape: &ColliderShape) -> f32 {
             radius,
             half_height,
         } => radius + half_height,
+    }
+}
+
+/// Compute per-axis AABB half-extents for a collider shape.
+fn shape_half_extents(shape: &ColliderShape) -> (f32, f32, f32) {
+    match shape {
+        ColliderShape::Aabb { hx, hy, hz } => (*hx, *hy, *hz),
+        ColliderShape::Sphere { radius } => (*radius, *radius, *radius),
+        ColliderShape::Capsule {
+            radius,
+            half_height,
+        } => (*radius, radius + half_height, *radius),
     }
 }
 
@@ -378,20 +418,18 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
         }
     }
 
-    // Large bodies generate pairs with every other body (cheap AABB pre-check).
+    // Large bodies generate pairs with every other body (per-axis AABB check).
     for &li in &large_bodies {
-        let l_ext = shape_extent(&bodies[li].shape);
+        let (lhx, lhy, lhz) = shape_half_extents(&bodies[li].shape);
         for (oi, other) in bodies.iter().enumerate() {
             if oi == li {
                 continue;
             }
-            let o_ext = shape_extent(&other.shape);
-            // Quick AABB overlap check before adding pair.
+            let (ohx, ohy, ohz) = shape_half_extents(&other.shape);
             let dx = (bodies[li].pos.x - other.pos.x).abs();
             let dy = (bodies[li].pos.y - other.pos.y).abs();
             let dz = (bodies[li].pos.z - other.pos.z).abs();
-            let sx = l_ext + o_ext;
-            if dx <= sx && dy <= sx && dz <= sx {
+            if dx <= lhx + ohx && dy <= lhy + ohy && dz <= lhz + ohz {
                 let pair = if li < oi { (li, oi) } else { (oi, li) };
                 pairs.push(pair);
             }
@@ -473,34 +511,34 @@ fn build_islands(
 
     let mut uf = UnionFind::new(n);
 
-    // Union bodies connected by broadphase pairs (skip static-static pairs).
+    // Union only dynamic-dynamic (or kinematic) pairs. Static bodies are
+    // immovable, so two dynamics touching the same static wall are independent
+    // — they should NOT be merged into one island.
     for &(i, j) in candidate_pairs {
-        if bodies[i].body_type == RigidBodyType::Static
-            && bodies[j].body_type == RigidBodyType::Static
-        {
-            continue;
+        let i_static = bodies[i].body_type == RigidBodyType::Static;
+        let j_static = bodies[j].body_type == RigidBodyType::Static;
+        if i_static || j_static {
+            continue; // Don't union through statics
         }
         uf.union(i, j);
     }
 
-    // Group body indices by root.
+    // Build islands from dynamic bodies only. Static bodies are referenced
+    // via pairs but don't belong to islands themselves.
     let mut root_to_island: std::collections::HashMap<usize, usize> =
         std::collections::HashMap::new();
     let mut islands: Vec<Island> = Vec::new();
 
-    // Map: global body index → (island_index, local_index)
-    let mut global_to_local: Vec<(usize, usize)> = vec![(0, 0); n];
+    // Map: global body index → (island_index, local_index).
+    // Static bodies get a sentinel value and are added to islands on demand.
+    const NO_ISLAND: (usize, usize) = (usize::MAX, usize::MAX);
+    let mut global_to_local: Vec<(usize, usize)> = vec![NO_ISLAND; n];
 
+    // First pass: assign dynamic/kinematic bodies to islands.
     for idx in 0..n {
-        // Skip isolated static bodies — they have no pairs and need no solving.
         if bodies[idx].body_type == RigidBodyType::Static {
-            // Only include statics that are connected to dynamic bodies.
-            let root = uf.find(idx);
-            if !root_to_island.contains_key(&root) {
-                // Check if any dynamic body shares this root — handled below.
-            }
+            continue;
         }
-
         let root = uf.find(idx);
         let island_idx = if let Some(&existing) = root_to_island.get(&root) {
             existing
@@ -518,19 +556,54 @@ fn build_islands(
         global_to_local[idx] = (island_idx, local_idx);
     }
 
-    // Distribute pairs to their island with local indices.
+    // Distribute pairs to islands. For dynamic-static pairs, the pair goes
+    // to the dynamic body's island, and the static body is added to that
+    // island if not already present.
     for &(i, j) in candidate_pairs {
-        if bodies[i].body_type == RigidBodyType::Static
-            && bodies[j].body_type == RigidBodyType::Static
-        {
+        let i_static = bodies[i].body_type == RigidBodyType::Static;
+        let j_static = bodies[j].body_type == RigidBodyType::Static;
+        if i_static && j_static {
             continue;
         }
-        let (island_idx, local_i) = global_to_local[i];
-        let (_, local_j) = global_to_local[j];
+
+        // Determine which island this pair belongs to (from the dynamic body).
+        let island_idx = if !i_static {
+            global_to_local[i].0
+        } else {
+            global_to_local[j].0
+        };
+        if island_idx == usize::MAX {
+            continue; // Shouldn't happen, but guard against it.
+        }
+
+        // Ensure both bodies have local indices in this island.
+        // Static bodies may appear in multiple islands (one per dynamic neighbor).
+        let ensure_local = |idx: usize,
+                            islands: &mut Vec<Island>,
+                            g2l: &mut Vec<(usize, usize)>|
+         -> usize {
+            let (existing_island, existing_local) = g2l[idx];
+            if existing_island == island_idx {
+                return existing_local;
+            }
+            // Add body to this island (static bodies can appear in multiple).
+            let local = islands[island_idx].body_indices.len();
+            islands[island_idx].body_indices.push(idx);
+            if existing_island == usize::MAX {
+                // First island assignment for this body.
+                g2l[idx] = (island_idx, local);
+            }
+            // Note: for statics in multiple islands, g2l only tracks the first.
+            // We return the local index directly.
+            local
+        };
+
+        let local_i = ensure_local(i, &mut islands, &mut global_to_local);
+        let local_j = ensure_local(j, &mut islands, &mut global_to_local);
         islands[island_idx].pairs.push((local_i, local_j));
     }
 
-    // Remove empty islands (isolated statics with no dynamic neighbors).
+    // Remove empty islands (dynamics with no collision pairs).
     islands.retain(|island| !island.pairs.is_empty());
 
     islands
