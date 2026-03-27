@@ -19,3 +19,11 @@ quinn = "0.11"
 rustls = { version = "0.23", features = ["ring"] }
 rcgen = "0.13"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+bincode = "1"
+
+[[bench]]
+name = "net_bench"
+harness = false
