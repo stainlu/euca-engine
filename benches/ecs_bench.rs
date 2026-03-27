@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use euca_ecs::{Query, World};
+use euca_ecs::{Query, Schedule, World};
 
 // ── Components ──────────────────────────────────────────────────────────────
 
@@ -579,6 +579,275 @@ fn bench_despawn(c: &mut Criterion) {
     });
 }
 
+// ── Additional marker components ────────────────────────────────────────────
+
+/// Zero-sized marker tags used to build entities with varying component counts.
+#[derive(Clone, Copy)]
+struct Tag1;
+#[derive(Clone, Copy)]
+struct Tag2;
+
+// ── Archetype column lookup benchmark ──────────────────────────────────────
+//
+// Creates archetypes with varying numbers of components (2, 5, 10, 20) and
+// benchmarks `World::get::<Position>(entity)`. This validates that binary
+// search over archetype columns scales logarithmically with column count.
+
+/// Attach `n` tag components to an entity to produce an archetype with
+/// Position + n tags. We reuse T00..T19 from the fragmentation section.
+fn spawn_entity_with_n_components(world: &mut World, n: usize) -> euca_ecs::Entity {
+    let e = world.spawn(Position {
+        x: 1.0,
+        y: 2.0,
+        z: 3.0,
+    });
+    // Each inserted tag creates a broader archetype: Position + T00 + T01 + ...
+    // We insert up to n-1 tags (Position itself is the first component).
+    let tags_needed = n.saturating_sub(1);
+    if tags_needed > 0 {
+        world.insert(e, T00);
+    }
+    if tags_needed > 1 {
+        world.insert(e, T01);
+    }
+    if tags_needed > 2 {
+        world.insert(e, T02);
+    }
+    if tags_needed > 3 {
+        world.insert(e, T03);
+    }
+    if tags_needed > 4 {
+        world.insert(e, T04);
+    }
+    if tags_needed > 5 {
+        world.insert(e, T05);
+    }
+    if tags_needed > 6 {
+        world.insert(e, T06);
+    }
+    if tags_needed > 7 {
+        world.insert(e, T07);
+    }
+    if tags_needed > 8 {
+        world.insert(e, T08);
+    }
+    if tags_needed > 9 {
+        world.insert(e, T09);
+    }
+    if tags_needed > 10 {
+        world.insert(e, T10);
+    }
+    if tags_needed > 11 {
+        world.insert(e, T11);
+    }
+    if tags_needed > 12 {
+        world.insert(e, T12);
+    }
+    if tags_needed > 13 {
+        world.insert(e, T13);
+    }
+    if tags_needed > 14 {
+        world.insert(e, T14);
+    }
+    if tags_needed > 15 {
+        world.insert(e, T15);
+    }
+    if tags_needed > 16 {
+        world.insert(e, T16);
+    }
+    if tags_needed > 17 {
+        world.insert(e, T17);
+    }
+    if tags_needed > 18 {
+        world.insert(e, T18);
+    }
+    e
+}
+
+fn bench_archetype_column_lookup(c: &mut Criterion) {
+    let mut group = c.benchmark_group("archetype_column_lookup");
+
+    for num_components in [2usize, 5, 10, 20] {
+        let mut world = World::new();
+        let entity = spawn_entity_with_n_components(&mut world, num_components);
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{num_components}_components")),
+            &num_components,
+            |b, _| {
+                b.iter(|| {
+                    let pos = world.get::<Position>(entity);
+                    black_box(pos);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ── Parallel query iteration benchmark ─────────────────────────────────────
+//
+// Compares `World::par_for_each<Position>` (rayon parallel) vs sequential
+// `Query::<&Position>::iter()` at different entity counts.
+
+fn bench_parallel_query_iteration(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parallel_query_iteration");
+
+    for count in [1_000u32, 10_000, 100_000] {
+        let mut world = World::new();
+        spawn_three_component_entities(&mut world, count);
+
+        group.bench_with_input(
+            BenchmarkId::new("sequential", format!("{count}")),
+            &count,
+            |b, &n| {
+                b.iter(|| {
+                    let query = Query::<&Position>::new(&world);
+                    let mut total = 0u32;
+                    for pos in query.iter() {
+                        black_box(pos);
+                        total += 1;
+                    }
+                    assert_eq!(total, n);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("par_for_each", format!("{count}")),
+            &count,
+            |b, _| {
+                b.iter(|| {
+                    world.par_for_each::<Position>(|entity, pos| {
+                        black_box((entity, pos));
+                    });
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ── World tick schedule benchmark ──────────────────────────────────────────
+//
+// Creates a Schedule with 5 systems and benchmarks `schedule.run()` at
+// different entity counts. Measures total per-tick overhead including
+// system dispatch, query matching, and iteration.
+
+fn bench_world_tick_schedule(c: &mut Criterion) {
+    let mut group = c.benchmark_group("world_tick_schedule");
+
+    for count in [1_000u32, 10_000] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{count}")),
+            &count,
+            |b, &n| {
+                b.iter_custom(|iters| {
+                    let mut world = World::new();
+                    spawn_three_component_entities(&mut world, n);
+
+                    let mut schedule = Schedule::new();
+                    // System 1: read Position
+                    schedule.add_system(|world: &mut World| {
+                        let query = Query::<&Position>::new(world);
+                        for pos in query.iter() {
+                            black_box(pos);
+                        }
+                    });
+                    // System 2: read Velocity
+                    schedule.add_system(|world: &mut World| {
+                        let query = Query::<&Velocity>::new(world);
+                        for vel in query.iter() {
+                            black_box(vel);
+                        }
+                    });
+                    // System 3: read Health
+                    schedule.add_system(|world: &mut World| {
+                        let query = Query::<&Health>::new(world);
+                        for hp in query.iter() {
+                            black_box(hp);
+                        }
+                    });
+                    // System 4: read Position + Velocity (movement-like)
+                    schedule.add_system(|world: &mut World| {
+                        let query = Query::<(&Position, &Velocity)>::new(world);
+                        for (pos, vel) in query.iter() {
+                            black_box((pos, vel));
+                        }
+                    });
+                    // System 5: read Position + Health (damage-range-like)
+                    schedule.add_system(|world: &mut World| {
+                        let query = Query::<(&Position, &Health)>::new(world);
+                        for (pos, hp) in query.iter() {
+                            black_box((pos, hp));
+                        }
+                    });
+
+                    let start = std::time::Instant::now();
+                    for _ in 0..iters {
+                        schedule.run(&mut world);
+                    }
+                    start.elapsed()
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ── Entity spawn batch benchmark ───────────────────────────────────────────
+//
+// Measures the cost of spawning N entities, each with 5 components
+// (Position, Velocity, Health, Tag1, Tag2). This benchmarks archetype
+// lookup, column allocation, and entity-to-archetype bookkeeping at scale.
+
+/// Spawn a single entity with 5 components: Position, Velocity, Health, Tag1, Tag2.
+fn spawn_five_component_entity(world: &mut World, i: u32) {
+    let e = world.spawn(Position {
+        x: i as f32,
+        y: 0.0,
+        z: 0.0,
+    });
+    world.insert(
+        e,
+        Velocity {
+            dx: 1.0,
+            dy: 0.0,
+            dz: 0.0,
+        },
+    );
+    world.insert(
+        e,
+        Health {
+            current: 100.0,
+            max: 100.0,
+        },
+    );
+    world.insert(e, Tag1);
+    world.insert(e, Tag2);
+}
+
+fn bench_entity_spawn_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("entity_spawn_batch");
+
+    for count in [100u32, 1_000, 10_000] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{count}")),
+            &count,
+            |b, &n| {
+                b.iter(|| {
+                    let mut world = World::new();
+                    for i in 0..n {
+                        spawn_five_component_entity(&mut world, i);
+                    }
+                    black_box(&world);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 // ── Criterion harness ───────────────────────────────────────────────────────
 
 criterion_group!(
@@ -589,5 +858,9 @@ criterion_group!(
     bench_change_detection_overhead,
     bench_archetype_fragmentation,
     bench_despawn,
+    bench_archetype_column_lookup,
+    bench_parallel_query_iteration,
+    bench_world_tick_schedule,
+    bench_entity_spawn_batch,
 );
 criterion_main!(benches);
