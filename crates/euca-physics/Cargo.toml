@@ -12,6 +12,7 @@ euca-math = { path = "../euca-math", features = ["reflect"] }
 euca-reflect = { path = "../euca-reflect" }
 euca-scene = { path = "../euca-scene" }
 log = "0.4"
+rayon = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

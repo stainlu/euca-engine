@@ -370,6 +370,219 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
 /// Number of constraint solver iterations. More = more stable stacking.
 const SOLVER_ITERATIONS: usize = 4;
 
+/// Minimum island size to justify rayon overhead. Smaller islands run inline.
+const PARALLEL_ISLAND_THRESHOLD: usize = 64;
+
+// ───────────────────────────── Union-Find ─────────────────────────────
+
+/// Disjoint-set (Union-Find) with path compression and union-by-rank.
+struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
+    }
+
+    fn find(&mut self, mut x: usize) -> usize {
+        while self.parent[x] != x {
+            self.parent[x] = self.parent[self.parent[x]]; // path halving
+            x = self.parent[x];
+        }
+        x
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra == rb {
+            return;
+        }
+        // Union by rank
+        match self.rank[ra].cmp(&self.rank[rb]) {
+            std::cmp::Ordering::Less => self.parent[ra] = rb,
+            std::cmp::Ordering::Greater => self.parent[rb] = ra,
+            std::cmp::Ordering::Equal => {
+                self.parent[rb] = ra;
+                self.rank[ra] += 1;
+            }
+        }
+    }
+}
+
+// ───────────────────────────── Island ─────────────────────────────
+
+/// A connected component of interacting bodies.
+struct Island {
+    /// Indices into the parent `bodies` slice.
+    body_indices: Vec<usize>,
+    /// Pairs as (local_i, local_j) into `body_indices`.
+    pairs: Vec<(usize, usize)>,
+}
+
+/// Build islands from bodies and broadphase pairs using union-find.
+fn build_islands(
+    bodies: &[Body],
+    candidate_pairs: &[(usize, usize)],
+) -> Vec<Island> {
+    let n = bodies.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let mut uf = UnionFind::new(n);
+
+    // Union bodies connected by broadphase pairs (skip static-static pairs).
+    for &(i, j) in candidate_pairs {
+        if bodies[i].body_type == RigidBodyType::Static
+            && bodies[j].body_type == RigidBodyType::Static
+        {
+            continue;
+        }
+        uf.union(i, j);
+    }
+
+    // Group body indices by root.
+    let mut root_to_island: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
+    let mut islands: Vec<Island> = Vec::new();
+
+    // Map: global body index → (island_index, local_index)
+    let mut global_to_local: Vec<(usize, usize)> = vec![(0, 0); n];
+
+    for idx in 0..n {
+        // Skip isolated static bodies — they have no pairs and need no solving.
+        if bodies[idx].body_type == RigidBodyType::Static {
+            // Only include statics that are connected to dynamic bodies.
+            let root = uf.find(idx);
+            if !root_to_island.contains_key(&root) {
+                // Check if any dynamic body shares this root — handled below.
+            }
+        }
+
+        let root = uf.find(idx);
+        let island_idx = if let Some(&existing) = root_to_island.get(&root) {
+            existing
+        } else {
+            let new_idx = islands.len();
+            root_to_island.insert(root, new_idx);
+            islands.push(Island {
+                body_indices: Vec::new(),
+                pairs: Vec::new(),
+            });
+            new_idx
+        };
+        let local_idx = islands[island_idx].body_indices.len();
+        islands[island_idx].body_indices.push(idx);
+        global_to_local[idx] = (island_idx, local_idx);
+    }
+
+    // Distribute pairs to their island with local indices.
+    for &(i, j) in candidate_pairs {
+        if bodies[i].body_type == RigidBodyType::Static
+            && bodies[j].body_type == RigidBodyType::Static
+        {
+            continue;
+        }
+        let (island_idx, local_i) = global_to_local[i];
+        let (_, local_j) = global_to_local[j];
+        islands[island_idx].pairs.push((local_i, local_j));
+    }
+
+    // Remove empty islands (isolated statics with no dynamic neighbors).
+    islands.retain(|island| !island.pairs.is_empty());
+
+    islands
+}
+
+/// Per-island collision event: stores global body data needed for velocity response.
+struct DeferredVelocityResponse {
+    entity_a: Entity,
+    type_a: RigidBodyType,
+    entity_b: Entity,
+    type_b: RigidBodyType,
+    normal: Vec3,
+    restitution: f32,
+    friction: f32,
+    inv_mass_a: f32,
+    inv_mass_b: f32,
+}
+
+/// Solve a single island's position constraints. Returns collision events and
+/// deferred velocity responses (which need `&mut World` access).
+fn solve_island(
+    bodies: &mut [Body],
+    island: &Island,
+    events: &mut Vec<CollisionEvent>,
+    velocity_responses: &mut Vec<DeferredVelocityResponse>,
+) {
+    for iteration in 0..SOLVER_ITERATIONS {
+        for &(li, lj) in &island.pairs {
+            let gi = island.body_indices[li];
+            let gj = island.body_indices[lj];
+
+            // Layer/mask filtering
+            if !layers_interact(
+                bodies[gi].layer,
+                bodies[gi].mask,
+                bodies[gj].layer,
+                bodies[gj].mask,
+            ) {
+                continue;
+            }
+
+            if let Some((normal, depth)) = intersect_shapes(
+                bodies[gi].pos,
+                &bodies[gi].shape,
+                bodies[gj].pos,
+                &bodies[gj].shape,
+            ) {
+                // Emit collision event on the first iteration only
+                if iteration == 0 {
+                    events.push(CollisionEvent {
+                        entity_a: bodies[gi].entity,
+                        entity_b: bodies[gj].entity,
+                        normal,
+                        penetration: depth,
+                    });
+                }
+
+                // Mass-weighted position correction
+                let inv_mass_a = bodies[gi].inverse_mass;
+                let inv_mass_b = bodies[gj].inverse_mass;
+                let total_inv_mass = inv_mass_a + inv_mass_b;
+
+                if total_inv_mass > 0.0 {
+                    let ratio_a = inv_mass_a / total_inv_mass;
+                    let ratio_b = inv_mass_b / total_inv_mass;
+                    bodies[gi].pos = bodies[gi].pos + normal * (-depth * ratio_a);
+                    bodies[gj].pos = bodies[gj].pos + normal * (depth * ratio_b);
+                }
+
+                // Defer velocity response to after parallel solve (needs &mut World)
+                if iteration == SOLVER_ITERATIONS - 1 {
+                    velocity_responses.push(DeferredVelocityResponse {
+                        entity_a: bodies[gi].entity,
+                        type_a: bodies[gi].body_type,
+                        entity_b: bodies[gj].entity,
+                        type_b: bodies[gj].body_type,
+                        normal,
+                        restitution: bodies[gi].restitution * bodies[gj].restitution,
+                        friction: (bodies[gi].friction * bodies[gj].friction).sqrt(),
+                        inv_mass_a,
+                        inv_mass_b,
+                    });
+                }
+            }
+        }
+    }
+}
+
 fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Joint]) {
     // ── Iterative constraint solver ──
     // Collect bodies once, iterate position corrections in-place,
@@ -381,6 +594,10 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
             .iter()
             .filter_map(|(e, lt, col)| {
                 let body = world.get::<PhysicsBody>(e)?;
+                // Skip sleeping bodies in the solver entirely
+                if world.get::<Sleeping>(e).is_some() {
+                    return None;
+                }
                 let inv_mass = world
                     .get::<Mass>(e)
                     .map(|m| m.inverse_mass)
@@ -406,81 +623,92 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
             .collect()
     };
 
-    // Collect collision events to emit after solver
-    let mut events: Vec<CollisionEvent> = Vec::new();
-
-    // Compute broadphase once: position corrections per solver iteration are
-    // sub-centimeter, so pairs are stable across iterations. This reduces
-    // broadphase cost from O(4 * N * neighbors) to O(N * neighbors).
+    // Compute broadphase once.
     let cell_size = adaptive_cell_size(&bodies);
     let candidate_pairs = broadphase_spatial_hash(&bodies, cell_size);
 
-    for iteration in 0..SOLVER_ITERATIONS {
-        for &(i, j) in &candidate_pairs {
-            if bodies[i].body_type == RigidBodyType::Static
-                && bodies[j].body_type == RigidBodyType::Static
-            {
-                continue;
-            }
+    // Build islands (connected components of interacting bodies).
+    let islands = build_islands(&bodies, &candidate_pairs);
 
-            // Layer/mask filtering
-            if !layers_interact(
-                bodies[i].layer,
-                bodies[i].mask,
-                bodies[j].layer,
-                bodies[j].mask,
-            ) {
-                continue;
-            }
+    // Count total active bodies across all non-trivial islands to decide
+    // whether parallel dispatch is worthwhile.
+    let total_active: usize = islands.iter().map(|isl| isl.body_indices.len()).sum();
 
-            if let Some((normal, depth)) = intersect_shapes(
-                bodies[i].pos,
-                &bodies[i].shape,
-                bodies[j].pos,
-                &bodies[j].shape,
-            ) {
-                // Emit collision event on the first iteration only
-                if iteration == 0 {
-                    events.push(CollisionEvent {
-                        entity_a: bodies[i].entity,
-                        entity_b: bodies[j].entity,
-                        normal,
-                        penetration: depth,
-                    });
-                }
+    // Solve islands — in parallel if enough work to justify it.
+    let mut all_events: Vec<CollisionEvent> = Vec::new();
+    let mut all_velocity_responses: Vec<DeferredVelocityResponse> = Vec::new();
 
-                // Mass-weighted position correction
-                let inv_mass_a = bodies[i].inverse_mass;
-                let inv_mass_b = bodies[j].inverse_mass;
-                let total_inv_mass = inv_mass_a + inv_mass_b;
+    if total_active >= PARALLEL_ISLAND_THRESHOLD && islands.len() > 1 {
+        // Solve islands concurrently using rayon::in_place_scope.
+        // Safety: each island operates on disjoint body indices, so no two
+        // islands write the same body position.
+        /// Wrapper that makes a `*mut [Body]` fat pointer `Send + Sync`.
+        /// Safety: caller ensures no two threads write the same index.
+        struct SendSlice {
+            ptr: *mut Body,
+            len: usize,
+        }
+        unsafe impl Send for SendSlice {}
+        unsafe impl Sync for SendSlice {}
 
-                if total_inv_mass > 0.0 {
-                    let ratio_a = inv_mass_a / total_inv_mass;
-                    let ratio_b = inv_mass_b / total_inv_mass;
-                    bodies[i].pos = bodies[i].pos + normal * (-depth * ratio_a);
-                    bodies[j].pos = bodies[j].pos + normal * (depth * ratio_b);
-                }
-
-                // Velocity correction (only on last iteration to avoid over-damping)
-                if iteration == SOLVER_ITERATIONS - 1 {
-                    let restitution = bodies[i].restitution * bodies[j].restitution;
-                    let friction = (bodies[i].friction * bodies[j].friction).sqrt();
-
-                    apply_velocity_response(
-                        world,
-                        bodies[i].entity,
-                        bodies[i].body_type,
-                        bodies[j].entity,
-                        bodies[j].body_type,
-                        normal,
-                        restitution,
-                        friction,
-                        inv_mass_a,
-                        inv_mass_b,
-                    );
-                }
+        impl SendSlice {
+            /// Reconstruct the mutable slice. Caller must ensure exclusive access.
+            unsafe fn get(&self) -> &mut [Body] {
+                unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
             }
         }
+
+        let shared = SendSlice {
+            ptr: bodies.as_mut_ptr(),
+            len: bodies.len(),
+        };
+
+        // Pre-allocate per-island result storage.
+        let mut island_results: Vec<(Vec<CollisionEvent>, Vec<DeferredVelocityResponse>)> =
+            islands.iter().map(|_| (Vec::new(), Vec::new())).collect();
+
+        rayon::in_place_scope(|s| {
+            for (island, result) in islands.iter().zip(island_results.iter_mut()) {
+                let (ref mut events, ref mut responses) = *result;
+                s.spawn(|_| {
+                    // Safety: islands have disjoint body_indices, so no two
+                    // tasks write the same Body entry.
+                    let bodies_slice = unsafe { shared.get() };
+                    solve_island(bodies_slice, island, events, responses);
+                });
+            }
+        });
+
+        for (events, responses) in island_results {
+            all_events.extend(events);
+            all_velocity_responses.extend(responses);
+        }
+    } else {
+        // Sequential: solve all islands inline.
+        for island in &islands {
+            solve_island(
+                &mut bodies,
+                island,
+                &mut all_events,
+                &mut all_velocity_responses,
+            );
+        }
+    }
+
+    // Apply deferred velocity responses (needs &mut World).
+    for resp in &all_velocity_responses {
+        apply_velocity_response(
+            world,
+            resp.entity_a,
+            resp.type_a,
+            resp.entity_b,
+            resp.type_b,
+            resp.normal,
+            resp.restitution,
+            resp.friction,
+            resp.inv_mass_a,
+            resp.inv_mass_b,
+        );
     }
 
     // ── Solve joint constraints (using body positions from the solver) ──
@@ -528,7 +756,7 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
     }
 
     // Emit collision events
-    for event in events {
+    for event in all_events {
         world.send_event(event);
     }
 }
