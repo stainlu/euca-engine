@@ -14,3 +14,10 @@ euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
 euca-asset = { path = "../euca-asset" }
 log = "0.4"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "animation_bench"
+harness = false
