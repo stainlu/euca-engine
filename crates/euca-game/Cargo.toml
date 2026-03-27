@@ -30,6 +30,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 pollster = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "net"] }
+mimalloc = "0.1"
 
 [[bin]]
 name = "euca-game"
@@ -46,3 +47,10 @@ path = "../../examples/client.rs"
 [[example]]
 name = "dota_client"
 path = "../../examples/dota_client.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "engine_bench"
+harness = false
