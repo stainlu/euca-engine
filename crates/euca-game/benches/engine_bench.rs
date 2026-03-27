@@ -147,10 +147,32 @@ fn headless_tick_1k_gameplay(c: &mut Criterion) {
     });
 }
 
+/// Benchmark D: 50 000 entities with physics + transform propagation.
+///
+/// This is the primary scaling target for the engine. Uses reduced sample
+/// size since each iteration takes ~200ms+.
+fn headless_tick_50k(c: &mut Criterion) {
+    let mut group = c.benchmark_group("headless_tick_50k");
+    group.sample_size(10);
+
+    let mut world = build_headless_world();
+    spawn_physics_grid(&mut world, 50_000);
+    tick_physics(&mut world);
+
+    group.bench_function("50000", |b| {
+        b.iter(|| {
+            tick_physics(black_box(&mut world));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     headless_tick_1k,
     headless_tick_10k,
     headless_tick_1k_gameplay,
+    headless_tick_50k,
 );
 criterion_main!(benches);

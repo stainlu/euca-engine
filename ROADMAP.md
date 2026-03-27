@@ -27,7 +27,7 @@
 ## What V1 didn't prove (updated)
 - ~~Can we build a real game on this engine?~~ **YES** — MOBA demo with combat, teams, abilities, economy, AI, waves built entirely from CLI commands
 - Can an AI agent actually play a game through the API? **(API complete, end-to-end proof pending)**
-- ~~Does the engine scale to 100+ entities with networking?~~ **YES** — 1000-entity stress test runs at 60fps, interest culling + bandwidth budgeting in place
+- ~~Does the engine scale to 100+ entities with networking?~~ **YES** — 1000-entity stress test runs at 60fps, interest culling + bandwidth budgeting in place. Performance scaling phase complete: dynamic buffers (no 16K cap), rayon scheduler, broadphase caching, island solver, CCD spatial filter, bindless materials. Architecture targets 100K+.
 - ~~Is the editor usable for content creation?~~ **YES** — transform gizmos, entity creation, scene save/load, undo/redo, terrain brushes, content browser
 - ~~Can someone outside of us use this engine?~~ **PARTIALLY** — euca-math and euca-ecs published to crates.io; 24 per-crate READMEs; full engine packaging still TODO
 

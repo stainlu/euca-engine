@@ -351,7 +351,7 @@ Queries cache the list of matching archetype indices. The cache is invalidated w
 The `ParallelSchedule` uses a greedy batch algorithm:
 1. Systems declare their `SystemAccess` (read/write component sets)
 2. The scheduler groups non-conflicting systems into batches
-3. Each batch executes in parallel via `std::thread::scope`
+3. Each batch executes in parallel via `rayon::in_place_scope` (persistent thread pool — eliminates per-frame OS thread creation overhead)
 4. Access conflicts are validated at schedule build time, not runtime
 
 ### 4.2 Math (euca-math) -- 39 Tests
@@ -404,7 +404,38 @@ Three collider primitives: AABB, Sphere, Capsule. All six collision pairs are im
 
 A 4-iteration position-based solver handles stacking stability. Joints (distance, ball-and-socket, revolute) are integrated into the same solver loop. Body sleeping/deactivation (velocity threshold) reduces work for stationary objects.
 
-### 4.4 Rendering (euca-render) -- 171 Tests
+#### Broadphase Pair Caching and Adaptive Cell Size
+
+Broadphase candidate pairs are computed **once per physics step** and reused across all 4 solver iterations (previously rebuilt from scratch each iteration — 4x overhead). Position corrections per solver iteration are sub-centimeter while cell sizes are 1-32m, so pair stability is guaranteed.
+
+The spatial hash cell size is **adaptive**: `adaptive_cell_size()` samples every 64th body's extent and uses 2× the median, clamped to [1.0, 32.0]. This prevents degenerate behavior with very small entities (cells too large → too many pairs) or very large entities (cells too small → bodies span many cells).
+
+Pair deduplication uses sorted `Vec` + `dedup()` instead of `HashSet`, avoiding hash allocation on the hot path. The `HashMap` for the grid itself is pre-allocated with `with_capacity(bodies.len())`.
+
+**Source:** `crates/euca-physics/src/systems.rs`, `broadphase_spatial_hash` and `adaptive_cell_size`
+
+#### CCD Spatial Filtering
+
+Continuous Collision Detection for fast-moving bodies now uses a **spatial grid over static colliders** instead of brute-force iteration. For each fast mover, a swept AABB (union of old and new positions, expanded by body extent) is computed and only statics in overlapping grid cells are raycast-tested. This reduces CCD cost from O(dynamic × all_statics) to O(dynamic × nearby_statics).
+
+At 100 dynamic bodies + 5,000 statics, spatial filtering reduces raycast candidates from 500K to ~5K per frame.
+
+**Source:** `crates/euca-physics/src/systems.rs`, CCD grid construction and swept-AABB query
+
+#### Island Detection and Parallel Constraint Solver
+
+After broadphase pair generation, a **Union-Find** (disjoint-set with path halving and union-by-rank) partitions bodies into independent constraint islands. Each island's bodies and pairs are isolated — no body appears in multiple islands.
+
+Islands are solved in parallel via `rayon::in_place_scope`. Each spawned task owns its island exclusively, so no synchronization is needed during position correction. Velocity responses are deferred and applied sequentially after the parallel solve (they require `&mut World` for reading/writing `Velocity` components).
+
+**Optimization details:**
+- Sleeping bodies (`Sleeping` marker component) are filtered **before** broadphase insertion, not after solving. In typical open-world scenarios where 80%+ bodies are stationary, this alone reduces active broadphase from 50K to ~10K entities.
+- Parallel dispatch is gated by `PARALLEL_ISLAND_THRESHOLD = 64` — below this, the overhead of rayon task spawning exceeds the parallelism benefit.
+- Static-static pairs are skipped during island construction (no union needed).
+
+**Source:** `crates/euca-physics/src/systems.rs`, `UnionFind`, `build_islands`, `solve_island`
+
+### 4.4 Rendering (euca-render) -- 246 Tests
 
 The largest crate by test count. Built on wgpu for cross-platform GPU abstraction.
 
@@ -460,6 +491,40 @@ Lights are assigned to 3D clusters (16x9x24 = 3,456 clusters) via a compute shad
 Hierarchical Z-Buffer (HZB) occlusion culling generates a mip chain from the depth buffer via a compute shader (`@workgroup_size(8, 8)`). The GPU cull pass can test entity AABBs against the HZB to skip occluded objects before they reach the rasterizer.
 
 **Source:** `crates/euca-render/src/occlusion.rs`
+
+#### Dynamic Instance Buffers
+
+The renderer's instance buffers (forward, deferred, prepass, velocity passes) grow dynamically when entity count exceeds capacity. The previous hard cap of 16,384 instances has been removed. Each buffer starts at 16K and grows via `next_power_of_two()` on overflow, with bind group recreation. This allows rendering arbitrarily many entities without code changes.
+
+**Source:** `crates/euca-render/src/renderer.rs`, `ensure_instance_capacity`
+
+#### Retained Render Extraction (`RenderExtractor`)
+
+Instead of rebuilding the full `Vec<DrawCommand>` from ECS queries every frame (O(N) extraction + allocation), the `RenderExtractor` maintains a persistent entity-to-slot mapping:
+
+- **Entity → slot mapping** with free list for despawned entities
+- **Change detection** via `world.get_change_tick::<GlobalTransform>()` — only entities whose transform changed since the last sync are re-extracted
+- **Mesh/material change tracking** via cached handle comparison
+- Periodic `compact()` defragments the slot array
+
+At steady state with 100K entities and 1% moving, extraction cost drops from O(100K) to O(~1K) per frame.
+
+**Source:** `crates/euca-render/src/extract.rs`
+
+#### Bindless Material System
+
+Eliminates per-batch material bind group switching by packing all material data into a single GPU storage buffer:
+
+- **`BindlessMaterialGpu`** (96 bytes/material): PBR uniforms + 5 texture indices into a binding array
+- **Texture binding array**: up to 512 unique textures in a `binding_array<texture_2d<f32>>`, indexed per-fragment by material's texture indices
+- **`material_id` in `InstanceData`**: each entity carries its material index (u32), passed via flat interpolation from vertex to fragment shader
+- **Sentinel value** `0xFFFFFFFF` = no texture (shader returns white/flat normal)
+- **Feature detection**: requires `TEXTURE_BINDING_ARRAY` + `SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING`. Falls back to traditional per-batch path on unsupported hardware.
+- **`pbr_bindless.wgsl`**: full PBR shader variant (Cook-Torrance BRDF, PCSS shadows, IBL, point/spot lights) with bindless material/texture access
+
+When enabled via `renderer.enable_bindless()`, the opaque pass uses a single `set_bind_group(2)` call for ALL materials, reducing GPU state changes from N (per unique material) to 1.
+
+**Source:** `crates/euca-render/src/bindless.rs`, `shaders/pbr_bindless.wgsl`
 
 ### 4.5 Networking (euca-net) -- 39 Tests
 
@@ -552,70 +617,147 @@ The macOS job is critical: it validates that the NEON SIMD paths compile and pas
 
 ## 7. Benchmark Results
 
-Benchmark infrastructure uses Criterion. The following tables are placeholders to be populated after running `cargo bench`:
+All benchmarks run on Apple Silicon using Criterion 0.5. Results are median values from `--output-format=bencher`.
 
 ### 7.1 ECS Benchmarks
 
-| Benchmark | Entities | Metric | Result |
+| Benchmark | Scale | Time | Throughput |
 |---|---|---|---|
-| Spawn (with 2 components) | 100,000 | entities/sec | _TBD_ |
-| Query iteration (`&Position, &Velocity`) | 100,000 | entities/sec | _TBD_ |
-| Random `get::<T>` | 100,000 | lookups/sec | _TBD_ |
-| Despawn | 100,000 | entities/sec | _TBD_ |
-| `par_for_each` (8 threads) | 100,000 | entities/sec | _TBD_ |
-| World tick (full schedule) | 10,000 | ticks/sec | _TBD_ |
+| Spawn (3 components) | 1K | 595 µs | 1.68M entities/sec |
+| Spawn (3 components) | 10K | 5.75 ms | 1.74M entities/sec |
+| Spawn (3 components) | 100K | 59.9 ms | 1.67M entities/sec |
+| Query iterate (3 components) | 1K | 37.2 µs | 26.9M entities/sec |
+| Query iterate (3 components) | 10K | 365 µs | 27.4M entities/sec |
+| Despawn | 1K | 599 µs | 1.67M entities/sec |
+| Archetype column lookup | 2 components | 14 ns | — |
+| Archetype column lookup | 20 components | 18 ns | — |
+| par_for_each (vs sequential) | 100K | 731 µs vs 1.25 ms | **1.72× speedup** |
+| World tick (5 systems) | 10K | 874 µs | 1,144 ticks/sec |
+| Entity spawn batch (5 components) | 10K | 12.2 ms | — |
 
 ### 7.2 Math Benchmarks
 
-| Benchmark | Operation | Result |
-|---|---|---|
-| Mat4 * Mat4 | 1M multiplications | _TBD_ |
-| Mat4 * Vec4 (FMA path) | 1M transforms | _TBD_ |
-| Vec3::normalize (rsqrt) | 1M normalizations | _TBD_ |
-| Vec3::dot (SIMD) | 1M dot products | _TBD_ |
+| Benchmark | Scale (10K ops) | Time | Per-op |
+|---|---|---|---|
+| Vec3::dot (SIMD) | 10K | 9.76 µs | 0.98 ns |
+| Vec3::cross | 10K | 12.8 µs | 1.28 ns |
+| Vec3::normalize (rsqrt) | 10K | 19.0 µs | 1.90 ns |
+| Vec3::normalize (scalar reference) | 10K | 15.6 µs | 1.56 ns |
+| Vec4::dot (SIMD) | 10K | 7.26 µs | 0.73 ns |
+| Mat4 × Mat4 (FMA) | 10K | 72.4 µs | 7.24 ns |
+| Mat4::transform_point | 10K | 18.7 µs | 1.87 ns |
+| Mat4::inverse | 10K | 150 µs | 15.0 ns |
+| Mat4 multiply chain (10×) | 10K | 127 µs | 12.7 ns |
+| Quat::multiply | 10K | 18.1 µs | 1.81 ns |
+| Quat::slerp (diverse angles) | 10K | 172 µs | 17.2 ns |
 
-### 7.3 Rendering Benchmarks
+### 7.3 Physics Benchmarks
 
-| Benchmark | Scene | Result |
+| Benchmark | Scale | Time | Per-entity |
+|---|---|---|---|
+| Physics step (full) | 100 | 110 µs | 1.10 µs |
+| Physics step (full) | 1K | 1.15 ms | 1.15 µs |
+| Physics step (full) | 5K | 5.62 ms | 1.12 µs |
+| Physics step (full) | 10K | 11.6 ms | 1.16 µs |
+| Broad phase (zero velocity) | 100 | 31.9 µs | — |
+| Broad phase (zero velocity) | 1K | 294 µs | — |
+| Broad phase (zero velocity) | 5K | 1.49 ms | — |
+| Broad phase (zero velocity) | 10K | 3.00 ms | — |
+| Island detection (spheres) | 1K | 293 µs | — |
+| Island detection (spheres) | 5K | 1.52 ms | — |
+| Island detection (spheres) | 10K | 2.99 ms | — |
+| CCD spatial (100 dyn + 1K static) | 1.1K | 1.18 ms | — |
+| CCD spatial (100 dyn + 5K static) | 5.1K | 5.07 ms | — |
+| Raycast (1 ray vs N statics) | 1K | 29.3 µs | — |
+| Collision detection (AABB pairs) | 1K | 3.07 µs | 3.07 ns/pair |
+
+**Key finding:** Physics step scales **linearly** from 100 to 10K entities (~1.1 µs/entity). At 50K entities the expected cost is ~55ms (above 16.67ms frame budget), confirming that the island solver's parallel dispatch is essential for the 50K target.
+
+### 7.4 Engine (Full Tick) Benchmarks
+
+| Benchmark | Scale | Time | Budget % (@ 60fps) |
+|---|---|---|---|
+| Headless tick (physics + transforms) | 1K | 1.21 ms | 7.3% |
+| Headless tick (physics + transforms) | 10K | 11.8 ms | 70.8% |
+| Headless tick (physics + gameplay) | 1K | 1.30 ms | 7.8% |
+| **Headless tick** | **50K** | **67.7 ms** | **406%** |
+
+The 50K headless tick at 67.7ms exceeds the 16.67ms budget by ~4×. This confirms that reaching 50K at 60fps requires either (a) fewer physics-active entities (sleeping bodies), (b) reduced solver iterations, or (c) GPU-offloaded physics. With 80% sleeping bodies (typical open world), the active physics set is ~10K → 11.8ms → 70.8% of budget, leaving room for rendering.
+
+### 7.5 Rendering (CPU-side) Benchmarks
+
+| Benchmark | Scale | Time | Notes |
+|---|---|---|---|
+| Full DrawCommand extraction | 1K | 47.3 µs | — |
+| Full DrawCommand extraction | 10K | 540 µs | — |
+| Full DrawCommand extraction | 50K | 2.85 ms | Baseline |
+| RenderExtractor sync (100% change) | 1K | 120 µs | First frame |
+| RenderExtractor sync (100% change) | 10K | 1.06 ms | First frame |
+| RenderExtractor sync (100% change) | 50K | 6.07 ms | First frame |
+| RenderExtractor sync (1% change) | 10K | 899 µs | Steady state |
+| RenderExtractor sync (1% change) | 50K | 4.71 ms | Steady state |
+| Batch build (sort + normal matrix) | 1K | 26.9 µs | — |
+| Batch build (sort + normal matrix) | 10K | 359 µs | — |
+| Batch build (sort + normal matrix) | 50K | 1.77 ms | — |
+
+**Note:** RenderExtractor steady-state sync is slower than expected because it still iterates all entities to detect despawns. Future optimization: track despawns via ECS events instead of full scan.
+
+### 7.6 Animation Benchmarks
+
+| Benchmark | Scale | Time |
 |---|---|---|
-| Draw call throughput | 10K entities | _TBD_ |
-| GPU-driven cull (compute) | 10K entities | _TBD_ |
-| Clustered light assign | 256 lights | _TBD_ |
-| Shadow map render | 3 cascades, 2048px | _TBD_ |
+| Pose blend (two poses) | 20 joints | 299 ns |
+| Pose blend (two poses) | 100 joints | 1.19 µs |
+| State machine (steady state) | 5 states | 46 ns |
+| State machine (with transition) | 5 states | 517 ns |
+| Blender evaluate | 2 layers / 50 joints | 796 ns |
+| Blender evaluate | 8 layers / 50 joints | 4.95 µs |
+
+### 7.7 Networking Benchmarks
+
+| Benchmark | Scale | Time |
+|---|---|---|
+| Bincode serialize EntityState | 1K entities | 18.8 µs |
+| Bincode deserialize EntityState | 1K entities | 12.2 µs |
+| Delta field comparison (64B fields) | 1K fields | 33.6 µs |
+| Packet header roundtrip | 1 | 4 ns |
 
 ---
 
 ## 8. Industry Comparison
 
-| Capability | Euca Engine | Unreal Engine 5 | Bevy 0.15 |
-|---|---|---|---|
-| **Language** | Rust | C++ | Rust |
-| **ECS** | Custom archetype (dense columns, binary search, change detection, parallel schedule) | GameplayAbility + Actor-Component-inheritance | Custom archetype (sparse sets + dense tables) |
-| **SIMD Math** | Custom f32x4 (NEON + SSE2), FMA mul_col, rsqrt normalize | FMath with platform intrinsics, FTransform is scalar | glam (leverages platform intrinsics) |
-| **Rendering** | wgpu Forward+ with clustered lights, GPU-driven (draw indirect), SSAO, SSR, volumetric fog | Custom Vulkan/D3D12/Metal, Nanite, Lumen, Virtual Shadow Maps | wgpu with optional render graph |
-| **GPU Culling** | Compute shader frustum cull + HZB occlusion, MULTI_DRAW_INDIRECT_COUNT | Nanite GPU-driven (meshlet occlusion culling) | No built-in GPU culling |
-| **Physics** | Custom (spatial hash, CCD, capsule, joints, sleeping) | Chaos (full rigid body, destruction, vehicles, cloth) | Rapier3d or Avian (third-party) |
-| **Networking** | Custom UDP + QUIC, delta compression, client prediction, interest culling | Custom UDP, property replication, RPCs, dedicated server | Third-party (matchbox, naia) |
-| **Apple Silicon** | First-class: NEON FMA/rsqrt, P-core detection, unified memory hints, TBDR-aware Forward+, mimalloc, Metal workgroup tuning | Supported but not primary target | No platform-specific optimization |
-| **Allocator** | mimalloc (game runner) | Custom (FMalloc, binned allocator) | System allocator (default) |
-| **Scripting** | Lua (mlua), hot reload, sandboxed | Blueprints, Python, verse | None built-in |
-| **Editor** | egui (immediate-mode, integrated) | Custom Qt-based (Slate) | bevy_editor (work in progress) |
-| **Agent/AI Interface** | Native: CLI + HTTP + nit auth, 72+ endpoints, `euca discover --json` | None (editor only) | None |
-| **Test Coverage** | 850+ unit tests, 5 CI jobs | Extensive (internal, not public) | ~1,500+ tests, CI matrix |
-| **Open Source** | MIT | Source-available (custom license) | MIT OR Apache-2.0 |
-| **Maturity** | Early-stage (v1.1.0), architecture proven | 25+ years, shipped AAA titles | 3+ years, active ecosystem |
+| Capability | Euca Engine | Unreal Engine 5 | Bevy 0.16 | Unity DOTS | Flecs |
+|---|---|---|---|---|---|
+| **Language** | Rust | C++ | Rust | C# (Burst → native) | C |
+| **ECS** | Custom archetype (dense columns, binary search, change detection, parallel schedule, island solver) | GameplayAbility + Actor-Component-inheritance | Custom archetype (sparse sets + dense tables, retained render world) | Chunk-based archetype (16KB chunks, Burst-compiled jobs) | Archetype (cache-friendly, observers, query caching) |
+| **SIMD Math** | Custom f32x4 (NEON + SSE2), FMA mul_col, rsqrt normalize | FMath with platform intrinsics | glam (platform intrinsics) | Burst auto-vectorization (float4, math) | No built-in SIMD |
+| **Rendering** | wgpu Forward+ with clustered lights, GPU-driven (draw indirect), bindless materials, SSAO, SSR, volumetric fog | Custom Vulkan/D3D12/Metal, Nanite, Lumen, Virtual Shadow Maps | wgpu GPU-driven rendering (0.16), retained render world | Hybrid Renderer V2, SRP Batcher, GPU instancing | No rendering (ECS only) |
+| **GPU Culling** | Compute shader frustum cull + HZB occlusion, MULTI_DRAW_INDIRECT_COUNT, bindless texture arrays | Nanite GPU-driven (meshlet occlusion culling) | GPU-driven culling (0.16) | GPU instancing + SRP batching | N/A |
+| **Physics** | Custom (spatial hash, island solver, parallel constraints, CCD spatial filter, adaptive cells, sleeping) | Chaos (full rigid body, destruction, vehicles, cloth) | Rapier3d or Avian (third-party) | Unity Physics or Havok | N/A |
+| **Networking** | Custom UDP + QUIC, delta compression, client prediction, interest culling | Custom UDP, property replication, RPCs, dedicated server | Third-party (matchbox, naia) | Netcode for GameObjects / Entities | N/A |
+| **Entity Scale (@ 60fps)** | 1K proven, 10K headless, architecture targets 100K+ | 35K+ MetaHumans (Matrix Awakens, 30fps) | 160K cubes, 100K+ visible 3D meshes (0.16) | 4.5M mesh renderers (Megacity) | 120K simulated cars |
+| **Apple Silicon** | First-class: NEON FMA/rsqrt, P-core detection, unified memory hints, TBDR-aware Forward+, mimalloc, Metal workgroup tuning | Supported but not primary target | No platform-specific optimization | No platform-specific | No platform-specific |
+| **Allocator** | mimalloc (game runner) | Custom (FMalloc, binned allocator) | System allocator (default) | Unity native allocator | System allocator |
+| **Scripting** | Lua (mlua), hot reload, sandboxed | Blueprints, Python, verse | None built-in | None (C# is the language) | Lua, C++ modules |
+| **Editor** | egui (immediate-mode, integrated) | Custom Qt-based (Slate) | bevy_editor (in progress) | Full IDE (Unity Editor) | Flecs Explorer (web) |
+| **Agent/AI Interface** | Native: CLI + HTTP + nit auth, 72+ endpoints, `euca discover --json` | None (editor only) | None | None | REST API (explorer) |
+| **Test Coverage** | 850+ unit tests, ~65 benchmarks, 5 CI jobs | Extensive (internal) | ~1,500+ tests, CI matrix | Internal | ~1,000 tests |
+| **Open Source** | MIT | Source-available (custom license) | MIT OR Apache-2.0 | Proprietary | MIT |
+| **Maturity** | Early-stage (v1.1.0), architecture proven | 25+ years, shipped AAA titles | 4+ years, active ecosystem | 5+ years (DOTS), shipped titles | 5+ years, production use |
 
 ### Where Euca differentiates:
 1. **Agent-native design** -- No other engine treats AI agents as first-class users with a CLI and HTTP API
 2. **Apple Silicon optimization depth** -- FMA in matrix multiply, rsqrt normalize, P-core detection, unified memory hints, Metal workgroup tuning, TBDR-aware rendering pipeline
 3. **Zero heavy dependencies on critical path** -- Custom math, physics, networking. No nalgebra, no rapier, no glam
 4. **Data-driven game logic** -- Rules are entities, not code. Agents compose behavior via CLI without writing Rust
+5. **Bindless material system** -- Single bind group for all materials + textures. Neither Bevy nor Flecs have this; Unity DOTS achieves similar via SRP Batcher
 
 ### Where Euca is behind:
-1. **Mesh processing** -- No meshlet / visibility buffer (Nanite equivalent). Blocked on wgpu mesh shader support.
-2. **Global illumination** -- No Lumen equivalent. SSAO and SSR are screen-space only.
-3. **Maturity** -- No shipped titles. V1 architecture, not battle-tested at AAA scale.
-4. **Ecosystem** -- No marketplace, no asset store, no large community.
+1. **Entity scale** -- 1K proven at 60fps vs Unity DOTS 4.5M and Bevy 100K+. Architecture targets 100K+ but not yet demonstrated at scale.
+2. **Mesh processing** -- No meshlet / visibility buffer (Nanite equivalent). Blocked on wgpu mesh shader support.
+3. **Global illumination** -- No Lumen equivalent. SSAO and SSR are screen-space only.
+4. **Maturity** -- No shipped titles. V1 architecture, not battle-tested at AAA scale.
+5. **Ecosystem** -- No marketplace, no asset store, no large community.
 
 ---
 

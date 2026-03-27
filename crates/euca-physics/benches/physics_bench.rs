@@ -105,7 +105,7 @@ fn build_collider_world(n: usize) -> World {
 fn bench_physics_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("physics_step");
 
-    for &n in &[100, 1000] {
+    for &n in &[100, 1_000, 5_000, 10_000] {
         let mut world = build_dynamic_world(n);
 
         group.bench_function(format!("{n}"), |b| {
@@ -190,7 +190,7 @@ fn bench_collision_detection(c: &mut Criterion) {
 fn bench_broad_phase(c: &mut Criterion) {
     let mut group = c.benchmark_group("broad_phase");
 
-    for &n in &[100, 1000] {
+    for &n in &[100, 1_000, 5_000, 10_000] {
         // Build a world with N dynamic bodies. physics_step_system runs
         // broadphase (spatial hash build + query) followed by narrowphase.
         // Using zero gravity and zero velocity isolates the
@@ -224,6 +224,120 @@ fn bench_broad_phase(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark the full physics step at higher scales to validate the island
+/// solver and broadphase caching optimizations.
+fn bench_physics_step_high_scale(c: &mut Criterion) {
+    let mut group = c.benchmark_group("physics_step_high_scale");
+    // Use larger measurement time for expensive benchmarks.
+    group.sample_size(10);
+
+    for &n in &[5_000, 10_000] {
+        let mut world = build_dynamic_world(n);
+
+        group.bench_function(format!("{n}"), |b| {
+            b.iter(|| {
+                physics_step_system(black_box(&mut world));
+            });
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark broadphase + island detection in isolation at high entity counts.
+/// Uses zero velocity to focus on spatial hash build + island partitioning cost.
+fn bench_island_detection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("island_detection");
+    group.sample_size(10);
+
+    for &n in &[1_000, 5_000, 10_000] {
+        // Build world with zero velocity — isolates broadphase + island detection
+        // from actual physics integration.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        let spread = (n as f32).sqrt() * 2.0;
+        let mut rng = SimpleRng::new(77);
+
+        for _ in 0..n {
+            let pos = rng.random_pos(spread);
+            let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
+            world.insert(e, GlobalTransform::default());
+            world.insert(e, PhysicsBody::dynamic());
+            world.insert(e, Velocity::default());
+            world.insert(e, Collider::sphere(0.3));
+        }
+
+        group.bench_function(format!("{n}"), |b| {
+            b.iter(|| {
+                physics_step_system(black_box(&mut world));
+            });
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark CCD performance with fast-moving bodies and a spatial grid
+/// of static colliders.
+fn bench_ccd_spatial(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ccd_spatial");
+
+    for &n_static in &[1_000, 5_000] {
+        let n_dynamic = 100; // 100 fast movers against N statics
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        let spread = (n_static as f32).sqrt() * 2.0;
+        let mut rng = SimpleRng::new(55);
+
+        // Static colliders
+        for _ in 0..n_static {
+            let pos = rng.random_pos(spread);
+            let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
+            world.insert(e, GlobalTransform::default());
+            world.insert(e, PhysicsBody::fixed());
+            world.insert(e, Collider::aabb(0.5, 0.5, 0.5));
+        }
+
+        // Fast-moving dynamic bodies (high velocity triggers CCD)
+        for _ in 0..n_dynamic {
+            let pos = rng.random_pos(spread);
+            let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
+            world.insert(e, GlobalTransform::default());
+            world.insert(e, PhysicsBody::dynamic());
+            world.insert(
+                e,
+                Velocity {
+                    linear: Vec3::new(
+                        rng.range_f32(-20.0, 20.0),
+                        rng.range_f32(-20.0, 20.0),
+                        rng.range_f32(-20.0, 20.0),
+                    ),
+                    angular: Vec3::ZERO,
+                },
+            );
+            world.insert(e, Collider::sphere(0.3));
+        }
+
+        group.bench_function(format!("100dyn_{n_static}static"), |b| {
+            b.iter(|| {
+                physics_step_system(black_box(&mut world));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_physics_step,
@@ -231,5 +345,8 @@ criterion_group!(
     bench_overlap_sphere,
     bench_collision_detection,
     bench_broad_phase,
+    bench_physics_step_high_scale,
+    bench_island_detection,
+    bench_ccd_spatial,
 );
 criterion_main!(benches);
