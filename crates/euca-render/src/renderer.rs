@@ -408,7 +408,7 @@ impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
         let instance_buf_size =
             (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64;
-        let unified = gpu.unified_memory;
+        let unified = gpu.unified_memory();
         let instance_buffer = SmartBuffer::new(
             &gpu.device,
             instance_buf_size,
@@ -1146,8 +1146,11 @@ impl Renderer {
     /// Call this once after creating the renderer, before uploading materials.
     pub fn enable_bindless(&mut self, gpu: &GpuContext) {
         let features = gpu.device.features();
-        let system =
-            crate::bindless::BindlessMaterialSystem::new(&gpu.device, features, gpu.unified_memory);
+        let system = crate::bindless::BindlessMaterialSystem::new(
+            &gpu.device,
+            features,
+            gpu.unified_memory(),
+        );
         if !system.is_enabled() {
             log::warn!("Bindless materials requested but GPU lacks required features");
             return;

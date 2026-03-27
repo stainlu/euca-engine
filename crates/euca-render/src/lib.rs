@@ -78,6 +78,10 @@ pub mod volumetric;
 /// Re-export `wgpu` so downstream crates can use the same version.
 pub use wgpu;
 
+/// Re-export the RHI trait and types for backend abstraction.
+pub use euca_rhi;
+pub use euca_rhi::RenderDevice;
+
 pub use buffer::{BufferKind, SmartBuffer};
 pub use camera::{Camera, Frustum};
 pub use clustered::{

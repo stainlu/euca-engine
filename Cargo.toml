@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/euca-rhi",
     "crates/euca-ecs",
     "crates/euca-reflect",
     "crates/euca-reflect-derive",

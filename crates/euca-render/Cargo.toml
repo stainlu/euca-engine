@@ -16,6 +16,7 @@ euca-math = { path = "../euca-math", features = ["reflect"] }
 euca-reflect = { path = "../euca-reflect" }
 euca-scene = { path = "../euca-scene" }
 euca-core = { path = "../euca-core" }
+euca-rhi = { path = "../euca-rhi" }
 wgpu = "27"
 winit = "0.30"
 bytemuck = { version = "1", features = ["derive"] }

@@ -1483,6 +1483,7 @@ dependencies = [
  "euca-render",
  "euca-scene",
  "log",
+ "rayon",
  "winit",
 ]
 
@@ -1508,16 +1509,27 @@ name = "euca-render"
 version = "1.1.0"
 dependencies = [
  "bytemuck",
+ "criterion",
  "env_logger",
  "euca-core",
  "euca-ecs",
  "euca-math",
  "euca-physics",
  "euca-reflect",
+ "euca-rhi",
  "euca-scene",
  "image",
  "log",
+ "naga",
  "pollster",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "euca-rhi"
+version = "1.1.0"
+dependencies = [
  "wgpu",
  "winit",
 ]

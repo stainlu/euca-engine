@@ -1,0 +1,15 @@
+[package]
+name = "euca-rhi"
+version.workspace = true
+edition.workspace = true
+description = "Rendering Hardware Interface — backend-agnostic GPU trait abstraction"
+keywords = ["gamedev", "game-engine", "rendering", "gpu", "rhi"]
+categories = ["game-development", "rendering"]
+
+[features]
+default = ["wgpu-backend"]
+wgpu-backend = ["dep:wgpu", "dep:winit"]
+
+[dependencies]
+wgpu = { version = "27", optional = true }
+winit = { version = "0.30", optional = true }

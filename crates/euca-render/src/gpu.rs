@@ -2,24 +2,35 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use crate::hardware::{AdapterInfo, HardwareSurvey, RenderBackend, adapter_info_from_wgpu};
+use euca_rhi::wgpu_backend::WgpuDevice;
+use euca_rhi::{Capabilities, RenderDevice};
 
-/// Owns the wgpu device, queue, surface — everything needed to talk to the GPU.
+/// Owns the GPU device, queue, surface — everything needed to talk to the GPU.
+///
+/// Wraps [`WgpuDevice`] (the RHI backend) and adds engine-level metadata
+/// (adapter info, render backend selection). Access the underlying wgpu
+/// objects via `Deref` (e.g., `gpu.device`, `gpu.queue`).
 pub struct GpuContext {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub surface: wgpu::Surface<'static>,
-    pub surface_config: wgpu::SurfaceConfiguration,
-    pub window: Arc<Window>,
+    /// The RHI backend device. Access wgpu objects via Deref:
+    /// `gpu.device`, `gpu.queue`, `gpu.surface`, etc.
+    rhi: WgpuDevice,
     /// Info about the adapter actually in use (from surface-compatible selection).
     pub adapter_info: AdapterInfo,
     /// Rendering backend chosen by the hardware survey.
     pub render_backend: RenderBackend,
-    /// Whether the GPU has unified memory (Apple Silicon).
-    pub unified_memory: bool,
-    /// Whether the GPU supports `multi_draw_indexed_indirect`.
-    pub has_multi_draw_indirect: bool,
-    /// Whether the GPU supports `multi_draw_indexed_indirect_count`.
-    pub has_multi_draw_indirect_count: bool,
+}
+
+impl std::ops::Deref for GpuContext {
+    type Target = WgpuDevice;
+    fn deref(&self) -> &WgpuDevice {
+        &self.rhi
+    }
+}
+
+impl std::ops::DerefMut for GpuContext {
+    fn deref_mut(&mut self) -> &mut WgpuDevice {
+        &mut self.rhi
+    }
 }
 
 impl GpuContext {
@@ -53,9 +64,6 @@ impl GpuContext {
         }
 
         // Request optional GPU features that improve performance when available.
-        // MULTI_DRAW_INDIRECT_COUNT enables both multi_draw_indexed_indirect and
-        // multi_draw_indexed_indirect_count, collapsing N per-entity draw calls
-        // into a single API call.
         let supported = adapter.features();
         let mut required_features = wgpu::Features::empty();
         if supported.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
@@ -86,8 +94,14 @@ impl GpuContext {
                 .max_binding_array_elements_per_shader_stage
                 .max(512);
             limits.max_bindings_per_bind_group =
-                adapter_limits.max_bindings_per_bind_group.max(514); // 512 textures + buffer + sampler
+                adapter_limits.max_bindings_per_bind_group.max(514);
         }
+
+        // Snapshot limit values before `limits` is moved into request_device.
+        let cap_max_tex_dim = limits.max_texture_dimension_2d;
+        let cap_max_bind_groups = limits.max_bind_groups;
+        let cap_max_bindings = limits.max_bindings_per_bind_group;
+        let cap_max_binding_array = limits.max_binding_array_elements_per_shader_stage;
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Euca GPU Device"),
@@ -118,31 +132,51 @@ impl GpuContext {
         };
         surface.configure(&device, &surface_config);
 
+        let unified_memory = survey.supports_unified_memory();
+
+        let capabilities = Capabilities {
+            unified_memory,
+            multi_draw_indirect: has_multi_draw_indirect,
+            multi_draw_indirect_count: has_multi_draw_indirect_count,
+            texture_binding_array: required_features.contains(bindless_features),
+            non_uniform_indexing: required_features.contains(bindless_features),
+            max_texture_dimension_2d: cap_max_tex_dim,
+            max_bind_groups: cap_max_bind_groups,
+            max_bindings_per_bind_group: cap_max_bindings,
+            max_binding_array_elements: cap_max_binding_array,
+        };
+
+        let rhi = WgpuDevice::new(device, queue, surface, surface_config, window, capabilities);
+
         Self {
-            device,
-            queue,
-            surface,
-            surface_config,
-            window,
+            rhi,
             adapter_info,
             render_backend: survey.render_backend,
-            unified_memory: survey.supports_unified_memory(),
-            has_multi_draw_indirect,
-            has_multi_draw_indirect_count,
         }
+    }
+
+    /// Whether the GPU has unified memory (Apple Silicon).
+    pub fn unified_memory(&self) -> bool {
+        self.rhi.capabilities().unified_memory
+    }
+
+    /// Whether the GPU supports `multi_draw_indexed_indirect`.
+    pub fn has_multi_draw_indirect(&self) -> bool {
+        self.rhi.capabilities().multi_draw_indirect
+    }
+
+    /// Whether the GPU supports `multi_draw_indexed_indirect_count`.
+    pub fn has_multi_draw_indirect_count(&self) -> bool {
+        self.rhi.capabilities().multi_draw_indirect_count
     }
 
     /// Handle window resize.
     pub fn resize(&mut self, new_width: u32, new_height: u32) {
-        if new_width > 0 && new_height > 0 {
-            self.surface_config.width = new_width;
-            self.surface_config.height = new_height;
-            self.surface.configure(&self.device, &self.surface_config);
-        }
+        self.rhi.resize_surface(new_width, new_height);
     }
 
     /// Current surface aspect ratio.
     pub fn aspect_ratio(&self) -> f32 {
-        self.surface_config.width as f32 / self.surface_config.height as f32
+        self.rhi.aspect_ratio()
     }
 }
