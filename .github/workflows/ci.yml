@@ -61,3 +61,21 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+
+  bench:
+    name: Benchmarks (macOS)
+    runs-on: macos-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Run benchmarks
+        run: cargo bench --workspace
+      - name: Upload benchmark reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: criterion-reports
+          path: target/criterion
+          retention-days: 30
