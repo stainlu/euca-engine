@@ -16,6 +16,10 @@ pub struct GpuContext {
     pub render_backend: RenderBackend,
     /// Whether the GPU has unified memory (Apple Silicon).
     pub unified_memory: bool,
+    /// Whether the GPU supports `multi_draw_indexed_indirect`.
+    pub has_multi_draw_indirect: bool,
+    /// Whether the GPU supports `multi_draw_indexed_indirect_count`.
+    pub has_multi_draw_indirect_count: bool,
 }
 
 impl GpuContext {
@@ -48,9 +52,34 @@ impl GpuContext {
             );
         }
 
+        // Request optional GPU features that improve performance when available.
+        // MULTI_DRAW_INDIRECT_COUNT enables both multi_draw_indexed_indirect and
+        // multi_draw_indexed_indirect_count, collapsing N per-entity draw calls
+        // into a single API call.
+        let supported = adapter.features();
+        let mut required_features = wgpu::Features::empty();
+        if supported.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
+            required_features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
+        }
+
+        // Bindless materials: texture binding arrays + non-uniform indexing.
+        let bindless_features = crate::bindless::BINDLESS_FEATURES;
+        if supported.contains(bindless_features) {
+            required_features |= bindless_features;
+            log::info!("GPU supports TEXTURE_BINDING_ARRAY — bindless materials enabled");
+        }
+
+        let has_multi_draw_indirect =
+            required_features.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT);
+        let has_multi_draw_indirect_count = has_multi_draw_indirect;
+
+        if has_multi_draw_indirect_count {
+            log::info!("GPU supports MULTI_DRAW_INDIRECT_COUNT — GPU-driven draw calls enabled");
+        }
+
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Euca GPU Device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: wgpu::Limits::default(),
             ..Default::default()
         }))
@@ -86,6 +115,8 @@ impl GpuContext {
             adapter_info,
             render_backend: survey.render_backend,
             unified_memory: survey.supports_unified_memory(),
+            has_multi_draw_indirect,
+            has_multi_draw_indirect_count,
         }
     }
 

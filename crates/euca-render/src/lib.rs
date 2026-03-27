@@ -15,6 +15,8 @@
 //! - [`DrawCommand`] -- per-object draw parameters submitted each frame.
 //! - [`Vertex`] -- interleaved vertex layout (position, normal, tangent, UV).
 
+/// Bindless material system (storage buffer + texture binding array).
+pub mod bindless;
 mod buffer;
 mod camera;
 /// Retained render extraction layer (change-tracked ECS → DrawCommand sync).
