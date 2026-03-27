@@ -9,7 +9,7 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use euca_ecs::World;
 use euca_math::{Transform, Vec3};
 use euca_render::{
-    DrawCommand, MaterialHandle, MeshHandle, MeshRenderer, MaterialRef, RenderExtractor,
+    DrawCommand, MaterialHandle, MaterialRef, MeshHandle, MeshRenderer, RenderExtractor,
 };
 use euca_scene::{GlobalTransform, LocalTransform};
 
@@ -31,7 +31,12 @@ fn build_render_world(n: usize, n_materials: usize) -> World {
 
         let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
         world.insert(e, GlobalTransform(Transform::from_translation(pos)));
-        world.insert(e, MeshRenderer { mesh: MeshHandle(0) });
+        world.insert(
+            e,
+            MeshRenderer {
+                mesh: MeshHandle(0),
+            },
+        );
         world.insert(
             e,
             MaterialRef {

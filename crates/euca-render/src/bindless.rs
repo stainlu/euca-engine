@@ -129,8 +129,7 @@ impl BindlessMaterialSystem {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let fallback_view =
-            fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let fallback_view = fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Material storage buffer (start with space for 64 materials).
         let material_buffer = SmartBuffer::new(
@@ -237,12 +236,7 @@ impl BindlessMaterialSystem {
 
     /// Upload all material data to the GPU and rebuild the bind group if needed.
     /// Pass the `TextureStore` so texture handles can be resolved to views.
-    pub fn flush(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        textures: &TextureStore,
-    ) {
+    pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, textures: &TextureStore) {
         if self.materials.is_empty() {
             return;
         }

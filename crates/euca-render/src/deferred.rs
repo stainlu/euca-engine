@@ -187,7 +187,8 @@ impl DeferredPipeline {
                 count: None,
             }],
         });
-        let ibsz = (INITIAL_DEFERRED_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
+        let ibsz =
+            (INITIAL_DEFERRED_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
         let instance_buffer = SmartBuffer::new(
             device,
             ibsz,

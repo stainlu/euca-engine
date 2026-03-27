@@ -269,8 +269,7 @@ impl VelocityPipeline {
             return;
         }
         self.prev_model_capacity = count.next_power_of_two();
-        let size =
-            (self.prev_model_capacity * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
+        let size = (self.prev_model_capacity * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
         self.prev_model_buffer = SmartBuffer::new(
             device,
             size,

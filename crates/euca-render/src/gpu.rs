@@ -82,8 +82,9 @@ impl GpuContext {
         let mut limits = wgpu::Limits::default();
         if required_features.contains(bindless_features) {
             let adapter_limits = adapter.limits();
-            limits.max_binding_array_elements_per_shader_stage =
-                adapter_limits.max_binding_array_elements_per_shader_stage.max(512);
+            limits.max_binding_array_elements_per_shader_stage = adapter_limits
+                .max_binding_array_elements_per_shader_stage
+                .max(512);
             limits.max_bindings_per_bind_group =
                 adapter_limits.max_bindings_per_bind_group.max(514); // 512 textures + buffer + sampler
         }

@@ -254,9 +254,7 @@ fn integrate_positions(world: &mut World, dt: f32) {
                                 if *static_e == entity {
                                     continue;
                                 }
-                                if let Some(hit) =
-                                    raycast_collider(&ray, *static_pos, static_col)
-                                {
+                                if let Some(hit) = raycast_collider(&ray, *static_pos, static_col) {
                                     let t_normalized = hit.t / speed;
                                     if t_normalized < closest_t && t_normalized >= 0.0 {
                                         closest_t = t_normalized;
@@ -371,8 +369,7 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
 
     let inv_cell = 1.0 / cell_size;
 
-    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> =
-        HashMap::with_capacity(bodies.len());
+    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::with_capacity(bodies.len());
 
     // Bodies whose AABB spans too many cells are tested against everyone.
     let mut large_bodies: Vec<usize> = Vec::new();
@@ -500,10 +497,7 @@ struct Island {
 }
 
 /// Build islands from bodies and broadphase pairs using union-find.
-fn build_islands(
-    bodies: &[Body],
-    candidate_pairs: &[(usize, usize)],
-) -> Vec<Island> {
+fn build_islands(bodies: &[Body], candidate_pairs: &[(usize, usize)]) -> Vec<Island> {
     let n = bodies.len();
     if n == 0 {
         return Vec::new();
@@ -578,25 +572,23 @@ fn build_islands(
 
         // Ensure both bodies have local indices in this island.
         // Static bodies may appear in multiple islands (one per dynamic neighbor).
-        let ensure_local = |idx: usize,
-                            islands: &mut Vec<Island>,
-                            g2l: &mut Vec<(usize, usize)>|
-         -> usize {
-            let (existing_island, existing_local) = g2l[idx];
-            if existing_island == island_idx {
-                return existing_local;
-            }
-            // Add body to this island (static bodies can appear in multiple).
-            let local = islands[island_idx].body_indices.len();
-            islands[island_idx].body_indices.push(idx);
-            if existing_island == usize::MAX {
-                // First island assignment for this body.
-                g2l[idx] = (island_idx, local);
-            }
-            // Note: for statics in multiple islands, g2l only tracks the first.
-            // We return the local index directly.
-            local
-        };
+        let ensure_local =
+            |idx: usize, islands: &mut Vec<Island>, g2l: &mut Vec<(usize, usize)>| -> usize {
+                let (existing_island, existing_local) = g2l[idx];
+                if existing_island == island_idx {
+                    return existing_local;
+                }
+                // Add body to this island (static bodies can appear in multiple).
+                let local = islands[island_idx].body_indices.len();
+                islands[island_idx].body_indices.push(idx);
+                if existing_island == usize::MAX {
+                    // First island assignment for this body.
+                    g2l[idx] = (island_idx, local);
+                }
+                // Note: for statics in multiple islands, g2l only tracks the first.
+                // We return the local index directly.
+                local
+            };
 
         let local_i = ensure_local(i, &mut islands, &mut global_to_local);
         let local_j = ensure_local(j, &mut islands, &mut global_to_local);

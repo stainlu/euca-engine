@@ -19,8 +19,6 @@
 pub mod bindless;
 mod buffer;
 mod camera;
-/// Retained render extraction layer (change-tracked ECS → DrawCommand sync).
-pub mod extract;
 /// Clustered light assignment for tiled/clustered forward shading.
 pub mod clustered;
 /// GPU compute pipeline management and indirect dispatch utilities.
@@ -31,6 +29,8 @@ pub mod decal;
 pub mod deferred;
 /// Depth of field (thin-lens bokeh blur).
 pub mod dof;
+/// Retained render extraction layer (change-tracked ECS → DrawCommand sync).
+pub mod extract;
 /// Procedural foliage scattering and instanced rendering.
 pub mod foliage;
 mod gpu;
@@ -96,6 +96,7 @@ pub use deferred::{
     DeferredLightingUniforms, DeferredPipeline, GBuffer, GBufferFormats, RenderPath,
 };
 pub use dof::{DofPass, DofSettings};
+pub use extract::RenderExtractor;
 pub use foliage::{
     FoliageDrawData, FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, scatter_foliage,
 };
@@ -124,7 +125,6 @@ pub use motion_blur::{MotionBlurPass, MotionBlurSettings};
 pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::{PostProcessSettings, PostProcessStack};
-pub use extract::RenderExtractor;
 pub use renderer::{DrawCommand, RenderQuality, Renderer};
 pub use ssgi::{SsgiExecuteParams, SsgiPass, SsgiSettings, step_size as ssgi_step_size};
 pub use ssr::{

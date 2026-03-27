@@ -648,10 +648,7 @@ impl ParallelSchedule {
 
         rayon::in_place_scope(|s| {
             for &idx in indices {
-                let job = SystemJob(
-                    &mut *self.systems[idx].system as *mut dyn System,
-                    world_ptr,
-                );
+                let job = SystemJob(&mut *self.systems[idx].system as *mut dyn System, world_ptr);
                 s.spawn(move |_| unsafe { job.run() });
             }
         });

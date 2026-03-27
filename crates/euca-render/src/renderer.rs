@@ -1120,8 +1120,7 @@ impl Renderer {
             return false;
         }
         self.shadow_instance_capacity = count.next_power_of_two();
-        let size =
-            (self.shadow_instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
+        let size = (self.shadow_instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
         self.shadow_instance_buffer = SmartBuffer::new(
             device,
             size,
@@ -1129,15 +1128,14 @@ impl Renderer {
             self.unified_memory,
             "Shadow Instance SSBO",
         );
-        self.shadow_instance_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Shadow Instance BG"),
-                layout: &self.instance_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.shadow_instance_buffer.raw().as_entire_binding(),
-                }],
-            });
+        self.shadow_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Shadow Instance BG"),
+            layout: &self.instance_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.shadow_instance_buffer.raw().as_entire_binding(),
+            }],
+        });
         true
     }
 
@@ -1148,11 +1146,8 @@ impl Renderer {
     /// Call this once after creating the renderer, before uploading materials.
     pub fn enable_bindless(&mut self, gpu: &GpuContext) {
         let features = gpu.device.features();
-        let system = crate::bindless::BindlessMaterialSystem::new(
-            &gpu.device,
-            features,
-            gpu.unified_memory,
-        );
+        let system =
+            crate::bindless::BindlessMaterialSystem::new(&gpu.device, features, gpu.unified_memory);
         if !system.is_enabled() {
             log::warn!("Bindless materials requested but GPU lacks required features");
             return;
@@ -1160,21 +1155,23 @@ impl Renderer {
 
         // Create the bindless render pipeline with the same vertex layout but
         // different group 2 bind group layout and shader.
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("PBR Bindless Shader"),
-            source: wgpu::ShaderSource::Wgsl(PBR_BINDLESS_SHADER.into()),
-        });
-        let pipeline_layout =
-            gpu.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("PBR Bindless Pipeline Layout"),
-                    bind_group_layouts: &[
-                        &self.instance_bgl,
-                        &self.scene_bgl,
-                        &system.bind_group_layout,
-                    ],
-                    push_constant_ranges: &[],
-                });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("PBR Bindless Shader"),
+                source: wgpu::ShaderSource::Wgsl(PBR_BINDLESS_SHADER.into()),
+            });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("PBR Bindless Pipeline Layout"),
+                bind_group_layouts: &[
+                    &self.instance_bgl,
+                    &self.scene_bgl,
+                    &system.bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
         let pipeline = gpu
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1369,7 +1366,10 @@ impl Renderer {
         // Also register with the bindless system if active.
         if let Some(ref mut bl) = self.bindless {
             let bl_handle = bl.system.add_material(mat);
-            debug_assert_eq!(bl_handle, handle, "Bindless handle must match traditional handle");
+            debug_assert_eq!(
+                bl_handle, handle,
+                "Bindless handle must match traditional handle"
+            );
         }
 
         handle
@@ -2033,10 +2033,7 @@ impl Renderer {
                 for batch in &opaque_batches {
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2051,10 +2048,7 @@ impl Renderer {
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,

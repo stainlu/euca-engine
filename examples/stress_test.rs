@@ -60,6 +60,7 @@ struct StressTestApp {
     wgpu_instance: wgpu::Instance,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
+    #[allow(dead_code)]
     extractor: RenderExtractor,
     window_attrs: WindowAttributes,
     fps_frame_count: u64,

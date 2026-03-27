@@ -107,11 +107,9 @@ impl RenderExtractor {
                     .is_some_and(|tick| (tick as u64) >= self.last_sync_tick);
 
                 // Also check mesh/material changes.
-                let meta_changed = self.entities[slot]
-                    .as_ref()
-                    .is_some_and(|re| {
-                        re.mesh != mesh_renderer.mesh || re.material != mat_ref.handle
-                    });
+                let meta_changed = self.entities[slot].as_ref().is_some_and(|re| {
+                    re.mesh != mesh_renderer.mesh || re.material != mat_ref.handle
+                });
 
                 if gt_changed || meta_changed {
                     self.commands[slot] = DrawCommand {
