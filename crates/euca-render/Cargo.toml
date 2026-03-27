@@ -27,6 +27,7 @@ pollster = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 env_logger = "0.11"
 euca-physics = { path = "../euca-physics" }
+naga = { version = "27", features = ["wgsl-in"] }
 
 [[bench]]
 name = "render_bench"

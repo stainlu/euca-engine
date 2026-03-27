@@ -2588,4 +2588,16 @@ mod tests {
         assert_eq!(uniforms.ibl_params[0], 1.0, "ibl enabled flag");
         assert!((uniforms.ibl_params[1] - 0.8).abs() < 1e-6, "ibl intensity");
     }
+
+    /// InstanceData size must be exactly 144 bytes to match the WGSL struct
+    /// in pbr.wgsl, shadow.wgsl, prepass.wgsl, velocity.wgsl, gbuffer.wgsl.
+    /// Changing this without updating ALL shaders causes silent stride mismatch.
+    #[test]
+    fn instance_data_size_is_144() {
+        assert_eq!(
+            std::mem::size_of::<InstanceData>(),
+            144,
+            "InstanceData must be 144 bytes: model(64) + normal_matrix(64) + material_id(4) + pad(12)"
+        );
+    }
 }
