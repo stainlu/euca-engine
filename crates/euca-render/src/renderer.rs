@@ -205,6 +205,8 @@ pub struct DrawCommand {
 struct InstanceData {
     model: [[f32; 4]; 4],
     normal_matrix: [[f32; 4]; 4],
+    material_id: u32,
+    _inst_pad: [u32; 3],
 }
 
 /// Per-decal uniform data uploaded to the GPU before each decal draw call.
@@ -278,6 +280,12 @@ struct DrawBatch {
 
 /// Initial instance buffer capacity. Grows dynamically when exceeded.
 const INITIAL_INSTANCE_CAPACITY: usize = 16384;
+
+/// State for the bindless rendering path.
+struct BindlessState {
+    system: crate::bindless::BindlessMaterialSystem,
+    pipeline: wgpu::RenderPipeline,
+}
 const SHADOW_MAP_SIZE: u32 = 2048;
 const NUM_SHADOW_CASCADES: u32 = 3;
 const CASCADE_ORTHO_SIZES: [f32; 3] = [8.0, 20.0, 50.0];
@@ -372,6 +380,9 @@ pub struct Renderer {
     ibl_dummy_brdf_view: wgpu::TextureView,
     /// Fallback trilinear sampler for IBL textures.
     ibl_sampler: wgpu::Sampler,
+    /// Optional bindless material system + render pipeline.
+    /// When active, the opaque pass uses a single bind group for all materials.
+    bindless: Option<BindlessState>,
     /// Current capacity (in instances) of the main instance buffer.
     instance_capacity: usize,
     /// Current capacity (in instances) of the shadow instance buffer.
@@ -1065,6 +1076,7 @@ impl Renderer {
             ibl_dummy_cube_view,
             ibl_dummy_brdf_view,
             ibl_sampler,
+            bindless: None,
             instance_capacity: INITIAL_INSTANCE_CAPACITY,
             shadow_instance_capacity: INITIAL_INSTANCE_CAPACITY,
             unified_memory: unified,
@@ -1127,6 +1139,92 @@ impl Renderer {
                 }],
             });
         true
+    }
+
+    /// Enable the bindless material rendering path. When active, all opaque
+    /// geometry is drawn with a single material bind group (no per-batch
+    /// switching). Requires `TEXTURE_BINDING_ARRAY` GPU feature.
+    ///
+    /// Call this once after creating the renderer, before uploading materials.
+    pub fn enable_bindless(&mut self, gpu: &GpuContext) {
+        let features = gpu.device.features();
+        let system = crate::bindless::BindlessMaterialSystem::new(
+            &gpu.device,
+            features,
+            gpu.unified_memory,
+        );
+        if !system.is_enabled() {
+            log::warn!("Bindless materials requested but GPU lacks required features");
+            return;
+        }
+
+        // Create the bindless render pipeline with the same vertex layout but
+        // different group 2 bind group layout and shader.
+        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("PBR Bindless Shader"),
+            source: wgpu::ShaderSource::Wgsl(PBR_BINDLESS_SHADER.into()),
+        });
+        let pipeline_layout =
+            gpu.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("PBR Bindless Pipeline Layout"),
+                    bind_group_layouts: &[
+                        &self.instance_bgl,
+                        &self.scene_bgl,
+                        &system.bind_group_layout,
+                    ],
+                    push_constant_ranges: &[],
+                });
+        let pipeline = gpu
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("PBR Bindless Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[crate::vertex::Vertex::LAYOUT],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: self.depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: MSAA_SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        log::info!("Bindless material rendering enabled");
+        self.bindless = Some(BindlessState { system, pipeline });
+    }
+
+    /// Whether the bindless rendering path is active.
+    pub fn is_bindless(&self) -> bool {
+        self.bindless.is_some()
     }
 
     /// Upload CPU-side mesh data to the GPU and return a handle for use in
@@ -1267,6 +1365,13 @@ impl Renderer {
             _buffer: buffer,
             is_transparent: mat.alpha_mode.is_transparent(),
         });
+
+        // Also register with the bindless system if active.
+        if let Some(ref mut bl) = self.bindless {
+            let bl_handle = bl.system.add_material(mat);
+            debug_assert_eq!(bl_handle, handle, "Bindless handle must match traditional handle");
+        }
+
         handle
     }
 
@@ -1546,6 +1651,8 @@ impl Renderer {
             instances.push(InstanceData {
                 model: model.to_cols_array_2d(),
                 normal_matrix: normal_mat.to_cols_array_2d(),
+                material_id: cmd.material.0,
+                _inst_pad: [0; 3],
             });
         }
         batches.push(DrawBatch {
@@ -1614,6 +1721,8 @@ impl Renderer {
             instances.push(InstanceData {
                 model: model.to_cols_array_2d(),
                 normal_matrix: normal_mat.to_cols_array_2d(),
+                material_id: cmd.material.0,
+                _inst_pad: [0; 3],
             });
         }
         batches.push(DrawBatch {
@@ -1762,6 +1871,8 @@ impl Renderer {
                     InstanceData {
                         model: shadow_mvp.to_cols_array_2d(),
                         normal_matrix: [[0.0; 4]; 4],
+                        material_id: inst.material_id,
+                        _inst_pad: [0; 3],
                     }
                 })
                 .collect();
@@ -1875,6 +1986,11 @@ impl Renderer {
         self.scene_buffer
             .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
 
+        // Flush bindless material data to GPU before rendering.
+        if let Some(ref mut bl) = self.bindless {
+            bl.system.flush(&gpu.device, &gpu.queue, &self.textures);
+        }
+
         // Resolve MSAA into the post-process stack's ping buffer.
         let resolve_target = self.post_process_stack.ping_view();
 
@@ -1908,20 +2024,43 @@ impl Renderer {
             pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &self.scene_bind_group, &[]);
             pass.draw(0..3, 0..1);
-            pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.instance_bind_group, &[]);
             pass.set_bind_group(1, &self.scene_bind_group, &[]);
-            for batch in &opaque_batches {
-                let gpu_mat = &self.materials[batch.material.0 as usize];
-                pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
-                let mesh = &self.meshes[batch.mesh.0 as usize];
-                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(
-                    0..mesh.index_count,
-                    0,
-                    batch.instance_start..batch.instance_start + batch.instance_count,
-                );
+            if let Some(ref bl) = self.bindless {
+                // Bindless path: single pipeline + single material bind group.
+                pass.set_pipeline(&bl.pipeline);
+                pass.set_bind_group(2, &bl.system.bind_group, &[]);
+                for batch in &opaque_batches {
+                    let mesh = &self.meshes[batch.mesh.0 as usize];
+                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        mesh.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(
+                        0..mesh.index_count,
+                        0,
+                        batch.instance_start..batch.instance_start + batch.instance_count,
+                    );
+                }
+            } else {
+                // Traditional path: switch material bind group per batch.
+                pass.set_pipeline(&self.pipeline);
+                for batch in &opaque_batches {
+                    let gpu_mat = &self.materials[batch.material.0 as usize];
+                    pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
+                    let mesh = &self.meshes[batch.mesh.0 as usize];
+                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        mesh.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(
+                        0..mesh.index_count,
+                        0,
+                        batch.instance_start..batch.instance_start + batch.instance_count,
+                    );
+                }
             }
             // ── Decal pass: draw projected decal volumes after opaque geometry ──
             // Each decal is a unit cube scaled/positioned by its model matrix.
@@ -2181,6 +2320,7 @@ impl Renderer {
 const SHADOW_SHADER: &str = include_str!("../shaders/shadow.wgsl");
 
 const PBR_SHADER: &str = include_str!("../shaders/pbr.wgsl");
+const PBR_BINDLESS_SHADER: &str = include_str!("../shaders/pbr_bindless.wgsl");
 
 const SKY_SHADER: &str = include_str!("../shaders/sky.wgsl");
 
