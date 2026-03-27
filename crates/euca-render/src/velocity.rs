@@ -20,7 +20,7 @@
 //! let textures = VelocityTextures::new(&device, width, height);
 //! let pipeline = VelocityPipeline::new(&device, &prepass_instance_bgl, unified_memory);
 //! // ... each frame:
-//! pipeline.update_previous_models(&queue, &current_model_matrices);
+//! pipeline.update_previous_models(&device, &queue, &current_model_matrices);
 //! pipeline.write_scene(&queue, view_proj, prev_view_proj);
 //! pipeline.execute(&mut encoder, &textures, &prepass_depth_view, |pass| {
 //!     // draw opaque geometry (same draw calls as prepass)
@@ -33,8 +33,8 @@ use crate::vertex::Vertex;
 /// Texture format for the velocity buffer (2-channel half-float).
 pub const VELOCITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
-/// Maximum number of instances in a single velocity pass draw.
-const MAX_VELOCITY_INSTANCES: usize = 16384;
+/// Initial velocity instance buffer capacity. Grows dynamically when exceeded.
+const INITIAL_VELOCITY_INSTANCE_CAPACITY: usize = 16384;
 
 const VELOCITY_SHADER: &str = include_str!("../shaders/velocity.wgsl");
 
@@ -112,6 +112,10 @@ pub struct VelocityPipeline {
     prev_models: Vec<[[f32; 4]; 4]>,
     /// Whether `update_previous_models` has been called at least once.
     initialized: bool,
+    /// Current capacity (in instances) of the previous-model buffer.
+    prev_model_capacity: usize,
+    /// Whether the GPU uses unified memory (needed for buffer re-creation).
+    unified_memory: bool,
 }
 
 impl VelocityPipeline {
@@ -167,7 +171,7 @@ impl VelocityPipeline {
 
         // Each previous model is a mat4x4 = 64 bytes.
         let prev_model_size =
-            (MAX_VELOCITY_INSTANCES * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
+            (INITIAL_VELOCITY_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
         let prev_model_buffer = SmartBuffer::new(
             device,
             prev_model_size,
@@ -254,7 +258,34 @@ impl VelocityPipeline {
             prev_model_bind_group,
             prev_models: Vec::new(),
             initialized: false,
+            prev_model_capacity: INITIAL_VELOCITY_INSTANCE_CAPACITY,
+            unified_memory,
         }
+    }
+
+    /// Grow the previous-model buffer if `count` exceeds capacity.
+    pub fn ensure_prev_model_capacity(&mut self, device: &wgpu::Device, count: usize) {
+        if count <= self.prev_model_capacity {
+            return;
+        }
+        self.prev_model_capacity = count.next_power_of_two();
+        let size =
+            (self.prev_model_capacity * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
+        self.prev_model_buffer = SmartBuffer::new(
+            device,
+            size,
+            BufferKind::Storage,
+            self.unified_memory,
+            "Velocity PrevModel SSBO",
+        );
+        self.prev_model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Velocity PrevModel BG"),
+            layout: &self.prev_model_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.prev_model_buffer.raw().as_entire_binding(),
+            }],
+        });
     }
 
     /// Upload per-frame scene matrices (current and previous view-projection).
@@ -279,6 +310,7 @@ impl VelocityPipeline {
     /// all objects report zero velocity on the first frame.
     pub fn update_previous_models(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         current_models: &[[[f32; 4]; 4]],
     ) {
@@ -287,6 +319,9 @@ impl VelocityPipeline {
             self.prev_models = current_models.to_vec();
             self.initialized = true;
         }
+
+        // Grow buffer if needed before uploading.
+        self.ensure_prev_model_capacity(device, self.prev_models.len());
 
         // Upload previous frame's models to the GPU.
         if !self.prev_models.is_empty() {
@@ -398,12 +433,10 @@ mod tests {
     }
 
     #[test]
-    fn max_instances_matches_prepass() {
-        assert_eq!(MAX_VELOCITY_INSTANCES, 16384);
-        assert_eq!(
-            MAX_VELOCITY_INSTANCES, 16384,
-            "Velocity max instances must match prepass for shared instance buffer"
-        );
+    fn initial_capacity_matches_prepass() {
+        // Both prepass and velocity must start with the same initial capacity
+        // since they share the instance buffer bind group layout.
+        assert_eq!(INITIAL_VELOCITY_INSTANCE_CAPACITY, 16384);
     }
 
     #[test]

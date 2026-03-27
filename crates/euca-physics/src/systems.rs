@@ -148,6 +148,28 @@ fn integrate_positions(world: &mut World, dt: f32) {
             .collect()
     };
 
+    // Build a spatial grid over statics for CCD filtering (avoids O(dynamic * static)).
+    let ccd_cell_size = DEFAULT_CELL_SIZE;
+    let ccd_inv_cell = 1.0 / ccd_cell_size;
+    let mut ccd_grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>> =
+        std::collections::HashMap::with_capacity(statics.len());
+    for (idx, (_, pos, col)) in statics.iter().enumerate() {
+        let ext = shape_extent(&col.shape);
+        let min_x = ((pos.x - ext) * ccd_inv_cell).floor() as i32;
+        let max_x = ((pos.x + ext) * ccd_inv_cell).floor() as i32;
+        let min_y = ((pos.y - ext) * ccd_inv_cell).floor() as i32;
+        let max_y = ((pos.y + ext) * ccd_inv_cell).floor() as i32;
+        let min_z = ((pos.z - ext) * ccd_inv_cell).floor() as i32;
+        let max_z = ((pos.z + ext) * ccd_inv_cell).floor() as i32;
+        for cx in min_x..=max_x {
+            for cy in min_y..=max_y {
+                for cz in min_z..=max_z {
+                    ccd_grid.entry((cx, cy, cz)).or_default().push(idx);
+                }
+            }
+        }
+    }
+
     for (entity, old_pos, linear_vel, angular_vel, extent) in movers {
         let displacement = linear_vel * dt;
         let mut new_pos = old_pos + displacement;
@@ -171,15 +193,49 @@ fn integrate_positions(world: &mut World, dt: f32) {
             let ray = Ray::new(old_pos, displacement);
             let mut closest_t = 1.0_f32; // 1.0 = full displacement
 
-            for (static_e, static_pos, static_col) in &statics {
-                if *static_e == entity {
-                    continue;
-                }
-                if let Some(hit) = raycast_collider(&ray, *static_pos, static_col) {
-                    // hit.t is distance along ray; normalize to [0, 1] of displacement
-                    let t_normalized = hit.t / speed;
-                    if t_normalized < closest_t && t_normalized >= 0.0 {
-                        closest_t = t_normalized;
+            // Query only statics in cells overlapping the swept AABB
+            // (from old_pos to new_pos, expanded by body extent).
+            let swept_min = Vec3::new(
+                old_pos.x.min(new_pos.x) - extent,
+                old_pos.y.min(new_pos.y) - extent,
+                old_pos.z.min(new_pos.z) - extent,
+            );
+            let swept_max = Vec3::new(
+                old_pos.x.max(new_pos.x) + extent,
+                old_pos.y.max(new_pos.y) + extent,
+                old_pos.z.max(new_pos.z) + extent,
+            );
+            let cell_min_x = (swept_min.x * ccd_inv_cell).floor() as i32;
+            let cell_max_x = (swept_max.x * ccd_inv_cell).floor() as i32;
+            let cell_min_y = (swept_min.y * ccd_inv_cell).floor() as i32;
+            let cell_max_y = (swept_max.y * ccd_inv_cell).floor() as i32;
+            let cell_min_z = (swept_min.z * ccd_inv_cell).floor() as i32;
+            let cell_max_z = (swept_max.z * ccd_inv_cell).floor() as i32;
+
+            // Collect candidate static indices (deduplicate via a small set).
+            let mut tested = std::collections::HashSet::new();
+            for cx in cell_min_x..=cell_max_x {
+                for cy in cell_min_y..=cell_max_y {
+                    for cz in cell_min_z..=cell_max_z {
+                        if let Some(indices) = ccd_grid.get(&(cx, cy, cz)) {
+                            for &si in indices {
+                                if !tested.insert(si) {
+                                    continue;
+                                }
+                                let (static_e, static_pos, static_col) = &statics[si];
+                                if *static_e == entity {
+                                    continue;
+                                }
+                                if let Some(hit) =
+                                    raycast_collider(&ray, *static_pos, static_col)
+                                {
+                                    let t_normalized = hit.t / speed;
+                                    if t_normalized < closest_t && t_normalized >= 0.0 {
+                                        closest_t = t_normalized;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -205,8 +261,27 @@ fn integrate_positions(world: &mut World, dt: f32) {
 /// Minimum approach speed for a bounce to occur. Below this, the object comes to rest.
 const REST_VELOCITY_THRESHOLD: f32 = 0.5;
 
-/// Spatial hash cell size. Bodies are inserted into all cells their AABB overlaps.
-const BROADPHASE_CELL_SIZE: f32 = 4.0;
+/// Default spatial hash cell size when there are too few bodies to compute
+/// a meaningful adaptive size.
+const DEFAULT_CELL_SIZE: f32 = 4.0;
+
+/// Compute an adaptive broadphase cell size from the body population.
+/// Uses 2x the approximate median body extent, clamped to [1.0, 32.0].
+/// Samples every 64th body to keep cost O(1) relative to body count.
+fn adaptive_cell_size(bodies: &[Body]) -> f32 {
+    if bodies.len() < 20 {
+        return DEFAULT_CELL_SIZE;
+    }
+    let step = (bodies.len() / 64).max(1);
+    let mut extents: Vec<f32> = bodies
+        .iter()
+        .step_by(step)
+        .map(|b| shape_extent(&b.shape))
+        .collect();
+    extents.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = extents[extents.len() / 2];
+    (median * 2.0).clamp(1.0, 32.0)
+}
 
 /// Compute the AABB extents for any collider shape.
 fn shape_extent(shape: &ColliderShape) -> f32 {
@@ -236,8 +311,8 @@ struct Body {
 /// Spatial hash broadphase: returns candidate pairs (indices into bodies slice).
 /// Only pairs sharing at least one grid cell are returned. Eliminates most
 /// non-colliding pairs for O(n * avg_neighbors) instead of O(n^2).
-fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
-    use std::collections::{HashMap, HashSet};
+fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize)> {
+    use std::collections::HashMap;
 
     if bodies.len() < 20 {
         // For small body counts, O(n^2) is faster than hashing overhead
@@ -250,10 +325,11 @@ fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
         return pairs;
     }
 
-    let inv_cell = 1.0 / BROADPHASE_CELL_SIZE;
+    let inv_cell = 1.0 / cell_size;
 
-    // Map: cell_key -> list of body indices
-    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+    // Map: cell_key -> list of body indices. Pre-allocate for typical density.
+    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> =
+        HashMap::with_capacity(bodies.len());
 
     for (idx, body) in bodies.iter().enumerate() {
         let ext = shape_extent(&body.shape);
@@ -273,20 +349,22 @@ fn broadphase_spatial_hash(bodies: &[Body]) -> Vec<(usize, usize)> {
         }
     }
 
-    // Collect unique pairs from cells
-    let mut pair_set: HashSet<(usize, usize)> = HashSet::new();
+    // Collect unique pairs using a sorted Vec instead of HashSet.
+    // For typical broadphase pair counts this is faster than hashing.
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
     for cell_bodies in grid.values() {
         for i in 0..cell_bodies.len() {
             for j in (i + 1)..cell_bodies.len() {
                 let a = cell_bodies[i];
                 let b = cell_bodies[j];
                 let pair = if a < b { (a, b) } else { (b, a) };
-                pair_set.insert(pair);
+                pairs.push(pair);
             }
         }
     }
-
-    pair_set.into_iter().collect()
+    pairs.sort_unstable();
+    pairs.dedup();
+    pairs
 }
 
 /// Number of constraint solver iterations. More = more stable stacking.
@@ -331,11 +409,14 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
     // Collect collision events to emit after solver
     let mut events: Vec<CollisionEvent> = Vec::new();
 
-    for iteration in 0..SOLVER_ITERATIONS {
-        // Recompute broadphase each iteration (positions change)
-        let candidate_pairs = broadphase_spatial_hash(&bodies);
+    // Compute broadphase once: position corrections per solver iteration are
+    // sub-centimeter, so pairs are stable across iterations. This reduces
+    // broadphase cost from O(4 * N * neighbors) to O(N * neighbors).
+    let cell_size = adaptive_cell_size(&bodies);
+    let candidate_pairs = broadphase_spatial_hash(&bodies, cell_size);
 
-        for (i, j) in candidate_pairs {
+    for iteration in 0..SOLVER_ITERATIONS {
+        for &(i, j) in &candidate_pairs {
             if bodies[i].body_type == RigidBodyType::Static
                 && bodies[j].body_type == RigidBodyType::Static
             {

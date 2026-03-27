@@ -169,17 +169,10 @@ unsafe fn run_batch_parallel(
 ) {
     let world_ptr = world as *mut World;
 
-    std::thread::scope(|s| {
-        let mut handles = Vec::new();
+    rayon::in_place_scope(|s| {
         for &idx in indices {
             let job = SystemJob(&mut *systems[idx] as *mut dyn System, world_ptr);
-            handles.push(s.spawn(move || unsafe { job.run() }));
-        }
-        for h in handles {
-            match h.join() {
-                Ok(()) => {}
-                Err(e) => log::error!("System panicked during parallel execution: {:?}", e),
-            }
+            s.spawn(move |_| unsafe { job.run() });
         }
     });
 }
@@ -523,7 +516,7 @@ impl ParallelSchedule {
     }
 
     /// Execute each batch. Systems within a batch run in parallel using
-    /// `std::thread::scope`; batches run sequentially.
+    /// `rayon::scope`; batches run sequentially.
     ///
     /// # Panics
     ///
@@ -643,7 +636,7 @@ impl ParallelSchedule {
         min_batch
     }
 
-    /// Run a batch of systems in parallel using `std::thread::scope`.
+    /// Run a batch of systems in parallel using `rayon::scope`.
     ///
     /// # Safety
     ///
@@ -653,17 +646,13 @@ impl ParallelSchedule {
     unsafe fn run_batch_parallel(&mut self, indices: &[usize], world: &mut World) {
         let world_ptr = world as *mut World;
 
-        std::thread::scope(|s| {
-            let mut handles = Vec::new();
+        rayon::in_place_scope(|s| {
             for &idx in indices {
-                let job = SystemJob(&mut *self.systems[idx].system as *mut dyn System, world_ptr);
-                handles.push(s.spawn(move || unsafe { job.run() }));
-            }
-            for h in handles {
-                match h.join() {
-                    Ok(()) => {}
-                    Err(e) => log::error!("System panicked during parallel execution: {:?}", e),
-                }
+                let job = SystemJob(
+                    &mut *self.systems[idx].system as *mut dyn System,
+                    world_ptr,
+                );
+                s.spawn(move |_| unsafe { job.run() });
             }
         });
     }

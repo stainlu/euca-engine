@@ -33,8 +33,8 @@ pub const PREPASS_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth
 /// Texture format for the normal attachment (view-space XYZ + spare channel).
 pub const PREPASS_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// Maximum number of instances in a single pre-pass draw.
-const MAX_PREPASS_INSTANCES: usize = 16384;
+/// Initial pre-pass instance buffer capacity. Grows dynamically when exceeded.
+const INITIAL_PREPASS_INSTANCE_CAPACITY: usize = 16384;
 
 const PREPASS_SHADER: &str = include_str!("../shaders/prepass.wgsl");
 
@@ -120,6 +120,10 @@ pub struct PrepassPipeline {
     instance_bind_group: wgpu::BindGroup,
     scene_buffer: SmartBuffer,
     scene_bind_group: wgpu::BindGroup,
+    /// Current capacity (in instances) of the instance buffer.
+    instance_capacity: usize,
+    /// Whether the GPU uses unified memory (needed for buffer re-creation).
+    unified_memory: bool,
 }
 
 impl PrepassPipeline {
@@ -155,7 +159,8 @@ impl PrepassPipeline {
             }],
         });
 
-        let instance_size = (MAX_PREPASS_INSTANCES * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
+        let instance_size =
+            (INITIAL_PREPASS_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
         let instance_buffer = SmartBuffer::new(
             device,
             instance_size,
@@ -246,6 +251,8 @@ impl PrepassPipeline {
             instance_bind_group,
             scene_buffer,
             scene_bind_group,
+            instance_capacity: INITIAL_PREPASS_INSTANCE_CAPACITY,
+            unified_memory,
         }
     }
 
@@ -262,6 +269,30 @@ impl PrepassPipeline {
         };
         self.scene_buffer
             .write_bytes(queue, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Grow the instance buffer if `count` exceeds capacity.
+    pub fn ensure_instance_capacity(&mut self, device: &wgpu::Device, count: usize) {
+        if count <= self.instance_capacity {
+            return;
+        }
+        self.instance_capacity = count.next_power_of_two();
+        let size = (self.instance_capacity * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
+        self.instance_buffer = SmartBuffer::new(
+            device,
+            size,
+            BufferKind::Storage,
+            self.unified_memory,
+            "Prepass Instance SSBO",
+        );
+        self.instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Prepass Instance BG"),
+            layout: &self.instance_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.instance_buffer.raw().as_entire_binding(),
+            }],
+        });
     }
 
     /// Upload instance data (model + normal matrices) for the current frame.
@@ -410,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn max_instances_matches_deferred() {
-        assert_eq!(MAX_PREPASS_INSTANCES, 16384);
+    fn initial_capacity_matches_deferred() {
+        assert_eq!(INITIAL_PREPASS_INSTANCE_CAPACITY, 16384);
     }
 }

@@ -157,13 +157,18 @@ pub struct DeferredPipeline {
     gbuffer_sampler: wgpu::Sampler,
     material_sampler: wgpu::Sampler,
     hdr_format: wgpu::TextureFormat,
+    /// Current capacity (in instances) of the deferred instance buffer.
+    instance_capacity: usize,
+    /// Whether the GPU uses unified memory (needed for buffer re-creation).
+    unified_memory: bool,
 }
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GBufferSceneUniforms {
     camera_vp: [[f32; 4]; 4],
 }
-const MAX_DEFERRED_INSTANCES: usize = 16384;
+/// Initial deferred instance buffer capacity. Grows dynamically when exceeded.
+const INITIAL_DEFERRED_INSTANCE_CAPACITY: usize = 16384;
 
 impl DeferredPipeline {
     pub fn new(device: &wgpu::Device, width: u32, height: u32, unified_memory: bool) -> Self {
@@ -182,7 +187,7 @@ impl DeferredPipeline {
                 count: None,
             }],
         });
-        let ibsz = (MAX_DEFERRED_INSTANCES * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
+        let ibsz = (INITIAL_DEFERRED_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
         let instance_buffer = SmartBuffer::new(
             device,
             ibsz,
@@ -406,6 +411,8 @@ impl DeferredPipeline {
             gbuffer_sampler,
             material_sampler,
             hdr_format,
+            instance_capacity: INITIAL_DEFERRED_INSTANCE_CAPACITY,
+            unified_memory,
         }
     }
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
@@ -429,6 +436,29 @@ impl DeferredPipeline {
     }
     pub fn hdr_format(&self) -> wgpu::TextureFormat {
         self.hdr_format
+    }
+    /// Grow the deferred instance buffer if `count` exceeds capacity.
+    pub fn ensure_instance_capacity(&mut self, device: &wgpu::Device, count: usize) {
+        if count <= self.instance_capacity {
+            return;
+        }
+        self.instance_capacity = count.next_power_of_two();
+        let size = (self.instance_capacity * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
+        self.instance_buffer = SmartBuffer::new(
+            device,
+            size,
+            BufferKind::Storage,
+            self.unified_memory,
+            "Deferred Instance SSBO",
+        );
+        self.instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Deferred Instance BG"),
+            layout: &self.instance_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.instance_buffer.raw().as_entire_binding(),
+            }],
+        });
     }
     pub fn write_instances<T: bytemuck::Pod>(&self, queue: &wgpu::Queue, data: &[T]) {
         self.instance_buffer.write(queue, data);

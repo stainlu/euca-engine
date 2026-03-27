@@ -275,7 +275,8 @@ struct DrawBatch {
     instance_count: u32,
 }
 
-const MAX_INSTANCES: usize = 16384;
+/// Initial instance buffer capacity. Grows dynamically when exceeded.
+const INITIAL_INSTANCE_CAPACITY: usize = 16384;
 const SHADOW_MAP_SIZE: u32 = 2048;
 const NUM_SHADOW_CASCADES: u32 = 3;
 const CASCADE_ORTHO_SIZES: [f32; 3] = [8.0, 20.0, 50.0];
@@ -370,6 +371,12 @@ pub struct Renderer {
     ibl_dummy_brdf_view: wgpu::TextureView,
     /// Fallback trilinear sampler for IBL textures.
     ibl_sampler: wgpu::Sampler,
+    /// Current capacity (in instances) of the main instance buffer.
+    instance_capacity: usize,
+    /// Current capacity (in instances) of the shadow instance buffer.
+    shadow_instance_capacity: usize,
+    /// Whether the GPU uses unified memory (needed for buffer re-creation).
+    unified_memory: bool,
     /// Active IBL resources (set via `set_ibl`, cleared via `clear_ibl`).
     ibl_resources: Option<IblResources>,
     /// IBL intensity multiplier (default 1.0).
@@ -387,7 +394,8 @@ impl Renderer {
     /// The renderer is bound to the surface format and initial size reported
     /// by `gpu`. Call [`resize`](Self::resize) when the window size changes.
     pub fn new(gpu: &GpuContext) -> Self {
-        let instance_buf_size = (MAX_INSTANCES * std::mem::size_of::<InstanceData>()) as u64;
+        let instance_buf_size =
+            (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64;
         let unified = gpu.unified_memory;
         let instance_buffer = SmartBuffer::new(
             &gpu.device,
@@ -1056,11 +1064,68 @@ impl Renderer {
             ibl_dummy_cube_view,
             ibl_dummy_brdf_view,
             ibl_sampler,
+            instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            shadow_instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            unified_memory: unified,
             ibl_resources: None,
             ibl_intensity: 1.0,
             _ibl_dummy_cube: ibl_dummy_cube,
             _ibl_dummy_brdf: ibl_dummy_brdf,
         }
+    }
+
+    /// Grow the main instance buffer and rebuild its bind group if `count`
+    /// exceeds the current capacity. Returns `true` if the buffer was grown.
+    fn ensure_instance_capacity(&mut self, device: &wgpu::Device, count: usize) -> bool {
+        if count <= self.instance_capacity {
+            return false;
+        }
+        self.instance_capacity = count.next_power_of_two();
+        let size = (self.instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
+        self.instance_buffer = SmartBuffer::new(
+            device,
+            size,
+            BufferKind::Storage,
+            self.unified_memory,
+            "Instance SSBO",
+        );
+        self.instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Instance BG"),
+            layout: &self.instance_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.instance_buffer.raw().as_entire_binding(),
+            }],
+        });
+        true
+    }
+
+    /// Grow the shadow instance buffer and rebuild its bind group if `count`
+    /// exceeds the current capacity.
+    fn ensure_shadow_instance_capacity(&mut self, device: &wgpu::Device, count: usize) -> bool {
+        if count <= self.shadow_instance_capacity {
+            return false;
+        }
+        self.shadow_instance_capacity = count.next_power_of_two();
+        let size =
+            (self.shadow_instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
+        self.shadow_instance_buffer = SmartBuffer::new(
+            device,
+            size,
+            BufferKind::Storage,
+            self.unified_memory,
+            "Shadow Instance SSBO",
+        );
+        self.shadow_instance_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Shadow Instance BG"),
+                layout: &self.instance_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.shadow_instance_buffer.raw().as_entire_binding(),
+                }],
+            });
+        true
     }
 
     /// Upload CPU-side mesh data to the GPU and return a handle for use in
@@ -1671,6 +1736,18 @@ impl Renderer {
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
         let opaque_cmds = self.apply_occlusion_culling(&opaque_cmds, vp);
         let (opaque_instances, opaque_batches) = Self::build_batches_from_refs(&opaque_cmds);
+        // Pre-build transparent batches so we can ensure capacity before
+        // the render pass borrows self immutably via resolve_target.
+        let (trans_instances, trans_batches) = if !transparent_cmds.is_empty() {
+            Self::build_batches_from_refs(&transparent_cmds)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        // Ensure capacity for the larger of opaque/transparent sets.
+        let max_needed = opaque_instances.len().max(trans_instances.len());
+        if max_needed > 0 {
+            self.ensure_instance_capacity(&gpu.device, max_needed);
+        }
         if !opaque_instances.is_empty() {
             self.instance_buffer.write(&gpu.queue, &opaque_instances);
         }
@@ -1688,6 +1765,7 @@ impl Renderer {
                 })
                 .collect();
             if !shadow_instances.is_empty() {
+                self.ensure_shadow_instance_capacity(&gpu.device, shadow_instances.len());
                 self.shadow_instance_buffer
                     .write(&gpu.queue, &shadow_instances);
             }
@@ -1870,8 +1948,6 @@ impl Renderer {
             }
 
             if !transparent_cmds.is_empty() {
-                let (trans_instances, trans_batches) =
-                    Self::build_batches_from_refs(&transparent_cmds);
                 if !trans_instances.is_empty() {
                     self.instance_buffer.write(&gpu.queue, &trans_instances);
                 }
