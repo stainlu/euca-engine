@@ -17,6 +17,8 @@
 
 mod buffer;
 mod camera;
+/// Retained render extraction layer (change-tracked ECS → DrawCommand sync).
+pub mod extract;
 /// Clustered light assignment for tiled/clustered forward shading.
 pub mod clustered;
 /// GPU compute pipeline management and indirect dispatch utilities.
@@ -120,6 +122,7 @@ pub use motion_blur::{MotionBlurPass, MotionBlurSettings};
 pub use occlusion::{HzbPyramid, OcclusionCuller, OcclusionResult};
 pub use plugin::RenderPlugin;
 pub use post_process::{PostProcessSettings, PostProcessStack};
+pub use extract::RenderExtractor;
 pub use renderer::{DrawCommand, RenderQuality, Renderer};
 pub use ssgi::{SsgiExecuteParams, SsgiPass, SsgiSettings, step_size as ssgi_step_size};
 pub use ssr::{

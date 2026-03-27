@@ -186,6 +186,7 @@ struct MaterialUniforms {
 ///
 /// Pairs a mesh and material with a world-space transform. The renderer
 /// batches draw commands by mesh and material to minimize GPU state changes.
+#[derive(Clone)]
 pub struct DrawCommand {
     /// Handle to the GPU mesh to draw.
     pub mesh: MeshHandle,
