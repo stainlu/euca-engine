@@ -7,14 +7,14 @@ pub struct TextureHandle(pub u32);
 /// A default 1x1 white texture is always available at index 0
 /// ([`TextureStore::default_white`]) and is used as the fallback when a
 /// material has no albedo texture assigned.
-pub struct TextureStore {
-    textures: Vec<GpuTexture>,
+pub struct TextureStore<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    textures: Vec<GpuTexture<D>>,
 }
 
-struct GpuTexture {
-    pub view: wgpu::TextureView,
+struct GpuTexture<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pub view: D::TextureView,
     #[allow(dead_code)]
-    pub texture: wgpu::Texture,
+    pub texture: D::Texture,
 }
 
 impl TextureStore {
