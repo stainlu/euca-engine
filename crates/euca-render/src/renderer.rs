@@ -1231,21 +1231,27 @@ impl Renderer {
     /// Upload CPU-side mesh data to the GPU and return a handle for use in
     /// [`DrawCommand`]s.
     pub fn upload_mesh(&mut self, gpu: &GpuContext, mesh: &Mesh) -> MeshHandle {
-        use wgpu::util::DeviceExt;
-        let vb = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&mesh.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let ib = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(&mesh.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        use euca_rhi::{BufferDesc, BufferUsages, RenderDevice};
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+
+        let vdata = bytemuck::cast_slice::<_, u8>(&mesh.vertices);
+        let vb = rhi.create_buffer(&BufferDesc {
+            label: Some("Vertex Buffer"),
+            size: vdata.len() as u64,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        rhi.write_buffer(&vb, 0, vdata);
+
+        let idata = bytemuck::cast_slice::<_, u8>(&mesh.indices);
+        let ib = rhi.create_buffer(&BufferDesc {
+            label: Some("Index Buffer"),
+            size: idata.len() as u64,
+            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        rhi.write_buffer(&ib, 0, idata);
+
         let handle = MeshHandle(self.meshes.len() as u32);
         self.meshes.push(GpuMesh {
             vertex_buffer: vb,
@@ -1285,7 +1291,12 @@ impl Renderer {
     /// Upload a PBR material (uniforms + texture bindings) to the GPU and
     /// return a handle for use in [`DrawCommand`]s.
     pub fn upload_material(&mut self, gpu: &GpuContext, mat: &Material) -> MaterialHandle {
-        use wgpu::util::DeviceExt;
+        use euca_rhi::{
+            BindGroupDesc, BindGroupEntry, BindingResource, BufferBinding, BufferDesc,
+            BufferUsages, RenderDevice,
+        };
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+
         let handle = MaterialHandle(self.materials.len() as u32);
         let uniforms = MaterialUniforms {
             albedo: mat.albedo,
@@ -1312,13 +1323,15 @@ impl Renderer {
             alpha_cutoff: mat.alpha_mode.cutoff(),
             _pad: 0.0,
         };
-        let buffer = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Material UBO"),
-                contents: bytemuck::bytes_of(&uniforms),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+        let ubo_data = bytemuck::bytes_of(&uniforms);
+        let buffer = rhi.create_buffer(&BufferDesc {
+            label: Some("Material UBO"),
+            size: ubo_data.len() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        rhi.write_buffer(&buffer, 0, ubo_data);
+
         let dw = TextureStore::default_white();
         let albedo_view = self.textures.view(mat.albedo_texture.unwrap_or(dw));
         let normal_view = self.textures.view(mat.normal_texture.unwrap_or(dw));
@@ -1327,37 +1340,41 @@ impl Renderer {
             .view(mat.metallic_roughness_texture.unwrap_or(dw));
         let ao_view = self.textures.view(mat.ao_texture.unwrap_or(dw));
         let emissive_view = self.textures.view(mat.emissive_texture.unwrap_or(dw));
-        let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = rhi.create_bind_group(&BindGroupDesc {
             label: Some("Material BG"),
             layout: &self.material_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 0,
-                    resource: buffer.as_entire_binding(),
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(albedo_view),
+                    resource: BindingResource::TextureView(albedo_view),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: BindingResource::Sampler(&self.sampler),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(normal_view),
+                    resource: BindingResource::TextureView(normal_view),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(mr_view),
+                    resource: BindingResource::TextureView(mr_view),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(ao_view),
+                    resource: BindingResource::TextureView(ao_view),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(emissive_view),
+                    resource: BindingResource::TextureView(emissive_view),
                 },
             ],
         });
@@ -1770,22 +1787,19 @@ impl Renderer {
         point_lights: &[(euca_math::Vec3, &crate::light::PointLight)],
         spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
     ) {
-        let output = match gpu.surface.get_current_texture() {
+        use euca_rhi::RenderDevice;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+
+        let output = match rhi.get_current_texture() {
             Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return,
+            Err(euca_rhi::SurfaceError::Outdated | euca_rhi::SurfaceError::Lost) => return,
             Err(e) => {
                 log::error!("Surface error: {e}");
                 return;
             }
         };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
+        let view = rhi.surface_texture_view(&output);
+        let mut encoder = rhi.create_command_encoder(Some("Render Encoder"));
         self.render_to_view_with_lights(
             gpu,
             camera,
@@ -1797,8 +1811,8 @@ impl Renderer {
             &view,
             &mut encoder,
         );
-        gpu.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        rhi.submit(encoder);
+        rhi.present(output);
     }
 
     /// Render one frame into a caller-provided texture view (no point/spot
