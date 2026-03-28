@@ -89,7 +89,7 @@ impl Default for GpuParticleConfig {
 
 /// A GPU-driven particle system.
 #[allow(dead_code)]
-pub struct GpuParticleSystem {
+pub struct GpuParticleSystem<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     config: GpuParticleConfig,
     position: [f32; 3],
 
@@ -99,12 +99,12 @@ pub struct GpuParticleSystem {
     particle_buffer: GpuBuffer,
     counter_buffer: GpuBuffer,
     params_buffer: GpuBuffer,
-    compute_bind_group: wgpu::BindGroup,
+    compute_bind_group: D::BindGroup,
 
     // Render resources
-    render_pipeline: wgpu::RenderPipeline,
+    render_pipeline: D::RenderPipeline,
     camera_buffer: GpuBuffer,
-    render_bind_group: wgpu::BindGroup,
+    render_bind_group: D::BindGroup,
 
     // Emission accumulator
     emit_accumulator: f32,
