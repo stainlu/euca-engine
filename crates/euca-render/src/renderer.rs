@@ -12,6 +12,7 @@ use crate::texture::{TextureHandle, TextureStore};
 use crate::vertex::Vertex;
 use crate::volumetric::{FrameParams, VolumetricFogPass, VolumetricFogSettings};
 use euca_math::Mat4;
+use euca_rhi::RenderDevice;
 
 /// Preset quality tiers that map to sensible [`PostProcessSettings`] defaults.
 ///
@@ -432,55 +433,62 @@ impl Renderer {
             "Shadow Instance SSBO",
         );
         let textures = TextureStore::new(&gpu.device, &gpu.queue);
-        let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = rhi.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("Material Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: euca_rhi::AddressMode::Repeat,
+            address_mode_v: euca_rhi::AddressMode::Repeat,
+            address_mode_w: euca_rhi::AddressMode::Repeat,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
+            mipmap_filter: euca_rhi::FilterMode::Linear,
             ..Default::default()
         });
-        let shadow_map = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        let shadow_map = rhi.create_texture(&euca_rhi::TextureDesc {
             label: Some("Shadow Map Array"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: SHADOW_MAP_SIZE,
                 height: SHADOW_MAP_SIZE,
                 depth_or_array_layers: NUM_SHADOW_CASCADES,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Depth32Float,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let shadow_map_view = shadow_map.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+        let shadow_map_view = rhi.create_texture_view(
+            &shadow_map,
+            &euca_rhi::TextureViewDesc {
+                dimension: Some(euca_rhi::TextureViewDimension::D2Array),
+                ..Default::default()
+            },
+        );
         let shadow_cascade_views: Vec<wgpu::TextureView> = (0..NUM_SHADOW_CASCADES)
             .map(|i| {
-                shadow_map.create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_array_layer: i,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                })
+                rhi.create_texture_view(
+                    &shadow_map,
+                    &euca_rhi::TextureViewDesc {
+                        dimension: Some(euca_rhi::TextureViewDimension::D2),
+                        base_array_layer: i,
+                        array_layer_count: Some(1),
+                        ..Default::default()
+                    },
+                )
             })
             .collect();
-        let shadow_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+        let shadow_sampler = rhi.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("Shadow Sampler"),
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(euca_rhi::CompareFunction::LessEqual),
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
             ..Default::default()
         });
-        let shadow_depth_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+        let shadow_depth_sampler = rhi.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("Shadow Depth Sampler"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: euca_rhi::FilterMode::Nearest,
+            min_filter: euca_rhi::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -623,153 +631,168 @@ impl Renderer {
                 ],
             });
 
-        let instance_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let instance_bind_group = rhi.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Instance BG"),
             layout: &instance_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: instance_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: instance_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
-        let shadow_instance_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let shadow_instance_bind_group = rhi.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Shadow Instance BG"),
             layout: &instance_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: shadow_instance_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: shadow_instance_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
         // --- IBL fallback textures (1x1 black) ---
-        let ibl_dummy_cube = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        let ibl_dummy_cube = rhi.create_texture(&euca_rhi::TextureDesc {
             label: Some("IBL Dummy Cubemap"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 6,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::TEXTURE_BINDING | euca_rhi::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         // Write black (all-zero) pixels to each face.
         let zero_pixel = [0u8; 8]; // 4 x f16 = 8 bytes, all zeros = black
         for face in 0..6u32 {
-            gpu.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
+            rhi.write_texture(
+                &euca_rhi::TexelCopyTextureInfo {
                     texture: &ibl_dummy_cube,
                     mip_level: 0,
-                    origin: wgpu::Origin3d {
+                    origin: euca_rhi::Origin3d {
                         x: 0,
                         y: 0,
                         z: face,
                     },
-                    aspect: wgpu::TextureAspect::All,
+                    aspect: euca_rhi::TextureAspect::All,
                 },
                 &zero_pixel,
-                wgpu::TexelCopyBufferLayout {
+                &euca_rhi::TextureDataLayout {
                     offset: 0,
                     bytes_per_row: Some(8),
                     rows_per_image: Some(1),
                 },
-                wgpu::Extent3d {
+                euca_rhi::Extent3d {
                     width: 1,
                     height: 1,
                     depth_or_array_layers: 1,
                 },
             );
         }
-        let ibl_dummy_cube_view = ibl_dummy_cube.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("IBL Dummy Cubemap View"),
-            dimension: Some(wgpu::TextureViewDimension::Cube),
-            ..Default::default()
-        });
+        let ibl_dummy_cube_view = rhi.create_texture_view(
+            &ibl_dummy_cube,
+            &euca_rhi::TextureViewDesc {
+                label: Some("IBL Dummy Cubemap View"),
+                dimension: Some(euca_rhi::TextureViewDimension::Cube),
+                ..Default::default()
+            },
+        );
 
         // The BRDF LUT uses Rgba16Float (filterable on all GPUs including Apple Silicon).
-        let ibl_dummy_brdf = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        let ibl_dummy_brdf = rhi.create_texture(&euca_rhi::TextureDesc {
             label: Some("IBL Dummy BRDF LUT"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::TEXTURE_BINDING | euca_rhi::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
+        rhi.write_texture(
+            &euca_rhi::TexelCopyTextureInfo {
                 texture: &ibl_dummy_brdf,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: euca_rhi::Origin3d::default(),
+                aspect: euca_rhi::TextureAspect::All,
             },
-            &[0u8; 8], // 2 x f32 = 8 bytes, all zeros
-            wgpu::TexelCopyBufferLayout {
+            &[0u8; 8], // 4 x f16 = 8 bytes, all zeros
+            &euca_rhi::TextureDataLayout {
                 offset: 0,
                 bytes_per_row: Some(8),
                 rows_per_image: Some(1),
             },
-            wgpu::Extent3d {
+            euca_rhi::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
         );
         let ibl_dummy_brdf_view =
-            ibl_dummy_brdf.create_view(&wgpu::TextureViewDescriptor::default());
+            rhi.create_texture_view(&ibl_dummy_brdf, &euca_rhi::TextureViewDesc::default());
 
-        let ibl_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+        let ibl_sampler = rhi.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("IBL Sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
+            mipmap_filter: euca_rhi::FilterMode::Linear,
+            address_mode_u: euca_rhi::AddressMode::ClampToEdge,
+            address_mode_v: euca_rhi::AddressMode::ClampToEdge,
+            address_mode_w: euca_rhi::AddressMode::ClampToEdge,
             ..Default::default()
         });
 
-        let scene_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let scene_bind_group = rhi.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Scene BG"),
             layout: &scene_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: scene_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: scene_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                    resource: euca_rhi::BindingResource::TextureView(&shadow_map_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&shadow_sampler),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&shadow_depth_sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&shadow_depth_sampler),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&ibl_dummy_cube_view),
+                    resource: euca_rhi::BindingResource::TextureView(&ibl_dummy_cube_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&ibl_dummy_cube_view),
+                    resource: euca_rhi::BindingResource::TextureView(&ibl_dummy_cube_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&ibl_dummy_brdf_view),
+                    resource: euca_rhi::BindingResource::TextureView(&ibl_dummy_brdf_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::Sampler(&ibl_sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&ibl_sampler),
                 },
             ],
         });
@@ -1011,12 +1034,16 @@ impl Renderer {
                     count: None,
                 }],
             });
-        let decal_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let decal_bind_group = rhi.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Decal BG"),
             layout: &decal_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: decal_uniform_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: decal_uniform_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
 
