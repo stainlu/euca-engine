@@ -1,10 +1,10 @@
-# Euca Engine — V2 Roadmap
+# Euca Engine — Roadmap
 
-> **Status (March 2026):** All phases (A–G) are complete. 24 crates, 850+ tests. AI agents can build and observe games via 30 CLI command groups / 75+ HTTP endpoints. Next: prove end-to-end (playable game, AI agent plays).
+> **Status (March 2026):** V2 phases (A–G) are complete. 25 crates, 850+ tests. AI agents can build and observe games via 30 CLI command groups / 75+ HTTP endpoints. RHI abstraction and native Metal backend landed (V3 Phases A–B complete, Phase C in progress). Next: Metal-specific features, prove end-to-end (AI agent plays).
 
 ## What we built (V1 recap)
 
-**24 crates, 850+ tests, MIT license, custom everything on the critical path.**
+**25 crates, 850+ tests, MIT license, custom everything on the critical path.**
 
 | Layer | What | Custom? |
 |-------|------|---------|
@@ -13,7 +13,7 @@
 | Physics | AABB/sphere collision, raycasting, gravity, push-out resolution | Yes |
 | Networking | Raw UDP transport, PacketHeader (seq/ack/ack_bits), GameServer/Client, bincode protocol | Yes |
 | Input | InputState, ActionMap, timestamped InputSnapshot | Yes |
-| Rendering | wgpu PBR (Cook-Torrance BRDF), materials, lights, meshes | wgpu dep |
+| Rendering | RHI trait (`RenderDevice`) with wgpu and native Metal backends. PBR (Cook-Torrance BRDF), materials, lights, meshes | wgpu / objc2-metal dep |
 | Editor | 3D viewport, click-to-select with raycasting, selection outline, editable transforms, orbit/pan/zoom camera, FPS counter, play/pause/step/stop | egui dep |
 | Agent API | HTTP server (axum), CLI tool, headless mode | axum dep |
 | Multiplayer | Working server + client demo over raw UDP | Proven |
@@ -193,3 +193,48 @@ New crate `euca-gameplay` (39 tests):
 8. ✅ **Data-Driven Rules** — OnDeathRule, TimerRule, HealthBelowRule with GameAction execution. Agents define "when X, do Y" without code.
 9. ✅ **HUD** — Text, bars, rectangles via egui, controlled by CLI
 10. ✅ **Full CLI integration** — entity damage/heal, game create/state, trigger/projectile/ai/rule/ui commands
+
+---
+
+## V3: RHI Abstraction & Native Metal Backend
+
+**Theme: Own the GPU. Compile-time backend dispatch, zero-cost abstraction, Metal-native on Apple Silicon.**
+
+### Phase A: RHI Trait + Generification ✅
+
+Define a `RenderDevice` trait with associated types for all GPU resources. Make the entire renderer generic over this trait so backends are selected at compile time with no dynamic dispatch.
+
+1. ✅ **`euca-rhi` crate** — `RenderDevice` trait with associated types (`Buffer`, `Texture`, `TextureView`, `Sampler`, `BindGroupLayout`, `BindGroup`, `PipelineLayout`, `RenderPipeline`, `ComputePipeline`, `CommandEncoder`, `ShaderModule`)
+2. ✅ **`WgpuDevice`** — Implements `RenderDevice` via wgpu 27, cross-platform (Vulkan/Metal/DX12/WebGPU)
+3. ✅ **Generic `Renderer<D: RenderDevice>`** — All subsystems (`SmartBuffer<D>`, `PostProcessStack<D>`, shadow maps, clustered lights) parameterized over the backend
+4. ✅ **Zero regression** — All existing features work identically through `WgpuDevice`
+
+### Phase B: Metal Backend ✅ (core rendering)
+
+Native Metal backend via `objc2-metal` for Apple Silicon. Direct Metal API access without wgpu's translation layer.
+
+1. ✅ **`MetalDevice`** — Implements `RenderDevice` with `MTLDevice`, `MTLCommandQueue`, `MTLRenderCommandEncoder`
+2. ✅ **MSL core shaders** — PBR (Cook-Torrance BRDF), shadow mapping, procedural sky in Metal Shading Language
+3. ✅ **Resource creation** — Native Metal buffer, texture, pipeline, and bind group creation
+4. ✅ **Renderer integration** — `Renderer<MetalDevice>` produces correct output through the generic pipeline
+
+### Phase C: Metal-Specific Features — IN PROGRESS
+
+Features that require direct Metal API access and cannot be achieved through wgpu.
+
+1. **C.1: Memoryless render targets** — Tile-local storage for G-buffer attachments on TBDR, eliminating DRAM round-trips for intermediate render targets
+2. **C.2: Tile shading** — Metal tile shading for deferred lighting in tile memory, avoiding the full-screen lighting pass
+3. **C.3: Indirect Command Buffers** — GPU-side draw call encoding via `MTLIndirectCommandBuffer`, removing CPU draw call overhead entirely
+4. **C.4: Mesh shaders** — Metal mesh shaders for meshlet-based rendering (Nanite-style visibility buffer), unblocked by native Metal access
+5. **C.5: MetalFX upscaling** — Temporal upscaling via MetalFX for rendering at lower resolution with perceptually equivalent output
+6. **C.6: MPS physics broadphase** — Metal Performance Shaders for GPU-accelerated spatial queries in the physics broadphase
+
+### Phase D: Metal 4 — FUTURE
+
+Next-generation Metal features (requires macOS 26+ / Metal 4 runtime).
+
+**Success criteria:**
+- ✅ Phase A done: renderer is fully generic, `WgpuDevice` passes all existing tests
+- ✅ Phase B done: `MetalDevice` renders PBR scenes with shadows and sky on Apple Silicon
+- Phase C done: at least 3 Metal-specific features integrated, measurable performance improvement over wgpu path
+- Phase D: tracked upstream, ready to adopt when Metal 4 ships

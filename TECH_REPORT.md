@@ -1,6 +1,6 @@
 # Euca Engine -- Technical Report
 
-> Version 1.1.0 | March 2026 | Rust 1.89+, Edition 2024 | MIT License
+> Version 1.3.0 | March 2026 | Rust 1.89+, Edition 2024 | MIT License
 
 ---
 
@@ -9,12 +9,13 @@
 Euca Engine is a 24-crate, ECS-first game engine written entirely in Rust, designed for Apple Silicon as a primary target while remaining cross-platform via wgpu. Every performance-critical subsystem -- math, physics, networking, ECS -- is custom-built with zero heavy external dependencies on the hot path. The engine compiles and runs on both aarch64 (NEON SIMD) and x86_64 (SSE2 SIMD), with architecture-specific optimizations selected at compile time via `#[cfg(target_arch)]`.
 
 Key metrics:
-- **24 crates** in a single Cargo workspace (23 library crates + 1 CLI tool)
+- **25 crates** in a single Cargo workspace (24 library crates + 1 CLI tool)
 - **850+ unit tests** across the workspace
 - **CI**: 5 GitHub Actions jobs (check, test, clippy, test-macos, fmt) on Rust 1.89.0
 - **Custom SIMD math**: `f32x4` wrapper over NEON `float32x4_t` / SSE `__m128`, all functions `#[inline(always)]`
 - **GPU-driven rendering**: compute-based frustum culling, `multi_draw_indexed_indirect_count` when available
-- **Apple Silicon aware**: P-core detection via `sysctl`, unified memory hints, TBDR-optimized Forward+, 32-thread compute workgroups
+- **RHI abstraction**: `RenderDevice` trait with compile-time backend dispatch -- wgpu (cross-platform) and native Metal (Apple Silicon via objc2-metal)
+- **Apple Silicon aware**: P-core detection via `sysctl`, unified memory hints, TBDR-optimized Forward+, 32-thread compute workgroups, native Metal backend
 
 The engine is agent-native: AI agents (Claude Code, RL agents) interact via a CLI tool (`euca`) backed by 72+ HTTP endpoints. A MOBA demo -- heroes, minions, towers, waves, combat, economy, abilities -- was built entirely from CLI commands without writing game code in Rust.
 
@@ -37,7 +38,8 @@ euca-ecs (archetype storage, queries, schedule, change detection)
        |
        +-- euca-core        (App lifecycle, Plugin, Time, Profiler)
        +-- euca-scene        (transform hierarchy, prefabs, streaming)
-       +-- euca-render       (wgpu, Forward+, PBR, compute, GPU-driven)
+       +-- euca-rhi           (RenderDevice trait, WgpuDevice, MetalDevice)
+       +-- euca-render       (Forward+, PBR, compute, GPU-driven -- generic over RenderDevice)
        +-- euca-physics      (collision, CCD, spatial hash, joints)
        +-- euca-animation    (blending, state machines, IK)
        +-- euca-ai           (behavior trees, blackboard)
@@ -106,7 +108,8 @@ tools/euca-cli               (CLI: 30 command groups)
 | `euca-reflect` | Runtime reflection: field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` | 6 |
 | `euca-scene` | Transform hierarchy, prefabs, spatial index, world streaming, level format | 28 |
 | `euca-core` | App lifecycle, Plugin trait, Time resource, frame Profiler, P-core detection | 9 |
-| `euca-render` | Forward+ PBR, cascaded shadows, FXAA, SSAO, SSR, volumetric fog, LOD, HLOD, HZB occlusion, GPU-driven, clustered lights (256+), foliage, decals, compute, Metal hints | 171 |
+| `euca-rhi` | Render Hardware Interface: `RenderDevice` trait, `WgpuDevice`, `MetalDevice`, compile-time backend dispatch | -- |
+| `euca-render` | Forward+ PBR, cascaded shadows, FXAA, SSAO, SSR, volumetric fog, LOD, HLOD, HZB occlusion, GPU-driven, clustered lights (256+), foliage, decals, compute, Metal hints. Generic over `RenderDevice`. | 171 |
 | `euca-physics` | Collision layers/masks, mass, character controller, vehicle physics, CCD, spatial hash, scene queries, joints | 53 |
 | `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload | 11 |
 | `euca-gameplay` | Health, combat, economy, abilities, rules, player control, MOBA camera, corpse cleanup | 95 |
@@ -526,7 +529,61 @@ When enabled via `renderer.enable_bindless()`, the opaque pass uses a single `se
 
 **Source:** `crates/euca-render/src/bindless.rs`, `shaders/pbr_bindless.wgsl`
 
-### 4.5 Networking (euca-net) -- 39 Tests
+### 4.5 Render Hardware Interface (euca-rhi)
+
+The `euca-rhi` crate defines a backend-agnostic `RenderDevice` trait that decouples the renderer from any specific GPU API. All resource creation (buffers, textures, pipelines, bind groups) flows through associated types on this trait, enabling compile-time backend dispatch with zero dynamic overhead.
+
+#### RenderDevice Trait
+
+The core abstraction is a trait with associated types for every GPU resource:
+
+```
+pub trait RenderDevice: Send + Sync + 'static {
+    type Buffer;
+    type Texture;
+    type TextureView;
+    type Sampler;
+    type BindGroupLayout;
+    type BindGroup;
+    type PipelineLayout;
+    type RenderPipeline;
+    type ComputePipeline;
+    type CommandEncoder;
+    type ShaderModule;
+    // ... resource creation methods
+}
+```
+
+This design avoids `dyn Trait` dispatch on every GPU call. The backend is selected once at application startup and propagated as a generic parameter through the entire render stack.
+
+#### WgpuDevice Backend
+
+`WgpuDevice` implements `RenderDevice` by wrapping wgpu 27. It is the cross-platform default, supporting Vulkan, Metal (via wgpu), DX12, and WebGPU. All existing rendering features (Forward+, GPU-driven culling, clustered lights, bindless materials, post-processing) work unchanged through this backend.
+
+#### MetalDevice Backend
+
+`MetalDevice` implements `RenderDevice` using `objc2-metal` for direct Metal API access on Apple Silicon. This bypasses wgpu's translation layer, enabling:
+
+- Direct `MTLDevice`, `MTLCommandQueue`, `MTLRenderCommandEncoder` access
+- Native MSL shader compilation (no WGSL-to-MSL translation overhead)
+- Foundation for Metal-specific features not exposed by wgpu (memoryless render targets, tile shading, Indirect Command Buffers, MetalFX, MPS)
+
+Core MSL shaders (PBR with Cook-Torrance BRDF, shadow mapping, procedural sky) are provided alongside the existing WGSL shaders.
+
+#### Generic Renderer
+
+The `Renderer<D: RenderDevice>` struct and all its subsystems (`SmartBuffer<D>`, `PostProcessStack<D>`, shadow maps, clustered lights) are generic over the `RenderDevice` trait. This means the full rendering pipeline -- from draw command extraction through post-processing -- works identically regardless of whether `D = WgpuDevice` or `D = MetalDevice`.
+
+```
+// Application code selects the backend at the top level
+let renderer: Renderer<WgpuDevice> = Renderer::new(&wgpu_device, config);
+// or
+let renderer: Renderer<MetalDevice> = Renderer::new(&metal_device, config);
+```
+
+**Source:** `crates/euca-rhi/`
+
+### 4.6 Networking (euca-net) -- 39 Tests
 
 Custom networking stack. No heavy transport dependencies on the hot path.
 
@@ -591,7 +648,7 @@ fn grow_if_needed(&mut self) {
 
 - **Rust version:** 1.89+ (pinned in CI via `dtolnay/rust-toolchain@1.89.0`)
 - **Edition:** 2024
-- **Workspace version:** 1.1.0
+- **Workspace version:** 1.3.0
 - **License:** MIT OR Apache-2.0
 - **RUSTFLAGS:** `-D warnings` (all warnings are errors in CI)
 
@@ -741,30 +798,30 @@ The gap between headless benchmarks (67.7ms at 50K) and real stress test (physic
 | **Language** | Rust | C++ | Rust | C# (Burst → native) | C |
 | **ECS** | Custom archetype (dense columns, binary search, change detection, parallel schedule, island solver) | GameplayAbility + Actor-Component-inheritance | Custom archetype (sparse sets + dense tables, retained render world) | Chunk-based archetype (16KB chunks, Burst-compiled jobs) | Archetype (cache-friendly, observers, query caching) |
 | **SIMD Math** | Custom f32x4 (NEON + SSE2), FMA mul_col, rsqrt normalize | FMath with platform intrinsics | glam (platform intrinsics) | Burst auto-vectorization (float4, math) | No built-in SIMD |
-| **Rendering** | wgpu Forward+ with clustered lights, GPU-driven (draw indirect), bindless materials, SSAO, SSR, volumetric fog | Custom Vulkan/D3D12/Metal, Nanite, Lumen, Virtual Shadow Maps | wgpu GPU-driven rendering (0.16), retained render world | Hybrid Renderer V2, SRP Batcher, GPU instancing | No rendering (ECS only) |
+| **Rendering** | RHI trait (`RenderDevice`) with wgpu and native Metal backends. Forward+ with clustered lights, GPU-driven (draw indirect), bindless materials, SSAO, SSR, volumetric fog | Custom Vulkan/D3D12/Metal, Nanite, Lumen, Virtual Shadow Maps | wgpu GPU-driven rendering (0.16), retained render world | Hybrid Renderer V2, SRP Batcher, GPU instancing | No rendering (ECS only) |
 | **GPU Culling** | Compute shader frustum cull + HZB occlusion, MULTI_DRAW_INDIRECT_COUNT, bindless texture arrays | Nanite GPU-driven (meshlet occlusion culling) | GPU-driven culling (0.16) | GPU instancing + SRP batching | N/A |
 | **Physics** | Custom (spatial hash, island solver, parallel constraints, CCD spatial filter, adaptive cells, sleeping) | Chaos (full rigid body, destruction, vehicles, cloth) | Rapier3d or Avian (third-party) | Unity Physics or Havok | N/A |
 | **Networking** | Custom UDP + QUIC, delta compression, client prediction, interest culling | Custom UDP, property replication, RPCs, dedicated server | Third-party (matchbox, naia) | Netcode for GameObjects / Entities | N/A |
 | **Entity Scale (@ 60fps)** | **10K proven at 75 FPS** (physics+render), 50K at 50 FPS render-only | 35K+ MetaHumans (Matrix Awakens, 30fps) | 160K cubes, 100K+ visible 3D meshes (0.16) | 4.5M mesh renderers (Megacity) | 120K simulated cars |
-| **Apple Silicon** | First-class: NEON FMA/rsqrt, P-core detection, unified memory hints, TBDR-aware Forward+, mimalloc, Metal workgroup tuning | Supported but not primary target | No platform-specific optimization | No platform-specific | No platform-specific |
+| **Apple Silicon** | First-class: native Metal backend (objc2-metal), NEON FMA/rsqrt, P-core detection, unified memory hints, TBDR-aware Forward+, MSL shaders, mimalloc, Metal workgroup tuning | Supported but not primary target | No platform-specific optimization | No platform-specific | No platform-specific |
 | **Allocator** | mimalloc (game runner) | Custom (FMalloc, binned allocator) | System allocator (default) | Unity native allocator | System allocator |
 | **Scripting** | Lua (mlua), hot reload, sandboxed | Blueprints, Python, verse | None built-in | None (C# is the language) | Lua, C++ modules |
 | **Editor** | egui (immediate-mode, integrated) | Custom Qt-based (Slate) | bevy_editor (in progress) | Full IDE (Unity Editor) | Flecs Explorer (web) |
 | **Agent/AI Interface** | Native: CLI + HTTP + nit auth, 72+ endpoints, `euca discover --json` | None (editor only) | None | None | REST API (explorer) |
 | **Test Coverage** | 850+ unit tests, ~65 benchmarks, 5 CI jobs | Extensive (internal) | ~1,500+ tests, CI matrix | Internal | ~1,000 tests |
 | **Open Source** | MIT | Source-available (custom license) | MIT OR Apache-2.0 | Proprietary | MIT |
-| **Maturity** | Early-stage (v1.1.0), architecture proven | 25+ years, shipped AAA titles | 4+ years, active ecosystem | 5+ years (DOTS), shipped titles | 5+ years, production use |
+| **Maturity** | Early-stage (v1.3.0), architecture proven | 25+ years, shipped AAA titles | 4+ years, active ecosystem | 5+ years (DOTS), shipped titles | 5+ years, production use |
 
 ### Where Euca differentiates:
 1. **Agent-native design** -- No other engine treats AI agents as first-class users with a CLI and HTTP API
-2. **Apple Silicon optimization depth** -- FMA in matrix multiply, rsqrt normalize, P-core detection, unified memory hints, Metal workgroup tuning, TBDR-aware rendering pipeline
+2. **Apple Silicon optimization depth** -- Native Metal backend (objc2-metal), MSL shaders, FMA in matrix multiply, rsqrt normalize, P-core detection, unified memory hints, Metal workgroup tuning, TBDR-aware rendering pipeline
 3. **Zero heavy dependencies on critical path** -- Custom math, physics, networking. No nalgebra, no rapier, no glam
 4. **Data-driven game logic** -- Rules are entities, not code. Agents compose behavior via CLI without writing Rust
 5. **Bindless material system** -- Single bind group for all materials + textures. Neither Bevy nor Flecs have this; Unity DOTS achieves similar via SRP Batcher
 
 ### Where Euca is behind:
 1. **Entity scale** -- 10K proven at 75fps (physics+render), 50K render-only at 50fps. Still behind Unity DOTS (4.5M) and Bevy (100K+), but competitive for most game scenarios.
-2. **Mesh processing** -- No meshlet / visibility buffer (Nanite equivalent). Blocked on wgpu mesh shader support.
+2. **Mesh processing** -- No meshlet / visibility buffer (Nanite equivalent). Native Metal backend unblocks mesh shaders on Apple Silicon; wgpu path still waiting on upstream support.
 3. **Global illumination** -- No Lumen equivalent. SSAO and SSR are screen-space only.
 4. **Maturity** -- No shipped titles. V1 architecture, not battle-tested at AAA scale.
 5. **Ecosystem** -- No marketplace, no asset store, no large community.
@@ -803,6 +860,9 @@ Adapter selection prefers DiscreteGpu > IntegratedGpu > VirtualGpu > Cpu > Other
 | `crates/euca-math/src/simd.rs` | f32x4 SIMD abstraction (NEON + SSE2) |
 | `crates/euca-math/src/mat.rs` | Mat4 with FMA mul_col |
 | `crates/euca-math/src/vec.rs` | Vec2/3/4 with rsqrt normalize |
+| `crates/euca-rhi/src/lib.rs` | RenderDevice trait definition and associated types |
+| `crates/euca-rhi/src/wgpu.rs` | WgpuDevice backend (wgpu 27) |
+| `crates/euca-rhi/src/metal.rs` | MetalDevice backend (objc2-metal, Apple Silicon) |
 | `crates/euca-render/src/gpu.rs` | GpuContext, MULTI_DRAW_INDIRECT_COUNT feature request |
 | `crates/euca-render/src/gpu_driven.rs` | GPU-driven pipeline (compute cull + indirect draw) |
 | `crates/euca-render/src/hardware.rs` | HardwareSurvey, GpuVendor, unified memory detection |
