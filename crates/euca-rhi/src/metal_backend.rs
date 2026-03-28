@@ -118,6 +118,30 @@ pub struct MetalDevice {
 }
 
 impl MetalDevice {
+    /// Query device capabilities from a Metal device.
+    fn query_capabilities(device: &ProtocolObject<dyn MTLDevice>) -> Capabilities {
+        let device_name = device.name().to_string();
+        let is_apple_silicon = device.supportsFamily(MTLGPUFamily::Apple7);
+        let supports_memoryless = is_apple_silicon;
+        let max_buffer_len = device.maxBufferLength() as u64;
+
+        Capabilities {
+            unified_memory: is_apple_silicon,
+            multi_draw_indirect: true,
+            multi_draw_indirect_count: true,
+            texture_binding_array: true,
+            non_uniform_indexing: true,
+            max_texture_dimension_2d: 16384,
+            max_bind_groups: 31,
+            max_bindings_per_bind_group: 1024,
+            max_binding_array_elements: 500_000,
+            device_name,
+            apple_silicon: is_apple_silicon,
+            max_buffer_length: max_buffer_len,
+            memoryless_render_targets: supports_memoryless,
+        }
+    }
+
     /// Create a new MetalDevice from a CAMetalLayer (obtained from the window).
     ///
     /// # Safety
@@ -129,7 +153,6 @@ impl MetalDevice {
             .newCommandQueue()
             .expect("Failed to create Metal command queue");
 
-        // Configure the layer
         layer.setDevice(Some(&device));
         layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm_sRGB);
         layer.setDrawableSize(objc2_foundation::NSSize {
@@ -137,27 +160,7 @@ impl MetalDevice {
             height: height as f64,
         });
 
-        // Query actual device capabilities rather than assuming.
-        let device_name = device.name().to_string();
-        let is_apple_silicon = device.supportsFamily(MTLGPUFamily::Apple7);
-        let supports_memoryless = is_apple_silicon; // Apple GPUs with TBDR support memoryless
-        let max_buffer_len = device.maxBufferLength() as u64;
-
-        let capabilities = Capabilities {
-            unified_memory: is_apple_silicon,
-            multi_draw_indirect: true,
-            multi_draw_indirect_count: true,
-            texture_binding_array: true,
-            non_uniform_indexing: true,
-            max_texture_dimension_2d: 16384,
-            max_bind_groups: 31, // Metal argument buffer slots
-            max_bindings_per_bind_group: 1024,
-            max_binding_array_elements: 500_000, // Metal has very high limits
-            device_name,
-            apple_silicon: is_apple_silicon,
-            max_buffer_length: max_buffer_len,
-            memoryless_render_targets: supports_memoryless,
-        };
+        let capabilities = Self::query_capabilities(&device);
 
         Self {
             device: SendSync(device),
@@ -168,6 +171,38 @@ impl MetalDevice {
             surface_format: TextureFormat::Bgra8UnormSrgb,
             capabilities,
         }
+    }
+
+    /// Create a headless MetalDevice for testing (no surface/window required).
+    ///
+    /// Surface operations (`get_current_texture`, `present`, `resize_surface`)
+    /// will panic. Use this only for resource creation, shader compilation,
+    /// and offscreen rendering tests.
+    pub fn headless() -> Self {
+        let device = MTLCreateSystemDefaultDevice().expect("No Metal-capable GPU found");
+        let queue = device
+            .newCommandQueue()
+            .expect("Failed to create Metal command queue");
+        let capabilities = Self::query_capabilities(&device);
+
+        // Create a detached CAMetalLayer (not connected to any view).
+        // Surface operations will fail gracefully.
+        let layer = CAMetalLayer::new();
+
+        Self {
+            device: SendSync(device),
+            queue: SendSync(queue),
+            layer: SendSync(layer),
+            surface_width: 0,
+            surface_height: 0,
+            surface_format: TextureFormat::Bgra8UnormSrgb,
+            capabilities,
+        }
+    }
+
+    /// Access the raw MTL device (for advanced Metal-specific operations).
+    pub fn mtl_device(&self) -> &ProtocolObject<dyn MTLDevice> {
+        &self.device
     }
 }
 
