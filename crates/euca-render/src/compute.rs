@@ -17,9 +17,9 @@ pub struct ComputePipelineDesc {
 }
 
 /// A compiled compute pipeline together with its auto-derived bind-group layout.
-pub struct ComputePipeline {
-    pipeline: wgpu::ComputePipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
+pub struct ComputePipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::ComputePipeline,
+    bind_group_layout: D::BindGroupLayout,
 }
 
 impl ComputePipeline {
@@ -67,8 +67,8 @@ impl ComputePipeline {
 // ---------------------------------------------------------------------------
 
 /// A GPU buffer wrapper that tracks its size.
-pub struct GpuBuffer {
-    buffer: wgpu::Buffer,
+pub struct GpuBuffer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    buffer: D::Buffer,
     size: u64,
 }
 
@@ -218,9 +218,9 @@ pub fn dispatch_compute_optimized(
 ///
 /// Game systems register pipelines/buffers by name and look them up later for
 /// dispatch. This keeps ownership centralized and avoids duplicating resources.
-pub struct ComputeManager {
-    pipelines: HashMap<String, ComputePipeline>,
-    buffers: HashMap<String, GpuBuffer>,
+pub struct ComputeManager<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipelines: HashMap<String, ComputePipeline<D>>,
+    buffers: HashMap<String, GpuBuffer<D>>,
 }
 
 impl ComputeManager {
