@@ -125,8 +125,8 @@ pub struct GpuCullParams {
 
 /// Storage buffer holding `DrawIndexedIndirect` structs -- the output of the
 /// GPU cull pass, consumed by `draw_indexed_indirect` in the render pass.
-pub struct IndirectDrawBuffer {
-    buffer: wgpu::Buffer,
+pub struct IndirectDrawBuffer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    buffer: D::Buffer,
     capacity: u32,
 }
 
@@ -170,13 +170,13 @@ impl IndirectDrawBuffer {
 
 /// Manages the complete GPU-driven rendering pipeline: command upload,
 /// compute-based culling, and indirect draw dispatch.
-pub struct GpuDrivenPipeline {
+pub struct GpuDrivenPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     cull_pipeline: ComputePipeline,
     command_buffer: GpuBuffer,
     frustum_buffer: GpuBuffer,
     params_buffer: GpuBuffer,
     draw_count_buffer: GpuBuffer,
-    indirect_buffer: IndirectDrawBuffer,
+    indirect_buffer: IndirectDrawBuffer<D>,
     max_entities: u32,
 }
 
