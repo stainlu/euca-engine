@@ -13,6 +13,9 @@
 //! 3. Each frame, call [`VolumetricFogPass::execute`] with the current camera
 //!    and light state. It returns a `&wgpu::TextureView` for compositing.
 
+use euca_rhi::RenderDevice;
+use euca_rhi::wgpu_backend::WgpuDevice;
+
 use crate::compute::{ComputePipeline, ComputePipelineDesc};
 
 // ---------------------------------------------------------------------------
@@ -123,18 +126,21 @@ pub struct FrameParams<'a> {
 
 /// Manages the compute pipeline, output texture, and compositing pipeline for
 /// volumetric fog rendering.
-pub struct VolumetricFogPass {
+///
+/// Generic over [`RenderDevice`] — defaults to [`WgpuDevice`] for
+/// backward compatibility.
+pub struct VolumetricFogPass<D: RenderDevice = WgpuDevice> {
     compute_pipeline: ComputePipeline,
     #[allow(dead_code)]
-    fog_texture: wgpu::Texture,
-    fog_texture_view: wgpu::TextureView,
+    fog_texture: D::Texture,
+    fog_texture_view: D::TextureView,
     /// A second view with `Filterable` access for sampling in the composite pass.
-    fog_texture_sample_view: wgpu::TextureView,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    composite_pipeline: wgpu::RenderPipeline,
-    composite_bgl: wgpu::BindGroupLayout,
-    composite_sampler: wgpu::Sampler,
+    fog_texture_sample_view: D::TextureView,
+    uniform_buffer: D::Buffer,
+    bind_group: D::BindGroup,
+    composite_pipeline: D::RenderPipeline,
+    composite_bgl: D::BindGroupLayout,
+    composite_sampler: D::Sampler,
     width: u32,
     height: u32,
 }
