@@ -40,9 +40,9 @@ struct GpuUiQuad {
 }
 
 /// Renders 2D colored quads as screen-space overlays.
-pub struct UiOverlayRenderer {
-    pipeline: wgpu::RenderPipeline,
-    instance_buffer: wgpu::Buffer,
+pub struct UiOverlayRenderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::RenderPipeline,
+    instance_buffer: D::Buffer,
     instance_capacity: usize,
 }
 
