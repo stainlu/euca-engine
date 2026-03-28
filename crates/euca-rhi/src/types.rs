@@ -921,6 +921,15 @@ pub struct Capabilities {
     pub max_bind_groups: u32,
     pub max_bindings_per_bind_group: u32,
     pub max_binding_array_elements: u32,
+    /// Human-readable GPU device name (e.g. "Apple M1 Pro").
+    pub device_name: String,
+    /// Whether this is an Apple Silicon GPU (supports Apple GPU family).
+    pub apple_silicon: bool,
+    /// Maximum buffer allocation size in bytes.
+    pub max_buffer_length: u64,
+    /// Whether memoryless render targets are supported (tile memory only,
+    /// saves ~20% bandwidth for transient G-buffer attachments).
+    pub memoryless_render_targets: bool,
 }
 
 impl Default for Capabilities {
@@ -935,6 +944,10 @@ impl Default for Capabilities {
             max_bind_groups: 4,
             max_bindings_per_bind_group: 640,
             max_binding_array_elements: 0,
+            device_name: String::from("Unknown"),
+            apple_silicon: false,
+            max_buffer_length: 256 * 1024 * 1024, // 256 MiB conservative default
+            memoryless_render_targets: false,
         }
     }
 }

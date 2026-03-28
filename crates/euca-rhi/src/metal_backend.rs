@@ -46,9 +46,14 @@ pub struct MetalTexture(SendSync<Retained<ProtocolObject<dyn MTLTexture>>>);
 pub struct MetalTextureView(SendSync<Retained<ProtocolObject<dyn MTLTexture>>>);
 pub struct MetalSampler(SendSync<Retained<ProtocolObject<dyn MTLSamplerState>>>);
 pub struct MetalShaderModule(SendSync<Retained<ProtocolObject<dyn MTLLibrary>>>);
-pub struct MetalRenderPipeline(SendSync<Retained<ProtocolObject<dyn MTLRenderPipelineState>>>);
+pub struct MetalRenderPipeline {
+    state: SendSync<Retained<ProtocolObject<dyn MTLRenderPipelineState>>>,
+    primitive_type: MTLPrimitiveType,
+}
 pub struct MetalComputePipeline(SendSync<Retained<ProtocolObject<dyn MTLComputePipelineState>>>);
 pub struct MetalBindGroupLayout {
+    // Stored for validation during bind group creation; not read by the GPU.
+    #[allow(dead_code)]
     entries: Vec<BindGroupLayoutEntry>,
 }
 pub struct MetalBindGroup {
@@ -61,9 +66,27 @@ pub struct MetalCommandEncoder {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
 }
 
+/// Retained index buffer state: (buffer, index type, byte offset).
+type IndexBufferBinding = (Retained<ProtocolObject<dyn MTLBuffer>>, MTLIndexType, u64);
+
 pub struct MetalRenderPass<'a> {
     encoder: Retained<ProtocolObject<dyn MTLRenderCommandEncoder>>,
+    /// Current primitive topology, set when a pipeline is bound.
+    primitive_type: MTLPrimitiveType,
+    /// Stored index buffer for `draw_indexed` calls. Metal requires the index
+    /// buffer to be passed directly to the draw call, unlike wgpu which has
+    /// separate `set_index_buffer` / `draw_indexed` steps.
+    index_buffer: Option<IndexBufferBinding>,
     _marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl MetalRenderPass<'_> {
+    /// Returns a reference to the currently bound index buffer, panicking if none is set.
+    fn require_index_buffer(&self, caller: &str) -> &IndexBufferBinding {
+        self.index_buffer
+            .as_ref()
+            .unwrap_or_else(|| panic!("{caller} called without a prior set_index_buffer"))
+    }
 }
 
 pub struct MetalComputePass<'a> {
@@ -114,8 +137,14 @@ impl MetalDevice {
             height: height as f64,
         });
 
+        // Query actual device capabilities rather than assuming.
+        let device_name = device.name().to_string();
+        let is_apple_silicon = device.supportsFamily(MTLGPUFamily::Apple7);
+        let supports_memoryless = is_apple_silicon; // Apple GPUs with TBDR support memoryless
+        let max_buffer_len = device.maxBufferLength() as u64;
+
         let capabilities = Capabilities {
-            unified_memory: true, // All Apple Silicon has unified memory
+            unified_memory: is_apple_silicon,
             multi_draw_indirect: true,
             multi_draw_indirect_count: true,
             texture_binding_array: true,
@@ -124,6 +153,10 @@ impl MetalDevice {
             max_bind_groups: 31, // Metal argument buffer slots
             max_bindings_per_bind_group: 1024,
             max_binding_array_elements: 500_000, // Metal has very high limits
+            device_name,
+            apple_silicon: is_apple_silicon,
+            max_buffer_length: max_buffer_len,
+            memoryless_render_targets: supports_memoryless,
         };
 
         Self {
@@ -167,12 +200,22 @@ fn to_mtl_pixel_format(format: TextureFormat) -> MTLPixelFormat {
     }
 }
 
-fn to_mtl_storage_mode_for_usage(usage: TextureUsages) -> MTLStorageMode {
-    // Apple Silicon: always use shared memory for best performance
-    if usage.contains(TextureUsages::RENDER_ATTACHMENT) {
-        MTLStorageMode::Private // render targets in tile memory
+fn to_mtl_storage_mode_for_usage(usage: TextureUsages, memoryless: bool) -> MTLStorageMode {
+    let is_render_only = usage.contains(TextureUsages::RENDER_ATTACHMENT)
+        && !usage.contains(TextureUsages::TEXTURE_BINDING)
+        && !usage.contains(TextureUsages::STORAGE_BINDING)
+        && !usage.contains(TextureUsages::COPY_SRC);
+
+    if is_render_only && memoryless {
+        // Memoryless: texture lives only in tile memory and is never written to
+        // system RAM. Saves ~20% memory bandwidth for transient G-buffer
+        // attachments (depth, normals, etc.) that are produced and consumed
+        // within a single render pass.
+        MTLStorageMode::Memoryless
+    } else if usage.contains(TextureUsages::RENDER_ATTACHMENT) {
+        MTLStorageMode::Private
     } else {
-        MTLStorageMode::Shared // everything else in unified memory
+        MTLStorageMode::Shared // Apple Silicon unified memory
     }
 }
 
@@ -337,7 +380,10 @@ impl RenderDevice for MetalDevice {
             }
             d.setMipmapLevelCount(desc.mip_level_count as usize);
             d.setSampleCount(desc.sample_count as usize);
-            d.setStorageMode(to_mtl_storage_mode_for_usage(desc.usage));
+            d.setStorageMode(to_mtl_storage_mode_for_usage(
+                desc.usage,
+                self.capabilities.memoryless_render_targets,
+            ));
             d.setUsage(to_mtl_texture_usage(desc.usage));
             d
         };
@@ -562,7 +608,10 @@ impl RenderDevice for MetalDevice {
                 .newRenderPipelineStateWithDescriptor_error(&pipeline_desc)
                 .expect("Failed to create Metal render pipeline");
 
-            MetalRenderPipeline(SendSync(pipeline))
+            MetalRenderPipeline {
+                state: SendSync(pipeline),
+                primitive_type: to_mtl_primitive_type(desc.primitive.topology),
+            }
         }
     }
 
@@ -683,6 +732,8 @@ impl RenderDevice for MetalDevice {
 
             MetalRenderPass {
                 encoder: render_encoder,
+                primitive_type: MTLPrimitiveType::Triangle, // default; overwritten by set_pipeline
+                index_buffer: None,
                 _marker: std::marker::PhantomData,
             }
         }
@@ -786,7 +837,8 @@ fn to_mtl_blend_op(op: BlendOperation) -> MTLBlendOperation {
 
 impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
     fn set_pipeline(&mut self, pipeline: &MetalRenderPipeline) {
-        self.encoder.setRenderPipelineState(&pipeline.0);
+        self.encoder.setRenderPipelineState(&pipeline.state);
+        self.primitive_type = pipeline.primitive_type;
     }
 
     fn set_bind_group(&mut self, _index: u32, bind_group: &MetalBindGroup, _offsets: &[u32]) {
@@ -825,13 +877,18 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
 
     fn set_index_buffer(
         &mut self,
-        _buffer: &MetalBuffer,
-        _format: IndexFormat,
-        _offset: u64,
+        buffer: &MetalBuffer,
+        format: IndexFormat,
+        offset: u64,
         _size: u64,
     ) {
-        // Metal: index buffer is passed directly to drawIndexedPrimitives
-        // Store it for the next draw call (handled in draw_indexed)
+        // Metal passes the index buffer directly to drawIndexedPrimitives,
+        // so we store it here for the next draw_indexed call.
+        self.index_buffer = Some((
+            Retained::clone(&buffer.0.0),
+            to_mtl_index_type(format),
+            offset,
+        ));
     }
 
     fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
@@ -840,7 +897,7 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
         unsafe {
             self.encoder
                 .drawPrimitives_vertexStart_vertexCount_instanceCount(
-                    MTLPrimitiveType::Triangle,
+                    self.primitive_type,
                     vertices.start as usize,
                     vertex_count as usize,
                     instance_count as usize,
@@ -851,40 +908,95 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
     fn draw_indexed(
         &mut self,
         indices: std::ops::Range<u32>,
-        _base_vertex: i32,
+        base_vertex: i32,
         instances: std::ops::Range<u32>,
     ) {
-        let index_count = indices.end - indices.start;
-        let instance_count = instances.end - instances.start;
-        // Note: index buffer must have been set via set_index_buffer
-        // In a full implementation, we'd store the index buffer reference
-        // For now, this is a placeholder that will be completed in Phase C
-        let _ = (index_count, instance_count);
-        // TODO: implement with stored index buffer reference
+        let (index_buffer, index_type, base_offset) = self.require_index_buffer("draw_indexed");
+
+        let index_count = (indices.end - indices.start) as usize;
+        let instance_count = (instances.end - instances.start) as usize;
+
+        // Compute the byte offset for the first index in the range.
+        let index_stride: usize = match *index_type {
+            MTLIndexType::UInt16 => 2,
+            MTLIndexType::UInt32 => 4,
+            _ => unreachable!("unknown MTLIndexType"),
+        };
+        let index_buffer_offset = *base_offset as usize + indices.start as usize * index_stride;
+
+        unsafe {
+            self.encoder
+                .drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset_instanceCount_baseVertex_baseInstance(
+                    self.primitive_type,
+                    index_count,
+                    *index_type,
+                    index_buffer,
+                    index_buffer_offset,
+                    instance_count,
+                    base_vertex as isize,
+                    instances.start as usize,
+                );
+        }
     }
 
-    fn draw_indexed_indirect(&mut self, _indirect_buffer: &MetalBuffer, _indirect_offset: u64) {
-        // TODO: Phase C — indirect command buffers
+    fn draw_indexed_indirect(&mut self, indirect_buffer: &MetalBuffer, indirect_offset: u64) {
+        let (index_buffer, index_type, index_offset) =
+            self.require_index_buffer("draw_indexed_indirect");
+
+        unsafe {
+            self.encoder
+                .drawIndexedPrimitives_indexType_indexBuffer_indexBufferOffset_indirectBuffer_indirectBufferOffset(
+                    self.primitive_type,
+                    *index_type,
+                    index_buffer,
+                    *index_offset as usize,
+                    &indirect_buffer.0,
+                    indirect_offset as usize,
+                );
+        }
     }
 
     fn multi_draw_indexed_indirect(
         &mut self,
-        _indirect_buffer: &MetalBuffer,
-        _indirect_offset: u64,
-        _count: u32,
+        indirect_buffer: &MetalBuffer,
+        indirect_offset: u64,
+        count: u32,
     ) {
-        // TODO: Phase C — indirect command buffers
+        let (index_buffer, index_type, index_offset) =
+            self.require_index_buffer("multi_draw_indexed_indirect");
+
+        // Metal has no built-in multi-draw; emit one indirect draw per element.
+        // MTLDrawIndexedPrimitivesIndirectArguments is 5 x u32 = 20 bytes.
+        const INDIRECT_STRIDE: u64 = 20;
+        unsafe {
+            for i in 0..count {
+                let offset = indirect_offset + i as u64 * INDIRECT_STRIDE;
+                self.encoder
+                    .drawIndexedPrimitives_indexType_indexBuffer_indexBufferOffset_indirectBuffer_indirectBufferOffset(
+                        self.primitive_type,
+                        *index_type,
+                        index_buffer,
+                        *index_offset as usize,
+                        &indirect_buffer.0,
+                        offset as usize,
+                    );
+            }
+        }
     }
 
     fn multi_draw_indexed_indirect_count(
         &mut self,
-        _indirect_buffer: &MetalBuffer,
-        _indirect_offset: u64,
+        indirect_buffer: &MetalBuffer,
+        indirect_offset: u64,
         _count_buffer: &MetalBuffer,
         _count_offset: u64,
-        _max_count: u32,
+        max_count: u32,
     ) {
-        // TODO: Phase C — indirect command buffers
+        // Metal has no native draw-indirect-count. Emit max_count indirect
+        // draws; unused slots must have zero instance counts in the indirect
+        // buffer. GPU-driven count reduction requires Indirect Command Buffers
+        // (ICBs), which will be implemented in a dedicated ICB pass.
+        self.multi_draw_indexed_indirect(indirect_buffer, indirect_offset, max_count);
     }
 
     fn set_viewport(&mut self, x: f32, y: f32, w: f32, h: f32, min_depth: f32, max_depth: f32) {

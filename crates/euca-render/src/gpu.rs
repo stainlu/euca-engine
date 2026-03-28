@@ -144,6 +144,8 @@ impl GpuContext {
             max_bind_groups: cap_max_bind_groups,
             max_bindings_per_bind_group: cap_max_bindings,
             max_binding_array_elements: cap_max_binding_array,
+            device_name: adapter_info.name.clone(),
+            ..Default::default()
         };
 
         let rhi = WgpuDevice::new(device, queue, surface, surface_config, window, capabilities);
