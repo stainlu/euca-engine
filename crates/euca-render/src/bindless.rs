@@ -68,13 +68,17 @@ const _: () = assert!(std::mem::size_of::<BindlessMaterialGpu>() % 16 == 0);
 // ---------------------------------------------------------------------------
 
 /// Manages the GPU storage buffer of all materials and the texture binding array.
-pub struct BindlessMaterialSystem {
+///
+/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`euca_rhi::wgpu_backend::WgpuDevice`]
+/// for backward compatibility. Existing call-sites that use concrete wgpu types
+/// continue to compile without changes.
+pub struct BindlessMaterialSystem<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     /// Storage buffer holding `array<BindlessMaterialGpu>`.
-    material_buffer: SmartBuffer,
+    material_buffer: SmartBuffer<D>,
     /// Bind group layout for the bindless material group (group 2).
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group_layout: D::BindGroupLayout,
     /// Bind group exposing the material buffer + sampler + texture array.
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: D::BindGroup,
     /// CPU-side copy of material data for incremental updates.
     materials: Vec<BindlessMaterialGpu>,
     /// Texture handles registered in the binding array (resolved to views at bind time).
@@ -84,11 +88,11 @@ pub struct BindlessMaterialSystem {
     /// Current material buffer capacity in bytes.
     material_buffer_capacity: u64,
     /// Shared sampler for all material textures.
-    sampler: wgpu::Sampler,
+    sampler: D::Sampler,
     /// Fallback 1x1 white texture view (used for empty binding array slots).
-    fallback_view: wgpu::TextureView,
+    fallback_view: D::TextureView,
     /// The fallback texture (kept alive so view remains valid).
-    _fallback_texture: wgpu::Texture,
+    _fallback_texture: D::Texture,
     /// Whether the system needs to rebuild the bind group (new textures added).
     dirty: bool,
     /// Whether GPU supports bindless features.
