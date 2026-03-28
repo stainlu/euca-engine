@@ -44,7 +44,7 @@ Heroes charge, fight, die, respawn. Minions spawn in waves. Towers attack. Gold 
 | System | Description |
 |--------|-------------|
 | **ECS** | Custom archetype storage, generational entities, parallel queries, change detection |
-| **Rendering** | Forward+ and deferred PBR, cascaded shadows, MSAA/FXAA, SSAO, SSR, volumetric fog, LOD, HLOD |
+| **Rendering** | RHI-abstracted (wgpu + native Metal), Forward+ PBR, cascaded shadows, MSAA/FXAA, SSAO, SSR, volumetric fog, LOD, HLOD |
 | **GPU Pipeline** | GPU-driven rendering (draw indirect), HZB occlusion culling, foliage instancing, compute shaders |
 | **Materials** | PBR textures (metallic/roughness/AO/emissive), alpha blend/cutout transparency |
 | **Physics** | AABB/sphere/capsule collision, collision layers/masks, mass, raycasting, CCD, scene queries |
@@ -97,6 +97,7 @@ AI Agents (Claude Code, scripts, RL agents)
 │  Scene (euca-scene) Physics (euca-physics) │
 │  Audio (euca-audio) Particles (euca-particle)
 │  Nav (euca-nav)     Asset (euca-asset)     │
+│  RHI (euca-rhi: wgpu + native Metal)      │
 └────────────────────────────────────────────┘
     │
 ┌─ Editor (euca-editor) ────────────────────┐
@@ -105,8 +106,8 @@ AI Agents (Claude Code, scripts, RL agents)
 └───────────────────────────────────────────┘
 ```
 
-## Crates (24)
-<!-- 23 library crates + 1 CLI tool -->
+## Crates (25)
+<!-- 24 library crates + 1 CLI tool -->
 
 | Crate | Purpose |
 |-------|---------|
@@ -115,7 +116,8 @@ AI Agents (Claude Code, scripts, RL agents)
 | `euca-reflect` | Runtime reflection: field access, TypeRegistry, JSON serialization |
 | `euca-scene` | Transform hierarchy: LocalTransform, GlobalTransform, Parent/Children |
 | `euca-core` | App lifecycle, Plugin trait, Time resource |
-| `euca-render` | wgpu PBR, shadows, MSAA/FXAA, SSAO, bloom, LOD, compute shaders, transparency |
+| `euca-rhi` | RenderDevice trait: backend-agnostic GPU abstraction (wgpu + native Metal via objc2-metal) |
+| `euca-render` | Generic renderer over RenderDevice: Forward+ PBR, shadows, SSAO, SSR, bloom, LOD, GPU-driven culling, bindless materials |
 | `euca-physics` | Collision layers/masks, mass, raycasting, scene queries, CCD, joints |
 | `euca-gameplay` | Health, damage, teams, combat, economy, leveling, abilities, rules, AI |
 | `euca-audio` | Spatial audio (kira): bus mixing, reverb zones, occlusion, priority |

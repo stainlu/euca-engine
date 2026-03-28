@@ -1,31 +1,46 @@
 # euca-render
 
-wgpu-based PBR renderer with deferred shading, cascaded shadows, and modern post-processing.
+RHI-abstracted PBR renderer with compile-time backend selection (wgpu cross-platform, native Metal on Apple Silicon).
 
 Part of [EucaEngine](https://github.com/stainlu/euca-engine) -- an ECS-first game engine in Rust.
 
+## Architecture
+
+The renderer is generic over `RenderDevice` -- a trait defined in `euca-rhi`:
+
+- **`WgpuDevice`** -- Cross-platform backend via wgpu 27 (Vulkan, Metal-via-wgpu, DX12, WebGPU)
+- **`MetalDevice`** -- Native Metal backend via `objc2-metal` for direct Apple Silicon access
+
+All GPU resources (buffers, textures, pipelines, bind groups) flow through the trait's associated types. Backend selection is compile-time via generics with `WgpuDevice` as the default.
+
 ## Features
 
-- Deferred rendering pipeline (`GBuffer`, `DeferredPipeline`) with forward fallback
-- PBR materials with alpha modes and material handles
-- Clustered light grid for efficient many-light scenes
-- GPU-driven rendering with indirect draw buffers and frustum culling
-- Cascaded shadow maps, SSAO, SSR, TAA, volumetric fog
-- LOD selection, HLOD clusters, and occlusion culling (HZB)
-- GPU particle system, decal rendering, foliage instancing
-- Light probes with spherical harmonics
-- Post-processing stack (bloom, color grading, FXAA)
-- Hardware survey and Metal render pass hints
+- RHI trait abstraction (`RenderDevice`) with wgpu and native Metal backends
+- Forward+ rendering as primary path with deferred opt-in (`GBuffer`, `DeferredPipeline`)
+- PBR materials (metallic-roughness workflow) with alpha modes and material handles
+- Bindless material system (single bind group for all materials + textures)
+- Native MSL shaders: PBR (Cook-Torrance BRDF), cascaded shadows, procedural sky
+- Cascaded shadow maps with PCSS soft shadows
+- SSAO, SSR, SSGI, TAA, motion blur, depth of field
+- Volumetric fog (ray-marched scattering)
+- GPU-driven rendering with compute frustum culling and indirect draw calls
+- LOD selection, HLOD clusters, HZB occlusion culling
+- GPU particle system (compute emit/update, instanced billboard render)
+- Clustered light grid for 256+ lights
+- Decal rendering, foliage instancing, light probes (spherical harmonics)
+- Post-processing stack (bloom, color grading, ACES tone mapping, FXAA)
+- Hardware survey with Apple Silicon Metal optimization hints
 
 ## Usage
 
 ```rust
 use euca_render::*;
 
-let renderer = Renderer::new(&gpu_context, RenderQuality::High);
-let mesh = MeshHandle(0);
-let material = MaterialHandle(0);
-let cmd = DrawCommand { mesh, material, transform };
+// Renderer defaults to WgpuDevice via the RHI trait
+let renderer = Renderer::new(&gpu_context);
+let mesh = renderer.upload_mesh(&gpu_context, &mesh_data);
+let material = renderer.upload_material(&gpu_context, &material_data);
+let cmd = DrawCommand { mesh, material, model_matrix, aabb: None };
 ```
 
 ## License

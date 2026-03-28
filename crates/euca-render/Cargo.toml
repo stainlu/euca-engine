@@ -2,8 +2,8 @@
 name = "euca-render"
 version.workspace = true
 edition.workspace = true
-description = "wgpu PBR renderer with shadows, SSAO, SSR, volumetric fog, LOD, and compute shaders"
-keywords = ["gamedev", "game-engine", "rendering", "wgpu", "pbr"]
+description = "RHI-generic PBR renderer (wgpu + native Metal backends) with Forward+, shadows, SSAO, SSR, volumetric fog, LOD, GPU-driven culling"
+keywords = ["gamedev", "game-engine", "rendering", "wgpu", "metal", "pbr"]
 categories = ["game-development", "rendering"]
 
 [features]
