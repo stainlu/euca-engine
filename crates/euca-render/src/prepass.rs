@@ -48,11 +48,11 @@ pub struct PrepassSceneUniforms {
 }
 
 /// Resolution-dependent textures produced by the depth+normal pre-pass.
-pub struct PrepassTextures {
-    pub depth_texture: wgpu::Texture,
-    pub depth_view: wgpu::TextureView,
-    pub normal_texture: wgpu::Texture,
-    pub normal_view: wgpu::TextureView,
+pub struct PrepassTextures<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pub depth_texture: D::Texture,
+    pub depth_view: D::TextureView,
+    pub normal_texture: D::Texture,
+    pub normal_view: D::TextureView,
     pub width: u32,
     pub height: u32,
 }
@@ -112,14 +112,14 @@ impl PrepassTextures {
 }
 
 /// Render pipeline that writes depth + view-space normals in a single pass.
-pub struct PrepassPipeline {
-    pipeline: wgpu::RenderPipeline,
-    instance_bgl: wgpu::BindGroupLayout,
-    scene_bgl: wgpu::BindGroupLayout,
-    instance_buffer: SmartBuffer,
-    instance_bind_group: wgpu::BindGroup,
-    scene_buffer: SmartBuffer,
-    scene_bind_group: wgpu::BindGroup,
+pub struct PrepassPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::RenderPipeline,
+    instance_bgl: D::BindGroupLayout,
+    scene_bgl: D::BindGroupLayout,
+    instance_buffer: SmartBuffer<D>,
+    instance_bind_group: D::BindGroup,
+    scene_buffer: SmartBuffer<D>,
+    scene_bind_group: D::BindGroup,
     /// Current capacity (in instances) of the instance buffer.
     instance_capacity: usize,
     /// Whether the GPU uses unified memory (needed for buffer re-creation).
