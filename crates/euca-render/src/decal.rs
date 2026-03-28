@@ -200,9 +200,12 @@ struct DecalVertex {
 
 /// Manages GPU resources for decal rendering: the unit-cube vertex and index
 /// buffers used as the decal projection volume.
-pub struct DecalRenderer {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+///
+/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`WgpuDevice`] for
+/// backward compatibility.
+pub struct DecalRenderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    vertex_buffer: D::Buffer,
+    index_buffer: D::Buffer,
     index_count: u32,
 }
 
