@@ -15,7 +15,7 @@ pub mod types;
 #[cfg(feature = "wgpu-backend")]
 pub mod wgpu_backend;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "metal-backend"))]
 pub mod metal_backend;
 
 pub use pass::{ComputePassOps, RenderPassOps};

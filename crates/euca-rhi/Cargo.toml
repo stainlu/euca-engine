@@ -9,7 +9,14 @@ categories = ["game-development", "rendering"]
 [features]
 default = ["wgpu-backend"]
 wgpu-backend = ["dep:wgpu", "dep:winit"]
+metal-backend = ["dep:objc2", "dep:objc2-metal", "dep:objc2-foundation", "dep:objc2-quartz-core"]
 
 [dependencies]
 wgpu = { version = "27", optional = true }
 winit = { version = "0.30", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-metal = { version = "0.3", optional = true }
+objc2-foundation = { version = "0.3", optional = true, features = ["NSError", "NSString"] }
+objc2-quartz-core = { version = "0.3", optional = true, features = ["CAMetalLayer"] }
