@@ -80,17 +80,20 @@ struct DofParamsGpu {
 // ---------------------------------------------------------------------------
 
 /// Manages the compute pipelines and textures for depth-of-field rendering.
-pub struct DofPass {
-    coc_pipeline: wgpu::ComputePipeline,
-    gather_pipeline: wgpu::ComputePipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
+///
+/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`WgpuDevice`] for
+/// backward compatibility.
+pub struct DofPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    coc_pipeline: D::ComputePipeline,
+    gather_pipeline: D::ComputePipeline,
+    bind_group_layout: D::BindGroupLayout,
+    uniform_buffer: D::Buffer,
     /// Per-pixel circle-of-confusion (R16Float).
-    coc_texture: wgpu::Texture,
-    coc_view: wgpu::TextureView,
+    coc_texture: D::Texture,
+    coc_view: D::TextureView,
     /// Output blurred color (Rgba16Float, full resolution).
-    output_texture: wgpu::Texture,
-    output_view: wgpu::TextureView,
+    output_texture: D::Texture,
+    output_view: D::TextureView,
     width: u32,
     height: u32,
 }

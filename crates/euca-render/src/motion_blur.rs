@@ -72,17 +72,20 @@ struct MotionBlurParamsGpu {
 // ---------------------------------------------------------------------------
 
 /// Manages the compute pipelines and textures for velocity-based motion blur.
-pub struct MotionBlurPass {
-    tile_pipeline: wgpu::ComputePipeline,
-    blur_pipeline: wgpu::ComputePipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
+///
+/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`WgpuDevice`] for
+/// backward compatibility.
+pub struct MotionBlurPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    tile_pipeline: D::ComputePipeline,
+    blur_pipeline: D::ComputePipeline,
+    bind_group_layout: D::BindGroupLayout,
+    uniform_buffer: D::Buffer,
     /// Per-tile maximum velocity (Rg16Float, ceil(width/16) x ceil(height/16)).
-    tile_max_texture: wgpu::Texture,
-    tile_max_view: wgpu::TextureView,
+    tile_max_texture: D::Texture,
+    tile_max_view: D::TextureView,
     /// Output blurred color (Rgba16Float, full resolution).
-    output_texture: wgpu::Texture,
-    output_view: wgpu::TextureView,
+    output_texture: D::Texture,
+    output_view: D::TextureView,
     width: u32,
     height: u32,
 }
