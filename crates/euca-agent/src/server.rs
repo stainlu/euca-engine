@@ -155,6 +155,7 @@ impl AgentServer {
             .route("/manifest", post(routes::manifest_set))
             .route("/manifest", get(routes::manifest_get))
             .route("/manifest/feature", post(routes::manifest_feature_update))
+            .route("/engine/gpu", get(routes::engine_gpu))
             .with_state(self.shared.clone())
     }
 
