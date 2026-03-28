@@ -14,6 +14,9 @@
 //! On discrete GPUs, `SmartBuffer` creates standard `COPY_DST` buffers and
 //! behaves identically to a raw `wgpu::Buffer`.
 
+use euca_rhi::RenderDevice;
+use euca_rhi::wgpu_backend::WgpuDevice;
+
 /// GPU buffer type: `Storage` (SSBO) or `Uniform` (UBO).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferKind {
@@ -23,28 +26,76 @@ pub enum BufferKind {
 
 /// A GPU buffer that transparently optimizes for unified memory.
 ///
-/// Create with [`SmartBuffer::new`], write with [`SmartBuffer::write`].
-/// Access the underlying buffer via [`SmartBuffer::raw`] for
-/// bind group creation, slicing, etc.
-///
 /// Generic over [`RenderDevice`] — defaults to [`WgpuDevice`] for
 /// backward compatibility. When the Metal backend arrives, this type
 /// will work with `SmartBuffer<MetalDevice>` as well.
-pub struct SmartBuffer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+pub struct SmartBuffer<D: RenderDevice = WgpuDevice> {
     buffer: D::Buffer,
     /// True when the buffer was created with `MAP_WRITE` (unified memory path).
     unified: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Generic implementation (works for ANY backend)
+// ---------------------------------------------------------------------------
+
+impl<D: RenderDevice> SmartBuffer<D> {
+    /// Create a new buffer via the [`RenderDevice`] trait.
+    pub fn new(device: &D, size: u64, kind: BufferKind, unified: bool, label: &str) -> Self {
+        let kind_usage = match kind {
+            BufferKind::Storage => euca_rhi::BufferUsages::STORAGE,
+            BufferKind::Uniform => euca_rhi::BufferUsages::UNIFORM,
+        };
+
+        // Always need COPY_DST for write_buffer().
+        // On Apple Silicon (unified memory), the Metal backend already optimizes
+        // write_buffer() internally — it skips staging copies when it detects
+        // shared memory. So we just use COPY_DST on all platforms.
+        let usage = kind_usage | euca_rhi::BufferUsages::COPY_DST;
+
+        let buffer = device.create_buffer(&euca_rhi::BufferDesc {
+            label: Some(label),
+            size,
+            usage,
+            mapped_at_creation: false,
+        });
+
+        Self { buffer, unified }
+    }
+
+    /// Write typed data to the buffer at offset 0.
+    pub fn write<T: bytemuck::Pod>(&self, device: &D, data: &[T]) {
+        device.write_buffer(&self.buffer, 0, bytemuck::cast_slice(data));
+    }
+
+    /// Write raw bytes to the buffer at offset 0.
+    pub fn write_bytes(&self, device: &D, data: &[u8]) {
+        device.write_buffer(&self.buffer, 0, data);
+    }
+
+    /// Access the underlying backend buffer (for bind groups, slicing, etc.).
+    pub fn raw(&self) -> &D::Buffer {
+        &self.buffer
+    }
+
+    /// Whether this buffer was created with unified memory optimizations.
+    pub fn is_unified(&self) -> bool {
+        self.unified
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wgpu-specific backward-compatibility methods
+// ---------------------------------------------------------------------------
+// Subsystems that haven't been generified yet can still call these methods
+// with raw wgpu types. These will be removed once all subsystems are generic.
+
 impl SmartBuffer {
-    /// Create a new buffer, automatically choosing optimal usage flags.
+    /// Create a new buffer from a raw `wgpu::Device`.
     ///
-    /// - `unified`: pass `true` on Apple Silicon (from `GpuContext::unified_memory`).
-    ///   Adds `MAP_WRITE` so the Metal backend can skip internal staging copies.
-    /// - `kind`: whether this buffer is used as `STORAGE` or `UNIFORM`.
-    /// - `size`: buffer size in bytes.
-    /// - `label`: debug label for GPU debuggers.
-    pub fn new(
+    /// Backward-compatible constructor for subsystems not yet using the
+    /// [`RenderDevice`] trait. Prefer [`SmartBuffer::new`] with `&WgpuDevice`.
+    pub fn from_wgpu(
         device: &wgpu::Device,
         size: u64,
         kind: BufferKind,
@@ -55,12 +106,6 @@ impl SmartBuffer {
             BufferKind::Storage => wgpu::BufferUsages::STORAGE,
             BufferKind::Uniform => wgpu::BufferUsages::UNIFORM,
         };
-
-        // Always need COPY_DST for queue.write_buffer().
-        // Note: wgpu does NOT allow MAP_WRITE combined with STORAGE or UNIFORM.
-        // On Apple Silicon (unified memory), the Metal backend already optimizes
-        // queue.write_buffer() internally — it skips staging copies when it detects
-        // shared memory. So we just use COPY_DST on all platforms.
         let usage = kind_usage | wgpu::BufferUsages::COPY_DST;
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -73,31 +118,20 @@ impl SmartBuffer {
         Self { buffer, unified }
     }
 
-    /// Write data to the buffer via `queue.write_buffer()`.
+    /// Write data via raw `wgpu::Queue`.
     ///
-    /// On unified memory, the Metal backend sees `MAP_WRITE` and skips the
-    /// staging copy. On discrete GPUs, this is a standard DMA transfer.
-    pub fn write<T: bytemuck::Pod>(&self, queue: &wgpu::Queue, data: &[T]) {
+    /// Backward-compatible write for subsystems not yet using [`RenderDevice`].
+    pub fn write_wgpu<T: bytemuck::Pod>(&self, queue: &wgpu::Queue, data: &[T]) {
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(data));
     }
 
-    /// Write raw bytes to the buffer at offset 0.
-    pub fn write_bytes(&self, queue: &wgpu::Queue, data: &[u8]) {
+    /// Write raw bytes via `wgpu::Queue`.
+    pub fn write_bytes_wgpu(&self, queue: &wgpu::Queue, data: &[u8]) {
         queue.write_buffer(&self.buffer, 0, data);
-    }
-
-    /// Access the underlying `wgpu::Buffer` (for bind groups, slicing, etc.).
-    pub fn raw(&self) -> &wgpu::Buffer {
-        &self.buffer
-    }
-
-    /// Whether this buffer was created with unified memory optimizations.
-    pub fn is_unified(&self) -> bool {
-        self.unified
     }
 }
 
-impl std::fmt::Debug for SmartBuffer {
+impl<D: RenderDevice> std::fmt::Debug for SmartBuffer<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SmartBuffer")
             .field("unified", &self.unified)

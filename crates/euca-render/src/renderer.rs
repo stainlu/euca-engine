@@ -409,22 +409,23 @@ impl Renderer {
         let instance_buf_size =
             (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64;
         let unified = gpu.unified_memory();
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let instance_buffer = SmartBuffer::new(
-            &gpu.device,
+            rhi,
             instance_buf_size,
             BufferKind::Storage,
             unified,
             "Instance SSBO",
         );
         let scene_buffer = SmartBuffer::new(
-            &gpu.device,
+            rhi,
             std::mem::size_of::<SceneUniforms>() as u64,
             BufferKind::Uniform,
             unified,
             "Scene UBO",
         );
         let shadow_instance_buffer = SmartBuffer::new(
-            &gpu.device,
+            rhi,
             instance_buf_size,
             BufferKind::Storage,
             unified,
@@ -987,7 +988,7 @@ impl Renderer {
         decal_renderer.upload(&gpu.queue);
 
         let decal_uniform_buffer = SmartBuffer::new(
-            &gpu.device,
+            rhi,
             std::mem::size_of::<DecalUniforms>() as u64,
             BufferKind::Uniform,
             unified,
@@ -1095,7 +1096,7 @@ impl Renderer {
         }
         self.instance_capacity = count.next_power_of_two();
         let size = (self.instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
-        self.instance_buffer = SmartBuffer::new(
+        self.instance_buffer = SmartBuffer::from_wgpu(
             device,
             size,
             BufferKind::Storage,
@@ -1121,7 +1122,7 @@ impl Renderer {
         }
         self.shadow_instance_capacity = count.next_power_of_two();
         let size = (self.shadow_instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
-        self.shadow_instance_buffer = SmartBuffer::new(
+        self.shadow_instance_buffer = SmartBuffer::from_wgpu(
             device,
             size,
             BufferKind::Storage,
@@ -1862,7 +1863,7 @@ impl Renderer {
             self.ensure_instance_capacity(&gpu.device, max_needed);
         }
         if !opaque_instances.is_empty() {
-            self.instance_buffer.write(&gpu.queue, &opaque_instances);
+            self.instance_buffer.write(&**gpu, &opaque_instances);
         }
         for (cascade_idx, &cascade_ortho) in CASCADE_ORTHO_SIZES.iter().enumerate() {
             let cascade_vp = Self::light_vp_for_cascade(light, cascade_ortho);
@@ -1881,8 +1882,7 @@ impl Renderer {
                 .collect();
             if !shadow_instances.is_empty() {
                 self.ensure_shadow_instance_capacity(&gpu.device, shadow_instances.len());
-                self.shadow_instance_buffer
-                    .write(&gpu.queue, &shadow_instances);
+                self.shadow_instance_buffer.write(&**gpu, &shadow_instances);
             }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Shadow Pass"),
@@ -1987,7 +1987,7 @@ impl Renderer {
             ],
         };
         self.scene_buffer
-            .write_bytes(&gpu.queue, bytemuck::bytes_of(&scene));
+            .write_bytes(&**gpu, bytemuck::bytes_of(&scene));
 
         // Flush bindless material data to GPU before rendering.
         if let Some(ref mut bl) = self.bindless {
@@ -2079,14 +2079,14 @@ impl Renderer {
                         _pad: [0.0; 3],
                     };
                     self.decal_uniform_buffer
-                        .write(&gpu.queue, std::slice::from_ref(&uniforms));
+                        .write(&**gpu, std::slice::from_ref(&uniforms));
                     pass.draw_indexed(0..self.decal_renderer.index_count(), 0, 0..1);
                 }
             }
 
             if !transparent_cmds.is_empty() {
                 if !trans_instances.is_empty() {
-                    self.instance_buffer.write(&gpu.queue, &trans_instances);
+                    self.instance_buffer.write(&**gpu, &trans_instances);
                 }
                 pass.set_pipeline(&self.transparent_pipeline);
                 pass.set_bind_group(0, &self.instance_bind_group, &[]);

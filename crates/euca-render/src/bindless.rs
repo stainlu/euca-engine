@@ -132,7 +132,7 @@ impl BindlessMaterialSystem {
         let fallback_view = fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Material storage buffer (start with space for 64 materials).
-        let material_buffer = SmartBuffer::new(
+        let material_buffer = SmartBuffer::from_wgpu(
             device,
             (64 * std::mem::size_of::<BindlessMaterialGpu>()) as u64,
             BufferKind::Storage,
@@ -245,7 +245,7 @@ impl BindlessMaterialSystem {
         let needed = (self.materials.len() * std::mem::size_of::<BindlessMaterialGpu>()) as u64;
         if needed > self.material_buffer_capacity {
             let new_size = needed.next_power_of_two();
-            self.material_buffer = SmartBuffer::new(
+            self.material_buffer = SmartBuffer::from_wgpu(
                 device,
                 new_size,
                 BufferKind::Storage,
@@ -256,7 +256,7 @@ impl BindlessMaterialSystem {
             self.dirty = true;
         }
 
-        self.material_buffer.write(queue, &self.materials);
+        self.material_buffer.write_wgpu(queue, &self.materials);
 
         if self.dirty {
             self.rebuild_bind_group(device, textures);

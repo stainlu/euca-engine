@@ -161,7 +161,7 @@ impl VelocityPipeline {
             }],
         });
 
-        let scene_buffer = SmartBuffer::new(
+        let scene_buffer = SmartBuffer::from_wgpu(
             device,
             std::mem::size_of::<VelocitySceneUniforms>() as u64,
             BufferKind::Uniform,
@@ -172,7 +172,7 @@ impl VelocityPipeline {
         // Each previous model is a mat4x4 = 64 bytes.
         let prev_model_size =
             (INITIAL_VELOCITY_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
-        let prev_model_buffer = SmartBuffer::new(
+        let prev_model_buffer = SmartBuffer::from_wgpu(
             device,
             prev_model_size,
             BufferKind::Storage,
@@ -270,7 +270,7 @@ impl VelocityPipeline {
         }
         self.prev_model_capacity = count.next_power_of_two();
         let size = (self.prev_model_capacity * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
-        self.prev_model_buffer = SmartBuffer::new(
+        self.prev_model_buffer = SmartBuffer::from_wgpu(
             device,
             size,
             BufferKind::Storage,
@@ -299,7 +299,7 @@ impl VelocityPipeline {
             prev_view_projection,
         };
         self.scene_buffer
-            .write_bytes(queue, bytemuck::bytes_of(&uniforms));
+            .write_bytes_wgpu(queue, bytemuck::bytes_of(&uniforms));
     }
 
     /// Save current frame model matrices and upload the previous frame's matrices to the GPU.
@@ -324,7 +324,7 @@ impl VelocityPipeline {
 
         // Upload previous frame's models to the GPU.
         if !self.prev_models.is_empty() {
-            self.prev_model_buffer.write(queue, &self.prev_models);
+            self.prev_model_buffer.write_wgpu(queue, &self.prev_models);
         }
 
         // Store current frame for next frame's "previous".

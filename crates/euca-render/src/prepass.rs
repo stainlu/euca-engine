@@ -161,7 +161,7 @@ impl PrepassPipeline {
 
         let instance_size =
             (INITIAL_PREPASS_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        let instance_buffer = SmartBuffer::new(
+        let instance_buffer = SmartBuffer::from_wgpu(
             device,
             instance_size,
             BufferKind::Storage,
@@ -169,7 +169,7 @@ impl PrepassPipeline {
             "Prepass Instance SSBO",
         );
 
-        let scene_buffer = SmartBuffer::new(
+        let scene_buffer = SmartBuffer::from_wgpu(
             device,
             std::mem::size_of::<PrepassSceneUniforms>() as u64,
             BufferKind::Uniform,
@@ -268,7 +268,7 @@ impl PrepassPipeline {
             view,
         };
         self.scene_buffer
-            .write_bytes(queue, bytemuck::bytes_of(&uniforms));
+            .write_bytes_wgpu(queue, bytemuck::bytes_of(&uniforms));
     }
 
     /// Grow the instance buffer if `count` exceeds capacity.
@@ -278,7 +278,7 @@ impl PrepassPipeline {
         }
         self.instance_capacity = count.next_power_of_two();
         let size = (self.instance_capacity * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        self.instance_buffer = SmartBuffer::new(
+        self.instance_buffer = SmartBuffer::from_wgpu(
             device,
             size,
             BufferKind::Storage,
@@ -297,7 +297,7 @@ impl PrepassPipeline {
 
     /// Upload instance data (model + normal matrices) for the current frame.
     pub fn write_instances<T: bytemuck::Pod>(&self, queue: &wgpu::Queue, data: &[T]) {
-        self.instance_buffer.write(queue, data);
+        self.instance_buffer.write_wgpu(queue, data);
     }
 
     /// Execute the depth+normal pre-pass.

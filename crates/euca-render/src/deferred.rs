@@ -189,7 +189,7 @@ impl DeferredPipeline {
         });
         let ibsz =
             (INITIAL_DEFERRED_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        let instance_buffer = SmartBuffer::new(
+        let instance_buffer = SmartBuffer::from_wgpu(
             device,
             ibsz,
             BufferKind::Storage,
@@ -219,7 +219,7 @@ impl DeferredPipeline {
                 count: None,
             }],
         });
-        let gbuffer_scene_buffer = SmartBuffer::new(
+        let gbuffer_scene_buffer = SmartBuffer::from_wgpu(
             device,
             std::mem::size_of::<GBufferSceneUniforms>() as u64,
             BufferKind::Uniform,
@@ -344,7 +344,7 @@ impl DeferredPipeline {
             ..Default::default()
         });
         let lighting_bgl = Self::create_lighting_bgl(device);
-        let lighting_buffer = SmartBuffer::new(
+        let lighting_buffer = SmartBuffer::from_wgpu(
             device,
             std::mem::size_of::<DeferredLightingUniforms>() as u64,
             BufferKind::Uniform,
@@ -445,7 +445,7 @@ impl DeferredPipeline {
         }
         self.instance_capacity = count.next_power_of_two();
         let size = (self.instance_capacity * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        self.instance_buffer = SmartBuffer::new(
+        self.instance_buffer = SmartBuffer::from_wgpu(
             device,
             size,
             BufferKind::Storage,
@@ -462,10 +462,10 @@ impl DeferredPipeline {
         });
     }
     pub fn write_instances<T: bytemuck::Pod>(&self, queue: &wgpu::Queue, data: &[T]) {
-        self.instance_buffer.write(queue, data);
+        self.instance_buffer.write_wgpu(queue, data);
     }
     pub fn write_gbuffer_scene(&self, queue: &wgpu::Queue, camera_vp: [[f32; 4]; 4]) {
-        self.gbuffer_scene_buffer.write_bytes(
+        self.gbuffer_scene_buffer.write_bytes_wgpu(
             queue,
             bytemuck::bytes_of(&GBufferSceneUniforms { camera_vp }),
         );
@@ -476,7 +476,7 @@ impl DeferredPipeline {
         uniforms: &DeferredLightingUniforms,
     ) {
         self.lighting_buffer
-            .write_bytes(queue, bytemuck::bytes_of(uniforms));
+            .write_bytes_wgpu(queue, bytemuck::bytes_of(uniforms));
     }
     pub fn encode_gbuffer_pass<'a, F>(&'a self, encoder: &'a mut wgpu::CommandEncoder, draw_fn: F)
     where
