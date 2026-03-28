@@ -170,67 +170,67 @@ pub(crate) struct SsrNormalsUniforms {
     pub params: [f32; 4],
 }
 
-/// GPU resources for the post-processing stack.
-pub struct PostProcessStack {
+/// Generic over [`RenderDevice`] — defaults to [`WgpuDevice`] for backward compatibility.
+pub struct PostProcessStack<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     // Ping-pong intermediate textures (HDR format, full resolution).
-    ping_texture: wgpu::Texture,
-    ping_view: wgpu::TextureView,
-    pong_texture: wgpu::Texture,
-    pong_view: wgpu::TextureView,
+    ping_texture: D::Texture,
+    ping_view: D::TextureView,
+    pong_texture: D::Texture,
+    pong_view: D::TextureView,
 
     // Resolved depth for SSAO (single-sample R32Float).
     #[allow(dead_code)]
-    depth_resolve_texture: wgpu::Texture,
-    pub(crate) depth_resolve_view: wgpu::TextureView,
+    depth_resolve_texture: D::Texture,
+    pub(crate) depth_resolve_view: D::TextureView,
 
     // SSAO resources (half-resolution)
     #[allow(dead_code)]
-    ssao_texture: wgpu::Texture,
-    ssao_view: wgpu::TextureView,
+    ssao_texture: D::Texture,
+    ssao_view: D::TextureView,
     #[allow(dead_code)]
-    ssao_blur_texture: wgpu::Texture,
-    ssao_blur_view: wgpu::TextureView,
+    ssao_blur_texture: D::Texture,
+    ssao_blur_view: D::TextureView,
     #[allow(dead_code)]
-    ssao_noise_texture: wgpu::Texture,
-    ssao_noise_view: wgpu::TextureView,
-    ssao_pipeline: wgpu::RenderPipeline,
-    ssao_blur_pipeline: wgpu::RenderPipeline,
-    ssao_composite_pipeline: wgpu::RenderPipeline,
-    ssao_bgl: wgpu::BindGroupLayout,
-    ssao_blur_bgl: wgpu::BindGroupLayout,
-    ssao_composite_bgl: wgpu::BindGroupLayout,
-    ssao_bind_group: wgpu::BindGroup,
-    ssao_blur_bind_group: wgpu::BindGroup,
-    ssao_composite_bind_group: wgpu::BindGroup,
-    ssao_uniform_buffer: wgpu::Buffer,
+    ssao_noise_texture: D::Texture,
+    ssao_noise_view: D::TextureView,
+    ssao_pipeline: D::RenderPipeline,
+    ssao_blur_pipeline: D::RenderPipeline,
+    ssao_composite_pipeline: D::RenderPipeline,
+    ssao_bgl: D::BindGroupLayout,
+    ssao_blur_bgl: D::BindGroupLayout,
+    ssao_composite_bgl: D::BindGroupLayout,
+    ssao_bind_group: D::BindGroup,
+    ssao_blur_bind_group: D::BindGroup,
+    ssao_composite_bind_group: D::BindGroup,
+    ssao_uniform_buffer: D::Buffer,
 
     // SSR resources
-    ssr_pass: crate::ssr::SsrPass,
+    ssr_pass: crate::ssr::SsrPass<D>,
     #[allow(dead_code)]
-    ssr_normals_texture: wgpu::Texture,
-    ssr_normals_view: wgpu::TextureView,
-    ssr_normals_pipeline: wgpu::RenderPipeline,
-    ssr_normals_bgl: wgpu::BindGroupLayout,
-    ssr_normals_bind_group: wgpu::BindGroup,
-    ssr_normals_uniform_buffer: wgpu::Buffer,
-    ssr_composite_pipeline: wgpu::RenderPipeline,
-    ssr_composite_bgl: wgpu::BindGroupLayout,
+    ssr_normals_texture: D::Texture,
+    ssr_normals_view: D::TextureView,
+    ssr_normals_pipeline: D::RenderPipeline,
+    ssr_normals_bgl: D::BindGroupLayout,
+    ssr_normals_bind_group: D::BindGroup,
+    ssr_normals_uniform_buffer: D::Buffer,
+    ssr_composite_pipeline: D::RenderPipeline,
+    ssr_composite_bgl: D::BindGroupLayout,
 
     // Main post-process (bloom + color grade + tonemap + vignette)
-    main_pipeline: wgpu::RenderPipeline,
-    main_to_hdr_pipeline: wgpu::RenderPipeline,
-    main_bgl: wgpu::BindGroupLayout,
-    main_bind_group: wgpu::BindGroup,
-    uniform_buffer: wgpu::Buffer,
+    main_pipeline: D::RenderPipeline,
+    main_to_hdr_pipeline: D::RenderPipeline,
+    main_bgl: D::BindGroupLayout,
+    main_bind_group: D::BindGroup,
+    uniform_buffer: D::Buffer,
 
     // FXAA
-    fxaa_pipeline: wgpu::RenderPipeline,
-    fxaa_bgl: wgpu::BindGroupLayout,
-    fxaa_bind_group: wgpu::BindGroup,
+    fxaa_pipeline: D::RenderPipeline,
+    fxaa_bgl: D::BindGroupLayout,
+    fxaa_bind_group: D::BindGroup,
 
     // Shared samplers
-    linear_sampler: wgpu::Sampler,
-    nearest_sampler: wgpu::Sampler,
+    linear_sampler: D::Sampler,
+    nearest_sampler: D::Sampler,
 
     width: u32,
     height: u32,
