@@ -5,6 +5,7 @@ mod audio;
 mod camera;
 mod debug;
 mod entity;
+mod gpu;
 mod fog;
 mod foliage;
 mod gameplay;
@@ -45,6 +46,7 @@ pub use entity::{
     status, tag_set, view_filter_set,
 };
 pub use fog::{fog_get, fog_set};
+pub use gpu::engine_gpu;
 pub use foliage::{foliage_list, foliage_scatter};
 pub use gameplay::{
     ability_list, ability_use, ai_set, game_create, game_state, projectile_spawn, rule_create,
@@ -152,6 +154,66 @@ impl DefaultAssets {
             .get(best)
             .copied()
             .unwrap_or(self.default_material)
+    }
+}
+
+/// GPU information exposed to the agent HTTP layer.
+///
+/// Populated once during engine init (after `GpuContext` is created) and
+/// inserted as an ECS world resource. The `/engine/gpu` endpoint reads this.
+#[derive(Clone, Debug, Serialize)]
+pub struct GpuInfo {
+    /// Backend identifier (e.g. "wgpu", "metal-native").
+    pub backend: String,
+    /// Human-readable device name (e.g. "Apple M4 Pro").
+    pub device_name: String,
+    /// Hardware capabilities queried at startup.
+    pub capabilities: GpuCapabilities,
+}
+
+/// Subset of GPU capabilities relevant for the agent API.
+#[derive(Clone, Debug, Serialize)]
+pub struct GpuCapabilities {
+    pub unified_memory: bool,
+    pub multi_draw_indirect: bool,
+    pub multi_draw_indirect_count: bool,
+    pub texture_binding_array: bool,
+    pub non_uniform_indexing: bool,
+    pub max_texture_dimension_2d: u32,
+    pub max_bind_groups: u32,
+    pub max_bindings_per_bind_group: u32,
+    pub max_binding_array_elements: u32,
+}
+
+impl GpuInfo {
+    /// Build from the render crate's types after GPU initialization.
+    pub fn from_render(
+        backend: &euca_render::RenderBackend,
+        adapter_info: &euca_render::AdapterInfo,
+        caps: &euca_render::euca_rhi::Capabilities,
+    ) -> Self {
+        // RenderBackend::MetalNative only exists when euca-render's "metal-native"
+        // feature is enabled; the catch-all uses Debug to name future variants.
+        #[allow(unreachable_patterns)]
+        let backend = match backend {
+            euca_render::RenderBackend::Wgpu => "wgpu".to_string(),
+            other => format!("{other:?}").to_lowercase(),
+        };
+        Self {
+            backend,
+            device_name: adapter_info.name.clone(),
+            capabilities: GpuCapabilities {
+                unified_memory: caps.unified_memory,
+                multi_draw_indirect: caps.multi_draw_indirect,
+                multi_draw_indirect_count: caps.multi_draw_indirect_count,
+                texture_binding_array: caps.texture_binding_array,
+                non_uniform_indexing: caps.non_uniform_indexing,
+                max_texture_dimension_2d: caps.max_texture_dimension_2d,
+                max_bind_groups: caps.max_bind_groups,
+                max_bindings_per_bind_group: caps.max_bindings_per_bind_group,
+                max_binding_array_elements: caps.max_binding_array_elements,
+            },
+        }
     }
 }
 

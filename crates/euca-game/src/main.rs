@@ -404,6 +404,15 @@ impl ApplicationHandler for GameApp {
             .expect("Failed to create window");
         let gpu = GpuContext::new(window, &survey, &wgpu_instance);
         let renderer = Renderer::new(&gpu);
+
+        // Expose GPU info to the agent HTTP layer as a world resource.
+        self.world
+            .insert_resource(euca_agent::routes::GpuInfo::from_render(
+                &gpu.render_backend,
+                &gpu.adapter_info,
+                gpu.capabilities(),
+            ));
+
         self.gpu = Some(gpu);
         self.renderer = Some(renderer);
         self.initialized = true;
