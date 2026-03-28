@@ -492,144 +492,133 @@ impl Renderer {
             ..Default::default()
         });
 
-        let instance_bgl = gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Instance BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+        let instance_bgl = rhi.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("Instance BGL"),
+            entries: &[euca_rhi::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: euca_rhi::ShaderStages::VERTEX,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let scene_bgl = rhi.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("Scene BGL"),
+            entries: &[
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: euca_rhi::ShaderStages::VERTEX_FRAGMENT,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: None,
+                        min_binding_size: Some(std::mem::size_of::<SceneUniforms>() as u64),
                     },
                     count: None,
-                }],
-            });
-        let scene_bgl = gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Scene BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<SceneUniforms>() as u64,
-                            ),
-                        },
-                        count: None,
+                },
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Depth,
+                        view_dimension: euca_rhi::TextureViewDimension::D2Array,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
+                    count: None,
+                },
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+                // IBL: irradiance cubemap
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                        view_dimension: euca_rhi::TextureViewDimension::Cube,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                        count: None,
+                    count: None,
+                },
+                // IBL: specular pre-filtered cubemap
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                        view_dimension: euca_rhi::TextureViewDimension::Cube,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                        count: None,
+                    count: None,
+                },
+                // IBL: BRDF integration LUT
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    // IBL: irradiance cubemap
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::Cube,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // IBL: specular pre-filtered cubemap
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::Cube,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // IBL: BRDF integration LUT
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // IBL: trilinear sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                // IBL: trilinear sampler
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
-        let tex_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+        let tex_entry = |binding: u32| euca_rhi::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
+            visibility: euca_rhi::ShaderStages::FRAGMENT,
+            ty: euca_rhi::BindingType::Texture {
+                sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                view_dimension: euca_rhi::TextureViewDimension::D2,
                 multisampled: false,
             },
             count: None,
         };
-        let material_bgl = gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Material BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
-                                MaterialUniforms,
-                            >()
-                                as u64),
-                        },
-                        count: None,
+        let material_bgl = rhi.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("Material BGL"),
+            entries: &[
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(std::mem::size_of::<MaterialUniforms>() as u64),
                     },
-                    tex_entry(1), // albedo
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    tex_entry(3), // normal
-                    tex_entry(4), // metallic-roughness
-                    tex_entry(5), // ao
-                    tex_entry(6), // emissive
-                ],
-            });
+                    count: None,
+                },
+                tex_entry(1), // albedo
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                tex_entry(3), // normal
+                tex_entry(4), // metallic-roughness
+                tex_entry(5), // ao
+                tex_entry(6), // emissive
+            ],
+        });
 
         let instance_bind_group = rhi.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Instance BG"),
@@ -798,209 +787,158 @@ impl Renderer {
         });
 
         let depth_format = wgpu::TextureFormat::Depth32Float;
-        let shadow_shader = gpu
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Shadow Shader"),
-                source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
-            });
-        let shadow_pipeline_layout =
-            gpu.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Shadow Pipeline Layout"),
-                    bind_group_layouts: &[&instance_bgl],
-                    push_constant_ranges: &[],
-                });
-        let shadow_pipeline = gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Shadow Pipeline"),
-                layout: Some(&shadow_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shadow_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::LAYOUT],
-                    compilation_options: Default::default(),
+        let shadow_shader = rhi.create_shader(&euca_rhi::ShaderDesc {
+            label: Some("Shadow Shader"),
+            source: euca_rhi::ShaderSource::Wgsl(SHADOW_SHADER.into()),
+        });
+        let shadow_pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
+            label: Some("Shadow Pipeline"),
+            layout: &[&instance_bgl],
+            vertex: euca_rhi::VertexState {
+                module: &shadow_shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::RHI_LAYOUT],
+            },
+            fragment: None,
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Front),
+                ..Default::default()
+            },
+            depth_stencil: Some(euca_rhi::DepthStencilState {
+                format: euca_rhi::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: euca_rhi::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: euca_rhi::DepthBiasState {
+                    constant: 4,
+                    slope_scale: 3.0,
+                    clamp: 0.0,
                 },
-                fragment: None,
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Front),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: depth_format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: 4,
-                        slope_scale: 3.0,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: Default::default(),
-                multiview: None,
-                cache: None,
-            });
+            }),
+            multisample: Default::default(),
+        });
 
-        let sky_shader = gpu
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Sky Shader"),
-                source: wgpu::ShaderSource::Wgsl(SKY_SHADER.into()),
-            });
-        let sky_pipeline_layout =
-            gpu.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Sky Pipeline Layout"),
-                    bind_group_layouts: &[&scene_bgl],
-                    push_constant_ranges: &[],
-                });
-        let hdr_format = wgpu::TextureFormat::Rgba16Float;
-        let shader = gpu
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("PBR Shader"),
-                source: wgpu::ShaderSource::Wgsl(PBR_SHADER.into()),
-            });
-        let pipeline_layout = gpu
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("PBR Pipeline Layout"),
-                bind_group_layouts: &[&instance_bgl, &scene_bgl, &material_bgl],
-                push_constant_ranges: &[],
-            });
+        let sky_shader = rhi.create_shader(&euca_rhi::ShaderDesc {
+            label: Some("Sky Shader"),
+            source: euca_rhi::ShaderSource::Wgsl(SKY_SHADER.into()),
+        });
+        let shader = rhi.create_shader(&euca_rhi::ShaderDesc {
+            label: Some("PBR Shader"),
+            source: euca_rhi::ShaderSource::Wgsl(PBR_SHADER.into()),
+        });
         let depth_texture =
             Self::create_depth_texture(&gpu.device, &gpu.surface_config, depth_format);
 
-        let pipeline = gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("PBR Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::LAYOUT],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: hdr_format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: depth_format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: MSAA_SAMPLE_COUNT,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
+        let pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
+            label: Some("PBR Pipeline"),
+            layout: &[&instance_bgl, &scene_bgl, &material_bgl],
+            vertex: euca_rhi::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::RHI_LAYOUT],
+            },
+            fragment: Some(euca_rhi::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    blend: Some(euca_rhi::BlendState::REPLACE),
+                    write_mask: euca_rhi::ColorWrites::ALL,
+                })],
+            }),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(euca_rhi::DepthStencilState {
+                format: euca_rhi::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: euca_rhi::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: euca_rhi::MultisampleState {
+                count: MSAA_SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        });
 
-        let transparent_pipeline =
-            gpu.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("PBR Transparent Pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::LAYOUT],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: hdr_format,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: Some(wgpu::Face::Back),
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: depth_format,
-                        depth_write_enabled: false,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: MSAA_SAMPLE_COUNT,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    multiview: None,
-                    cache: None,
-                });
+        let transparent_pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
+            label: Some("PBR Transparent Pipeline"),
+            layout: &[&instance_bgl, &scene_bgl, &material_bgl],
+            vertex: euca_rhi::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::RHI_LAYOUT],
+            },
+            fragment: Some(euca_rhi::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    blend: Some(euca_rhi::BlendState::ALPHA_BLENDING),
+                    write_mask: euca_rhi::ColorWrites::ALL,
+                })],
+            }),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(euca_rhi::DepthStencilState {
+                format: euca_rhi::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: euca_rhi::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: euca_rhi::MultisampleState {
+                count: MSAA_SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        });
 
-        let sky_pipeline = gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Sky Pipeline"),
-                layout: Some(&sky_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &sky_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &sky_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: hdr_format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: depth_format,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: MSAA_SAMPLE_COUNT,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
+        let sky_pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
+            label: Some("Sky Pipeline"),
+            layout: &[&scene_bgl],
+            vertex: euca_rhi::VertexState {
+                module: &sky_shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(euca_rhi::FragmentState {
+                module: &sky_shader,
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    blend: Some(euca_rhi::BlendState::REPLACE),
+                    write_mask: euca_rhi::ColorWrites::ALL,
+                })],
+            }),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(euca_rhi::DepthStencilState {
+                format: euca_rhi::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: euca_rhi::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: euca_rhi::MultisampleState {
+                count: MSAA_SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        });
 
         let (msaa_hdr_texture, msaa_hdr_view) =
             Self::create_msaa_hdr_texture(&gpu.device, &gpu.surface_config);
@@ -1017,23 +955,19 @@ impl Renderer {
             unified,
             "Decal UBO",
         );
-        let decal_bgl = gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Decal BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<DecalUniforms>() as u64,
-                        ),
-                    },
-                    count: None,
-                }],
-            });
+        let decal_bgl = rhi.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("Decal BGL"),
+            entries: &[euca_rhi::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: euca_rhi::ShaderStages::VERTEX_FRAGMENT,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(std::mem::size_of::<DecalUniforms>() as u64),
+                },
+                count: None,
+            }],
+        });
         let decal_bind_group = rhi.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Decal BG"),
             layout: &decal_bgl,
@@ -1186,65 +1120,51 @@ impl Renderer {
 
         // Create the bindless render pipeline with the same vertex layout but
         // different group 2 bind group layout and shader.
-        let shader = gpu
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("PBR Bindless Shader"),
-                source: wgpu::ShaderSource::Wgsl(PBR_BINDLESS_SHADER.into()),
-            });
-        let pipeline_layout = gpu
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("PBR Bindless Pipeline Layout"),
-                bind_group_layouts: &[
-                    &self.instance_bgl,
-                    &self.scene_bgl,
-                    &system.bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
-        let pipeline = gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("PBR Bindless Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[crate::vertex::Vertex::LAYOUT],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: self.depth_format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: MSAA_SAMPLE_COUNT,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let shader = rhi.create_shader(&euca_rhi::ShaderDesc {
+            label: Some("PBR Bindless Shader"),
+            source: euca_rhi::ShaderSource::Wgsl(PBR_BINDLESS_SHADER.into()),
+        });
+        let pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
+            label: Some("PBR Bindless Pipeline"),
+            layout: &[
+                &self.instance_bgl,
+                &self.scene_bgl,
+                &system.bind_group_layout,
+            ],
+            vertex: euca_rhi::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[crate::vertex::Vertex::RHI_LAYOUT],
+            },
+            fragment: Some(euca_rhi::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: euca_rhi::ColorWrites::ALL,
+                })],
+            }),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(euca_rhi::DepthStencilState {
+                format: euca_rhi::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: euca_rhi::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: euca_rhi::MultisampleState {
+                count: MSAA_SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        });
 
         log::info!("Bindless material rendering enabled");
         self.bindless = Some(BindlessState { system, pipeline });

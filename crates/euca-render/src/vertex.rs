@@ -51,4 +51,36 @@ impl Vertex {
             },
         ],
     };
+
+    /// RHI-agnostic vertex buffer layout descriptor matching the field offsets above.
+    pub const RHI_LAYOUT: euca_rhi::VertexBufferLayout<'static> = euca_rhi::VertexBufferLayout {
+        array_stride: std::mem::size_of::<Vertex>() as u64,
+        step_mode: euca_rhi::VertexStepMode::Vertex,
+        attributes: &[
+            // position
+            euca_rhi::VertexAttribute {
+                format: euca_rhi::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            // normal
+            euca_rhi::VertexAttribute {
+                format: euca_rhi::VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1,
+            },
+            // tangent
+            euca_rhi::VertexAttribute {
+                format: euca_rhi::VertexFormat::Float32x3,
+                offset: 24,
+                shader_location: 2,
+            },
+            // uv
+            euca_rhi::VertexAttribute {
+                format: euca_rhi::VertexFormat::Float32x2,
+                offset: 36,
+                shader_location: 3,
+            },
+        ],
+    };
 }
