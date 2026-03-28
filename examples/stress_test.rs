@@ -161,7 +161,7 @@ impl StressTestApp {
             let row = i / side;
             let col = i % side;
             let x = (col as f32 - side as f32 / 2.0) * spacing;
-            let y = 0.0; // On the ground surface
+            let y = 0.5; // Cube center at 0.5 → bottom face at Y=0.0, above ground (Y=-0.5)
             let z = (row as f32 - side as f32 / 2.0) * spacing;
 
             // Horizontal-only velocity — no vertical drop that causes pile-up.
