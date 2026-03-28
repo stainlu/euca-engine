@@ -24,22 +24,27 @@ struct TaaParamsGpu {
 }
 
 /// TAA resolve pass — manages history textures and dispatches the resolve shader.
-pub struct TaaPass {
-    pipeline: wgpu::ComputePipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
+///
+/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`euca_rhi::wgpu_backend::WgpuDevice`]
+/// for backward compatibility. All GPU resource handles are backend-agnostic
+/// associated types; the `impl` blocks that touch raw wgpu APIs remain
+/// concrete on the default `WgpuDevice`.
+pub struct TaaPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::ComputePipeline,
+    bind_group_layout: D::BindGroupLayout,
     /// Ping-pong history textures (Rgba16Float, full resolution).
-    history: [wgpu::Texture; 2],
-    history_views: [wgpu::TextureView; 2],
+    history: [D::Texture; 2],
+    history_views: [D::TextureView; 2],
     /// Which history texture was written to last frame (read from this, write to other).
     current_read: usize,
-    uniform_buffer: wgpu::Buffer,
-    sampler: wgpu::Sampler,
+    uniform_buffer: D::Buffer,
+    sampler: D::Sampler,
     /// Current dimensions (recreate textures on resize).
     width: u32,
     height: u32,
     /// Output texture view (the resolved TAA result for post-processing to read).
-    output_texture: wgpu::Texture,
-    output_view: wgpu::TextureView,
+    output_texture: D::Texture,
+    output_view: D::TextureView,
 }
 
 impl TaaPass {
