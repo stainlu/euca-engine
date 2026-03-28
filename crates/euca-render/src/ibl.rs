@@ -67,21 +67,21 @@ struct SpecularParams {
 // ---------------------------------------------------------------------------
 
 /// Pre-computed IBL textures ready for binding in the PBR shader.
-pub struct IblResources {
+pub struct IblResources<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     /// BRDF integration LUT (Rg16Float, 512x512).
-    pub brdf_lut: wgpu::Texture,
+    pub brdf_lut: D::Texture,
     /// View into the BRDF LUT for shader binding.
-    pub brdf_lut_view: wgpu::TextureView,
+    pub brdf_lut_view: D::TextureView,
     /// Diffuse irradiance cubemap (Rgba16Float, 64x64 per face).
-    pub irradiance_cubemap: wgpu::Texture,
+    pub irradiance_cubemap: D::Texture,
     /// Cube view into the irradiance cubemap.
-    pub irradiance_view: wgpu::TextureView,
+    pub irradiance_view: D::TextureView,
     /// Pre-filtered specular cubemap (Rgba16Float, 256x256 base, 5 mip levels).
-    pub specular_cubemap: wgpu::Texture,
+    pub specular_cubemap: D::Texture,
     /// Cube view into the specular cubemap (all mip levels).
-    pub specular_view: wgpu::TextureView,
+    pub specular_view: D::TextureView,
     /// Trilinear-filtering sampler for cubemap lookups.
-    pub cubemap_sampler: wgpu::Sampler,
+    pub cubemap_sampler: D::Sampler,
 }
 
 impl IblResources {
