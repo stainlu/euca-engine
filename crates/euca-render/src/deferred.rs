@@ -44,15 +44,18 @@ impl GBufferFormats {
 }
 
 /// G-buffer render targets.
-pub struct GBuffer {
-    pub albedo_texture: wgpu::Texture,
-    pub albedo_view: wgpu::TextureView,
-    pub normal_roughness_texture: wgpu::Texture,
-    pub normal_roughness_view: wgpu::TextureView,
-    pub material_texture: wgpu::Texture,
-    pub material_view: wgpu::TextureView,
-    pub depth_texture: wgpu::Texture,
-    pub depth_view: wgpu::TextureView,
+///
+/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`euca_rhi::wgpu_backend::WgpuDevice`]
+/// for backward compatibility while the renderer is being generified.
+pub struct GBuffer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pub albedo_texture: D::Texture,
+    pub albedo_view: D::TextureView,
+    pub normal_roughness_texture: D::Texture,
+    pub normal_roughness_view: D::TextureView,
+    pub material_texture: D::Texture,
+    pub material_view: D::TextureView,
+    pub depth_texture: D::Texture,
+    pub depth_view: D::TextureView,
     pub width: u32,
     pub height: u32,
 }
@@ -139,23 +142,27 @@ pub struct DeferredLightingUniforms {
     pub num_spot_lights: [f32; 4],
 }
 
+/// Deferred rendering pipeline: G-buffer geometry pass + fullscreen lighting pass.
+///
+/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`euca_rhi::wgpu_backend::WgpuDevice`]
+/// for backward compatibility while the renderer is being generified.
 #[allow(dead_code)]
-pub struct DeferredPipeline {
-    pub gbuffer: GBuffer,
-    gbuffer_pipeline: wgpu::RenderPipeline,
-    instance_bgl: wgpu::BindGroupLayout,
-    gbuffer_scene_bgl: wgpu::BindGroupLayout,
-    material_bgl: wgpu::BindGroupLayout,
-    instance_buffer: SmartBuffer,
-    instance_bind_group: wgpu::BindGroup,
-    gbuffer_scene_buffer: SmartBuffer,
-    gbuffer_scene_bind_group: wgpu::BindGroup,
-    lighting_pipeline: wgpu::RenderPipeline,
-    lighting_bgl: wgpu::BindGroupLayout,
-    lighting_bind_group: wgpu::BindGroup,
-    lighting_buffer: SmartBuffer,
-    gbuffer_sampler: wgpu::Sampler,
-    material_sampler: wgpu::Sampler,
+pub struct DeferredPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pub gbuffer: GBuffer<D>,
+    gbuffer_pipeline: D::RenderPipeline,
+    instance_bgl: D::BindGroupLayout,
+    gbuffer_scene_bgl: D::BindGroupLayout,
+    material_bgl: D::BindGroupLayout,
+    instance_buffer: SmartBuffer<D>,
+    instance_bind_group: D::BindGroup,
+    gbuffer_scene_buffer: SmartBuffer<D>,
+    gbuffer_scene_bind_group: D::BindGroup,
+    lighting_pipeline: D::RenderPipeline,
+    lighting_bgl: D::BindGroupLayout,
+    lighting_bind_group: D::BindGroup,
+    lighting_buffer: SmartBuffer<D>,
+    gbuffer_sampler: D::Sampler,
+    material_sampler: D::Sampler,
     hdr_format: wgpu::TextureFormat,
     /// Current capacity (in instances) of the deferred instance buffer.
     instance_capacity: usize,
