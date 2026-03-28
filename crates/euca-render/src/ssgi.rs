@@ -84,19 +84,19 @@ struct SsgiUniforms {
 // ---------------------------------------------------------------------------
 
 /// Manages the compute pipeline, history textures, and output for SSGI.
-pub struct SsgiPass {
-    pipeline: wgpu::ComputePipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
+pub struct SsgiPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::ComputePipeline,
+    bind_group_layout: D::BindGroupLayout,
+    uniform_buffer: D::Buffer,
     /// Ping-pong history textures for temporal accumulation (half resolution).
-    history: [wgpu::Texture; 2],
-    history_views: [wgpu::TextureView; 2],
+    history: [D::Texture; 2],
+    history_views: [D::TextureView; 2],
     /// Which history texture to read from this frame.
     current_read: usize,
-    sampler: wgpu::Sampler,
+    sampler: D::Sampler,
     #[allow(dead_code)]
-    output_texture: wgpu::Texture,
-    output_view: wgpu::TextureView,
+    output_texture: D::Texture,
+    output_view: D::TextureView,
     frame_index: u32,
     /// Half-res width.
     width: u32,

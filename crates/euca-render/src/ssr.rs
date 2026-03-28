@@ -109,14 +109,14 @@ pub struct SsrExecuteParams<'a> {
 }
 
 /// Manages the GPU pipeline and resources for the SSR post-process pass.
-pub struct SsrPass {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
-    sampler: wgpu::Sampler,
+pub struct SsrPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::RenderPipeline,
+    bind_group_layout: D::BindGroupLayout,
+    uniform_buffer: D::Buffer,
+    sampler: D::Sampler,
     #[allow(dead_code)]
-    output_texture: wgpu::Texture,
-    output_view: wgpu::TextureView,
+    output_texture: D::Texture,
+    output_view: D::TextureView,
     width: u32,
     height: u32,
 }
