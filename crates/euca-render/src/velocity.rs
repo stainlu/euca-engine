@@ -52,9 +52,9 @@ pub struct VelocitySceneUniforms {
 }
 
 /// Resolution-dependent textures produced by the velocity pass.
-pub struct VelocityTextures {
-    pub velocity_texture: wgpu::Texture,
-    pub velocity_view: wgpu::TextureView,
+pub struct VelocityTextures<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pub velocity_texture: D::Texture,
+    pub velocity_view: D::TextureView,
     pub width: u32,
     pub height: u32,
 }
@@ -100,14 +100,14 @@ impl VelocityTextures {
 /// Re-uses the same instance buffer (bind group) as the prepass for current
 /// frame model matrices. Maintains its own storage buffer for previous frame
 /// model matrices.
-pub struct VelocityPipeline {
-    pipeline: wgpu::RenderPipeline,
-    scene_bgl: wgpu::BindGroupLayout,
-    prev_model_bgl: wgpu::BindGroupLayout,
-    scene_buffer: SmartBuffer,
-    scene_bind_group: wgpu::BindGroup,
-    prev_model_buffer: SmartBuffer,
-    prev_model_bind_group: wgpu::BindGroup,
+pub struct VelocityPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: D::RenderPipeline,
+    scene_bgl: D::BindGroupLayout,
+    prev_model_bgl: D::BindGroupLayout,
+    scene_buffer: SmartBuffer<D>,
+    scene_bind_group: D::BindGroup,
+    prev_model_buffer: SmartBuffer<D>,
+    prev_model_bind_group: D::BindGroup,
     /// CPU-side copy of previous frame model matrices.
     prev_models: Vec<[[f32; 4]; 4]>,
     /// Whether `update_previous_models` has been called at least once.
