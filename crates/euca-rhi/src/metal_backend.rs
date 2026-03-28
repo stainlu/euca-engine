@@ -64,6 +64,8 @@ pub struct MetalBindGroup {
 
 pub struct MetalCommandEncoder {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    /// Drawable to present when this encoder is submitted.
+    pending_drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
 }
 
 /// Retained index buffer state: (buffer, index type, byte offset).
@@ -96,6 +98,14 @@ pub struct MetalComputePass<'a> {
 
 pub struct MetalSurfaceTexture {
     drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
+}
+
+impl MetalCommandEncoder {
+    /// Schedule a drawable for presentation when this encoder is submitted.
+    /// Must be called before `device.submit(encoder)`.
+    pub fn schedule_present(&mut self, surface_texture: &MetalSurfaceTexture) {
+        self.pending_drawable = Some(Retained::clone(&surface_texture.drawable));
+    }
 }
 
 // ===========================================================================
@@ -198,6 +208,45 @@ impl MetalDevice {
             surface_format: TextureFormat::Bgra8UnormSrgb,
             capabilities,
         }
+    }
+
+    /// Create a MetalDevice from a winit window (macOS only).
+    ///
+    /// Extracts the NSView, creates and attaches a CAMetalLayer, and
+    /// initializes the Metal device with the system default GPU.
+    #[cfg(feature = "metal-backend")]
+    pub fn from_window(window: &winit::window::Window) -> Self {
+        use raw_window_handle::HasWindowHandle;
+
+        let size = window.inner_size();
+        let scale_factor = window.scale_factor();
+        let handle = window.window_handle().expect("Failed to get window handle");
+        let raw = handle.as_raw();
+
+        let layer = unsafe {
+            let raw_window_handle::RawWindowHandle::AppKit(appkit) = raw else {
+                panic!("Expected AppKit window handle on macOS");
+            };
+            let ns_view = appkit.ns_view.as_ptr() as *const objc2::runtime::AnyObject;
+
+            // Create and configure CAMetalLayer
+            let metal_layer = CAMetalLayer::new();
+
+            // Configure for Retina display
+            metal_layer.setContentsScale(scale_factor);
+
+            // Make the view layer-backed and set our Metal layer
+            let _: () = objc2::msg_send![ns_view, setWantsLayer: true];
+            let _: () = objc2::msg_send![ns_view, setLayer: &*metal_layer];
+
+            // Set the layer's frame to match the view's bounds
+            let bounds: objc2_foundation::NSRect = objc2::msg_send![ns_view, bounds];
+            let _: () = objc2::msg_send![&*metal_layer, setFrame: bounds];
+
+            metal_layer
+        };
+
+        unsafe { Self::new(layer, size.width, size.height) }
     }
 
     /// Access the raw MTL device (for advanced Metal-specific operations).
@@ -715,7 +764,10 @@ impl RenderDevice for MetalDevice {
             .queue
             .commandBuffer()
             .expect("Failed to create Metal command buffer");
-        MetalCommandEncoder { command_buffer }
+        MetalCommandEncoder {
+            command_buffer,
+            pending_drawable: None,
+        }
     }
 
     fn begin_render_pass<'a>(
@@ -790,6 +842,12 @@ impl RenderDevice for MetalDevice {
     }
 
     fn submit(&self, encoder: MetalCommandEncoder) {
+        // Present any pending drawable BEFORE committing (Metal best practice)
+        if let Some(ref drawable) = encoder.pending_drawable {
+            let mtl_drawable: &ProtocolObject<dyn MTLDrawable> =
+                ProtocolObject::from_ref(&**drawable);
+            encoder.command_buffer.presentDrawable(mtl_drawable);
+        }
         encoder.command_buffer.commit();
     }
 
@@ -803,15 +861,10 @@ impl RenderDevice for MetalDevice {
         MetalTextureView(SendSync(texture))
     }
 
-    fn present(&self, texture: MetalSurfaceTexture) {
-        // Present via the command queue — create a tiny command buffer just for present
-        if let Some(cmd_buf) = self.queue.commandBuffer() {
-            // Upcast CAMetalDrawable → MTLDrawable for presentDrawable()
-            let drawable: &ProtocolObject<dyn MTLDrawable> =
-                ProtocolObject::from_ref(&*texture.drawable);
-            cmd_buf.presentDrawable(drawable);
-            cmd_buf.commit();
-        }
+    fn present(&self, _texture: MetalSurfaceTexture) {
+        // Presentation is handled in submit() — the drawable was attached to the
+        // command encoder via schedule_present(). This method is a no-op for Metal.
+        // The drawable is dropped here, releasing it back to the CAMetalLayer pool.
     }
 
     fn resize_surface(&mut self, width: u32, height: u32) {

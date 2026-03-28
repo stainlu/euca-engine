@@ -45,3 +45,8 @@ path = "../../examples/physics_demo.rs"
 [[example]]
 name = "texture_demo"
 path = "../../examples/texture_demo.rs"
+
+[[example]]
+name = "metal_cubes"
+path = "../../examples/metal_cubes.rs"
+required-features = ["euca-rhi/metal-backend"]
