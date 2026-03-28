@@ -828,8 +828,12 @@ impl Renderer {
             label: Some("PBR Shader"),
             source: euca_rhi::ShaderSource::Wgsl(PBR_SHADER.into()),
         });
-        let depth_texture =
-            Self::create_depth_texture(&gpu.device, &gpu.surface_config, depth_format);
+        let depth_texture = Self::create_depth_texture(
+            rhi,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
+            euca_rhi::TextureFormat::Depth32Float,
+        );
 
         let pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("PBR Pipeline"),
@@ -941,7 +945,7 @@ impl Renderer {
         });
 
         let (msaa_hdr_texture, msaa_hdr_view) =
-            Self::create_msaa_hdr_texture(&gpu.device, &gpu.surface_config);
+            Self::create_msaa_hdr_texture(rhi, gpu.surface_config.width, gpu.surface_config.height);
         let post_process_stack =
             PostProcessStack::new(&gpu.device, &gpu.queue, &gpu.surface_config);
 
@@ -1346,10 +1350,11 @@ impl Renderer {
     /// Recreate size-dependent GPU resources (depth buffer, MSAA target, etc.)
     /// after the window has been resized.
     pub fn resize(&mut self, gpu: &GpuContext) {
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let (w, h) = (gpu.surface_config.width, gpu.surface_config.height);
         self.depth_texture =
-            Self::create_depth_texture(&gpu.device, &gpu.surface_config, self.depth_format);
-        let (msaa_hdr_texture, msaa_hdr_view) =
-            Self::create_msaa_hdr_texture(&gpu.device, &gpu.surface_config);
+            Self::create_depth_texture(rhi, w, h, euca_rhi::TextureFormat::Depth32Float);
+        let (msaa_hdr_texture, msaa_hdr_view) = Self::create_msaa_hdr_texture(rhi, w, h);
         self.msaa_hdr_texture = msaa_hdr_texture;
         self.msaa_hdr_view = msaa_hdr_view;
         self.post_process_stack.resize(
@@ -1399,14 +1404,14 @@ impl Renderer {
     pub fn set_ibl(&mut self, gpu: &GpuContext, resources: IblResources, intensity: f32) {
         self.ibl_resources = Some(resources);
         self.ibl_intensity = intensity;
-        self.rebuild_scene_bind_group(&gpu.device);
+        self.rebuild_scene_bind_group(gpu);
     }
 
     /// Disable IBL (fall back to SH probes or flat ambient color).
     pub fn clear_ibl(&mut self, gpu: &GpuContext) {
         self.ibl_resources = None;
         self.ibl_intensity = 1.0;
-        self.rebuild_scene_bind_group(&gpu.device);
+        self.rebuild_scene_bind_group(gpu);
     }
 
     /// Set the IBL intensity multiplier without changing the bound resources.
@@ -1421,7 +1426,7 @@ impl Renderer {
 
     /// Rebuild the scene bind group, picking real IBL texture views when
     /// `ibl_resources` is `Some`, or dummy (black) views otherwise.
-    fn rebuild_scene_bind_group(&mut self, device: &wgpu::Device) {
+    fn rebuild_scene_bind_group(&mut self, device: &euca_rhi::wgpu_backend::WgpuDevice) {
         let (irradiance_view, specular_view, brdf_view, sampler) =
             if let Some(ref ibl) = self.ibl_resources {
                 (
@@ -1439,41 +1444,45 @@ impl Renderer {
                 )
             };
 
-        self.scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.scene_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Scene BG"),
             layout: &self.scene_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: self.scene_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.scene_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.shadow_map_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.shadow_map_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&self.shadow_sampler),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.shadow_depth_sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&self.shadow_depth_sampler),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(irradiance_view),
+                    resource: euca_rhi::BindingResource::TextureView(irradiance_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(specular_view),
+                    resource: euca_rhi::BindingResource::TextureView(specular_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(brdf_view),
+                    resource: euca_rhi::BindingResource::TextureView(brdf_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: euca_rhi::BindingResource::Sampler(sampler),
                 },
             ],
         });
@@ -2232,45 +2241,47 @@ impl Renderer {
     }
 
     fn create_depth_texture(
-        device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
-        format: wgpu::TextureFormat,
+        device: &euca_rhi::wgpu_backend::WgpuDevice,
+        width: u32,
+        height: u32,
+        format: euca_rhi::TextureFormat,
     ) -> wgpu::TextureView {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("Depth Texture (MSAA)"),
-            size: wgpu::Extent3d {
-                width: config.width.max(1),
-                height: config.height.max(1),
+            size: euca_rhi::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: MSAA_SAMPLE_COUNT,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: euca_rhi::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        texture.create_view(&wgpu::TextureViewDescriptor::default())
+        device.create_texture_view(&texture, &euca_rhi::TextureViewDesc::default())
     }
     fn create_msaa_hdr_texture(
-        device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
+        device: &euca_rhi::wgpu_backend::WgpuDevice,
+        width: u32,
+        height: u32,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("MSAA HDR Texture"),
-            size: wgpu::Extent3d {
-                width: config.width.max(1),
-                height: config.height.max(1),
+            size: euca_rhi::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: MSAA_SAMPLE_COUNT,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = device.create_texture_view(&texture, &euca_rhi::TextureViewDesc::default());
         (texture, view)
     }
 }
