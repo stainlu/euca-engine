@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.0 (unreleased)
+
+### RHI Abstraction & Native Metal Backend
+
+New `euca-rhi` crate introduces a `RenderDevice` trait that decouples the renderer from any specific GPU API. The entire rendering pipeline is now generic over the backend, with compile-time dispatch and zero dynamic overhead.
+
+- **feat: `euca-rhi` crate with `RenderDevice` trait** — Associated types for all GPU resources (`Buffer`, `Texture`, `TextureView`, `Sampler`, `BindGroupLayout`, `BindGroup`, `PipelineLayout`, `RenderPipeline`, `ComputePipeline`, `CommandEncoder`, `ShaderModule`). Backends implement this trait; the renderer never calls GPU APIs directly.
+- **feat: native Metal backend via objc2-metal (Apple Silicon)** — `MetalDevice` implements `RenderDevice` with direct `MTLDevice`, `MTLCommandQueue`, `MTLRenderCommandEncoder` access. Bypasses wgpu's WGSL-to-MSL translation layer. Foundation for Metal-specific features (memoryless targets, tile shading, Indirect Command Buffers, mesh shaders, MetalFX, MPS).
+- **refactor: make Renderer and all subsystems generic over `RenderDevice`** — `Renderer<D>`, `SmartBuffer<D>`, `PostProcessStack<D>`, shadow maps, clustered lights, and all rendering subsystems are parameterized over the backend. `WgpuDevice` remains the cross-platform default; `MetalDevice` is selected on Apple Silicon.
+- **feat: MSL core shaders** — PBR (Cook-Torrance BRDF), shadow mapping, and procedural sky shaders written in Metal Shading Language alongside existing WGSL shaders.
+
 ## v1.2.0 (2026-03-27)
 
 ### Performance Scaling — 10K Entities at 75 FPS
