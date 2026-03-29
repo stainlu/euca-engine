@@ -16,6 +16,8 @@ pub mod abilities;
 pub mod ai;
 /// Engine-level assertions — testable expectations as ECS entities.
 pub mod assertions;
+/// Dota 2 hero attribute system — STR/AGI/INT with per-level growth and stat conversions.
+pub mod attributes;
 /// Camera modes and follow systems.
 pub mod camera;
 /// Timed corpse/entity cleanup after death.
@@ -134,3 +136,9 @@ pub use turns::{
 pub use zones::{Zone, ZoneDynamic, ZoneEffect, ZoneShape, zone_dynamic_system, zone_system};
 
 pub use tower_aggro::{TowerAggroOverride, tower_aggro_system};
+
+pub use attributes::{
+    AttributeGrowth as AttrGrowth, BaseAttributes, ComputedAttributes, DerivedStats,
+    HeroAttributes, HeroTimings, PrimaryAttribute, attack_interval, compute_attributes,
+    derive_stats, total_armor, total_attack_speed, total_damage, total_hp, total_mana, turn_time,
+};
