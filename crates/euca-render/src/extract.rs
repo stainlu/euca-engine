@@ -155,6 +155,13 @@ impl RenderExtractor {
             }
         }
 
+        // ── Phase 3: Auto-compact on excessive fragmentation ──
+        // If holes exceed 25% of total slots, compact to reclaim memory and
+        // keep the command buffer dense for GPU submission.
+        if self.free_slots.len() * 4 > self.commands.len() {
+            self.compact();
+        }
+
         self.last_sync_tick = current_tick;
     }
 
@@ -167,14 +174,13 @@ impl RenderExtractor {
         &self.commands
     }
 
-    /// Return only active (non-despawned) draw commands. This creates a new
-    /// Vec but filters out holes.
-    pub fn active_commands(&self) -> Vec<&DrawCommand> {
+    /// Return only active (non-despawned) draw commands as a lazy iterator.
+    /// No allocation — the caller can iterate, collect, or chain as needed.
+    pub fn active_commands(&self) -> impl Iterator<Item = &DrawCommand> {
         self.commands
             .iter()
             .zip(self.entities.iter())
             .filter_map(|(cmd, meta)| meta.as_ref().map(|_| cmd))
-            .collect()
     }
 
     /// Number of active (non-despawned) renderable entities.
