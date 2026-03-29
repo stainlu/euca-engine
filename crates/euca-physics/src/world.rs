@@ -38,13 +38,19 @@ impl Default for PhysicsConfig {
 }
 
 /// Collection of joint constraints. Insert as a resource.
+///
+/// The `generation` counter is bumped on every mutation. The physics frame
+/// cache uses it to avoid re-cloning joints every tick.
 #[derive(Clone, Debug, Default)]
 pub struct Joints {
     pub joints: Vec<crate::joints::Joint>,
+    /// Monotonically increasing counter, bumped on each mutation.
+    pub generation: u64,
 }
 
 impl Joints {
     pub fn add(&mut self, joint: crate::joints::Joint) {
         self.joints.push(joint);
+        self.generation += 1;
     }
 }

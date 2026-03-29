@@ -4,6 +4,7 @@ use euca_scene::LocalTransform;
 
 use crate::collision::intersect_shapes;
 use crate::components::*;
+use crate::frame_cache::PhysicsFrameCache;
 use crate::world::PhysicsConfig;
 
 /// Physics system with fixed-timestep accumulation.
@@ -23,13 +24,22 @@ pub fn physics_step_with_dt(world: &mut World, frame_dt: f32) {
         .unwrap_or(0.0)
         + frame_dt;
 
+    // Take the frame cache out of the world so we can pass &mut World and
+    // &mut PhysicsFrameCache to the step functions without aliasing.
+    let mut cache = world
+        .remove_resource::<PhysicsFrameCache>()
+        .unwrap_or_default();
+
     let mut remaining = accumulator;
     let mut steps = 0u32;
     while remaining >= config.fixed_dt && steps < config.max_substeps {
-        physics_step_single(world, config.fixed_dt, config.gravity);
+        physics_step_single(world, &mut cache, config.fixed_dt, config.gravity);
         remaining -= config.fixed_dt;
         steps += 1;
     }
+
+    // Put the cache back for the next frame.
+    world.insert_resource(cache);
 
     if let Some(acc) = world.resource_mut::<crate::world::PhysicsAccumulator>() {
         acc.accumulator = remaining;
@@ -42,37 +52,53 @@ pub fn physics_step_system(world: &mut World) {
         .resource::<PhysicsConfig>()
         .cloned()
         .unwrap_or_default();
-    physics_step_single(world, config.fixed_dt, config.gravity);
-}
 
-fn physics_step_single(world: &mut World, dt: f32, gravity: Vec3) {
-    apply_gravity(world, gravity, dt);
-    integrate_positions(world, dt);
-    resolve_collisions_and_joints(world);
-    update_sleep_states(world);
-}
-
-fn resolve_collisions_and_joints(world: &mut World) {
-    // Collect joints (if any)
-    let joints = world
-        .resource::<crate::world::Joints>()
-        .map(|j| j.joints.clone())
+    let mut cache = world
+        .remove_resource::<PhysicsFrameCache>()
         .unwrap_or_default();
 
-    resolve_collisions_with_joints(world, &joints);
+    physics_step_single(world, &mut cache, config.fixed_dt, config.gravity);
+
+    world.insert_resource(cache);
 }
 
-fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
-    let entities: Vec<Entity> = {
-        let query = Query::<(Entity, &PhysicsBody, &Velocity)>::new(world);
-        query
-            .iter()
-            .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
-            .map(|(e, _, _)| e)
-            .collect()
-    };
+fn physics_step_single(world: &mut World, cache: &mut PhysicsFrameCache, dt: f32, gravity: Vec3) {
+    cache.clear_for_tick();
+    apply_gravity(world, cache, gravity, dt);
+    integrate_positions(world, cache, dt);
+    resolve_collisions_and_joints(world, cache);
+    update_sleep_states(world, cache);
+}
 
-    for entity in entities {
+fn resolve_collisions_and_joints(world: &mut World, cache: &mut PhysicsFrameCache) {
+    // Sync cached joints only when the resource has changed (generation check).
+    if let Some(joints_res) = world.resource::<crate::world::Joints>() {
+        let generation = joints_res.generation;
+        if generation != cache.joints_generation || cache.cached_joints.is_empty() {
+            cache.cached_joints.clear();
+            cache.cached_joints.extend_from_slice(&joints_res.joints);
+            cache.joints_generation = generation;
+        }
+    } else {
+        cache.cached_joints.clear();
+    }
+
+    resolve_collisions_with_joints(world, cache);
+}
+
+fn apply_gravity(world: &mut World, cache: &mut PhysicsFrameCache, gravity: Vec3, dt: f32) {
+    {
+        let query = Query::<(Entity, &PhysicsBody, &Velocity)>::new(world);
+        cache.gravity_entities.extend(
+            query
+                .iter()
+                .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
+                .map(|(e, _, _)| e),
+        );
+    }
+
+    for entity in &cache.gravity_entities {
+        let entity = *entity;
         // Skip sleeping bodies
         if world.get::<Sleeping>(entity).is_some() {
             continue;
@@ -85,22 +111,23 @@ fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
 }
 
 /// Put slow bodies to sleep, wake bodies involved in collisions.
-fn update_sleep_states(world: &mut World) {
-    let candidates: Vec<(Entity, f32)> = {
+fn update_sleep_states(world: &mut World, cache: &mut PhysicsFrameCache) {
+    {
         let query = Query::<(Entity, &PhysicsBody, &Velocity)>::new(world);
-        query
-            .iter()
-            .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
-            .map(|(e, _, vel)| {
-                (
-                    e,
-                    vel.linear.length_squared() + vel.angular.length_squared(),
-                )
-            })
-            .collect()
-    };
+        cache.sleep_candidates.extend(
+            query
+                .iter()
+                .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
+                .map(|(e, _, vel)| {
+                    (
+                        e,
+                        vel.linear.length_squared() + vel.angular.length_squared(),
+                    )
+                }),
+        );
+    }
 
-    for (entity, speed_sq) in candidates {
+    for &(entity, speed_sq) in &cache.sleep_candidates {
         if speed_sq < SLEEP_THRESHOLD * SLEEP_THRESHOLD {
             // Put to sleep if not already
             if world.get::<Sleeping>(entity).is_none() {
@@ -118,25 +145,27 @@ fn update_sleep_states(world: &mut World) {
     }
 }
 
-fn integrate_positions(world: &mut World, dt: f32) {
+fn integrate_positions(world: &mut World, cache: &mut PhysicsFrameCache, dt: f32) {
     use crate::raycast::{Ray, raycast_collider};
 
     // Collect movers: entity, old position, linear vel, angular vel, collider extent
     // Collider is optional — entities without colliders still move, just skip CCD.
-    let movers: Vec<(Entity, Vec3, Vec3, Vec3, f32)> = {
+    {
         let query = Query::<(Entity, &PhysicsBody, &Velocity, &LocalTransform)>::new(world);
-        query
-            .iter()
-            .filter(|(_, body, _, _)| body.body_type != RigidBodyType::Static)
-            .map(|(e, _, vel, lt)| {
-                let extent = world
-                    .get::<Collider>(e)
-                    .map(|c| shape_extent(&c.shape))
-                    .unwrap_or(0.0);
-                (e, lt.0.translation, vel.linear, vel.angular, extent)
-            })
-            .collect()
-    };
+        cache.movers.extend(
+            query
+                .iter()
+                .filter(|(_, body, _, _)| body.body_type != RigidBodyType::Static)
+                .map(|(e, _, vel, lt)| {
+                    let extent = world
+                        .get::<Collider>(e)
+                        .map(|c| shape_extent(&c.shape))
+                        .unwrap_or(0.0);
+                    (e, lt.0.translation, vel.linear, vel.angular, extent)
+                }),
+        );
+    }
+    let movers = &cache.movers;
 
     // Check if ANY mover needs CCD before building the expensive static grid.
     let any_needs_ccd = movers.iter().any(|(entity, _, linear_vel, _, extent)| {
@@ -150,19 +179,20 @@ fn integrate_positions(world: &mut World, dt: f32) {
     // Only build the CCD spatial grid if at least one mover is fast enough.
     // This avoids O(cells) overhead from large static bodies (ground planes)
     // when all entities are moving slowly.
-    let statics: Vec<(Entity, Vec3, Collider)>;
     let ccd_grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>>;
     let ccd_inv_cell: f32;
 
     if any_needs_ccd {
-        statics = {
+        {
             let query = Query::<(Entity, &LocalTransform, &Collider, &PhysicsBody)>::new(world);
-            query
-                .iter()
-                .filter(|(_, _, _, body)| body.body_type != RigidBodyType::Dynamic)
-                .map(|(e, lt, col, _)| (e, lt.0.translation, col.clone()))
-                .collect()
-        };
+            cache.ccd_statics.extend(
+                query
+                    .iter()
+                    .filter(|(_, _, _, body)| body.body_type != RigidBodyType::Dynamic)
+                    .map(|(e, lt, col, _)| (e, lt.0.translation, col.clone())),
+            );
+        }
+        let statics = &cache.ccd_statics;
 
         let ccd_cell_size = DEFAULT_CELL_SIZE;
         ccd_inv_cell = 1.0 / ccd_cell_size;
@@ -193,12 +223,12 @@ fn integrate_positions(world: &mut World, dt: f32) {
         }
         ccd_grid = grid;
     } else {
-        statics = Vec::new();
         ccd_grid = std::collections::HashMap::new();
         ccd_inv_cell = 1.0 / DEFAULT_CELL_SIZE;
     }
+    let statics = &cache.ccd_statics;
 
-    for (entity, old_pos, linear_vel, angular_vel, extent) in movers {
+    for &(entity, old_pos, linear_vel, angular_vel, extent) in movers {
         let displacement = linear_vel * dt;
         let mut new_pos = old_pos + displacement;
 
@@ -294,16 +324,12 @@ const DEFAULT_CELL_SIZE: f32 = 4.0;
 /// Compute an adaptive broadphase cell size from the body population.
 /// Uses 2x the approximate median body extent, clamped to [1.0, 32.0].
 /// Samples every 64th body to keep cost O(1) relative to body count.
-fn adaptive_cell_size(bodies: &[Body]) -> f32 {
+fn adaptive_cell_size(bodies: &[Body], extents: &mut Vec<f32>) -> f32 {
     if bodies.len() < 20 {
         return DEFAULT_CELL_SIZE;
     }
     let step = (bodies.len() / 64).max(1);
-    let mut extents: Vec<f32> = bodies
-        .iter()
-        .step_by(step)
-        .map(|b| shape_extent(&b.shape))
-        .collect();
+    extents.extend(bodies.iter().step_by(step).map(|b| shape_extent(&b.shape)));
     extents.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = extents[extents.len() / 2];
     (median * 2.0).clamp(1.0, 32.0)
@@ -334,16 +360,16 @@ fn shape_half_extents(shape: &ColliderShape) -> (f32, f32, f32) {
 }
 
 /// Collectable body data for broadphase + narrowphase.
-struct Body {
-    entity: Entity,
-    pos: Vec3,
-    shape: ColliderShape,
-    body_type: RigidBodyType,
-    restitution: f32,
-    friction: f32,
-    layer: u32,
-    mask: u32,
-    inverse_mass: f32,
+pub(crate) struct Body {
+    pub(crate) entity: Entity,
+    pub(crate) pos: Vec3,
+    pub(crate) shape: ColliderShape,
+    pub(crate) body_type: RigidBodyType,
+    pub(crate) restitution: f32,
+    pub(crate) friction: f32,
+    pub(crate) layer: u32,
+    pub(crate) mask: u32,
+    pub(crate) inverse_mass: f32,
 }
 
 /// Spatial hash broadphase: returns candidate pairs (indices into bodies slice).
@@ -354,25 +380,26 @@ struct Body {
 /// tested against all other bodies, avoiding grid flooding.
 const MAX_CELLS_PER_BODY: i32 = 8;
 
-fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize)> {
+fn broadphase_spatial_hash(
+    bodies: &[Body],
+    cell_size: f32,
+    pairs: &mut Vec<(usize, usize)>,
+    large_bodies: &mut Vec<usize>,
+) {
     use std::collections::HashMap;
 
     if bodies.len() < 20 {
-        let mut pairs = Vec::new();
         for i in 0..bodies.len() {
             for j in (i + 1)..bodies.len() {
                 pairs.push((i, j));
             }
         }
-        return pairs;
+        return;
     }
 
     let inv_cell = 1.0 / cell_size;
 
     let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::with_capacity(bodies.len());
-
-    // Bodies whose AABB spans too many cells are tested against everyone.
-    let mut large_bodies: Vec<usize> = Vec::new();
 
     for (idx, body) in bodies.iter().enumerate() {
         let ext = shape_extent(&body.shape);
@@ -403,7 +430,6 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
     }
 
     // Collect unique pairs from grid cells.
-    let mut pairs: Vec<(usize, usize)> = Vec::new();
     for cell_bodies in grid.values() {
         for i in 0..cell_bodies.len() {
             for j in (i + 1)..cell_bodies.len() {
@@ -416,7 +442,7 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
     }
 
     // Large bodies generate pairs with every other body (per-axis AABB check).
-    for &li in &large_bodies {
+    for &li in large_bodies.iter() {
         let (lhx, lhy, lhz) = shape_half_extents(&bodies[li].shape);
         for (oi, other) in bodies.iter().enumerate() {
             if oi == li {
@@ -435,7 +461,6 @@ fn broadphase_spatial_hash(bodies: &[Body], cell_size: f32) -> Vec<(usize, usize
 
     pairs.sort_unstable();
     pairs.dedup();
-    pairs
 }
 
 /// Number of constraint solver iterations. More = more stable stacking.
@@ -489,18 +514,26 @@ impl UnionFind {
 // ───────────────────────────── Island ─────────────────────────────
 
 /// A connected component of interacting bodies.
-struct Island {
+pub(crate) struct Island {
     /// Indices into the parent `bodies` slice.
-    body_indices: Vec<usize>,
+    pub(crate) body_indices: Vec<usize>,
     /// Pairs as (local_i, local_j) into `body_indices`.
-    pairs: Vec<(usize, usize)>,
+    pub(crate) pairs: Vec<(usize, usize)>,
 }
 
 /// Build islands from bodies and broadphase pairs using union-find.
-fn build_islands(bodies: &[Body], candidate_pairs: &[(usize, usize)]) -> Vec<Island> {
+/// Writes results into `out`, reusing existing island allocations.
+fn build_islands_into(bodies: &[Body], candidate_pairs: &[(usize, usize)], out: &mut Vec<Island>) {
+    // Clear inner vecs but keep the Island structs (and their capacity).
+    for island in out.iter_mut() {
+        island.body_indices.clear();
+        island.pairs.clear();
+    }
+
     let n = bodies.len();
     if n == 0 {
-        return Vec::new();
+        out.clear();
+        return;
     }
 
     let mut uf = UnionFind::new(n);
@@ -521,7 +554,8 @@ fn build_islands(bodies: &[Body], candidate_pairs: &[(usize, usize)]) -> Vec<Isl
     // via pairs but don't belong to islands themselves.
     let mut root_to_island: std::collections::HashMap<usize, usize> =
         std::collections::HashMap::new();
-    let mut islands: Vec<Island> = Vec::new();
+    // Track how many islands we actually use this tick.
+    let mut island_count = 0usize;
 
     // Map: global body index → (island_index, local_index).
     // Static bodies get a sentinel value and are added to islands on demand.
@@ -537,16 +571,19 @@ fn build_islands(bodies: &[Body], candidate_pairs: &[(usize, usize)]) -> Vec<Isl
         let island_idx = if let Some(&existing) = root_to_island.get(&root) {
             existing
         } else {
-            let new_idx = islands.len();
+            let new_idx = island_count;
             root_to_island.insert(root, new_idx);
-            islands.push(Island {
-                body_indices: Vec::new(),
-                pairs: Vec::new(),
-            });
+            if new_idx >= out.len() {
+                out.push(Island {
+                    body_indices: Vec::new(),
+                    pairs: Vec::new(),
+                });
+            }
+            island_count += 1;
             new_idx
         };
-        let local_idx = islands[island_idx].body_indices.len();
-        islands[island_idx].body_indices.push(idx);
+        let local_idx = out[island_idx].body_indices.len();
+        out[island_idx].body_indices.push(idx);
         global_to_local[idx] = (island_idx, local_idx);
     }
 
@@ -590,19 +627,18 @@ fn build_islands(bodies: &[Body], candidate_pairs: &[(usize, usize)]) -> Vec<Isl
                 local
             };
 
-        let local_i = ensure_local(i, &mut islands, &mut global_to_local);
-        let local_j = ensure_local(j, &mut islands, &mut global_to_local);
-        islands[island_idx].pairs.push((local_i, local_j));
+        let local_i = ensure_local(i, out, &mut global_to_local);
+        let local_j = ensure_local(j, out, &mut global_to_local);
+        out[island_idx].pairs.push((local_i, local_j));
     }
 
-    // Remove empty islands (dynamics with no collision pairs).
-    islands.retain(|island| !island.pairs.is_empty());
-
-    islands
+    // Truncate to only the islands we used, and remove empty ones.
+    out.truncate(island_count);
+    out.retain(|island| !island.pairs.is_empty());
 }
 
 /// Per-island collision event: stores global body data needed for velocity response.
-struct DeferredVelocityResponse {
+pub(crate) struct DeferredVelocityResponse {
     entity_a: Entity,
     type_a: RigidBodyType,
     entity_b: Entity,
@@ -684,62 +720,60 @@ fn solve_island(
     }
 }
 
-fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Joint]) {
+fn resolve_collisions_with_joints(world: &mut World, cache: &mut PhysicsFrameCache) {
     // ── Iterative constraint solver ──
     // Collect bodies once, iterate position corrections in-place,
     // write back to world at the end.
 
-    let mut bodies: Vec<Body> = {
+    {
         let query = Query::<(Entity, &LocalTransform, &Collider)>::new(world);
-        query
-            .iter()
-            .filter_map(|(e, lt, col)| {
-                let body = world.get::<PhysicsBody>(e)?;
-                // Skip sleeping bodies in the solver entirely
-                if world.get::<Sleeping>(e).is_some() {
-                    return None;
-                }
-                let inv_mass = world
-                    .get::<Mass>(e)
-                    .map(|m| m.inverse_mass)
-                    .unwrap_or_else(|| {
-                        if body.body_type == RigidBodyType::Dynamic {
-                            1.0 // default: 1 kg
-                        } else {
-                            0.0 // static/kinematic: immovable
-                        }
-                    });
-                Some(Body {
-                    entity: e,
-                    pos: lt.0.translation,
-                    shape: col.shape.clone(),
-                    body_type: body.body_type,
-                    restitution: col.restitution,
-                    friction: col.friction,
-                    layer: col.layer,
-                    mask: col.mask,
-                    inverse_mass: inv_mass,
-                })
+        cache.bodies.extend(query.iter().filter_map(|(e, lt, col)| {
+            let body = world.get::<PhysicsBody>(e)?;
+            // Skip sleeping bodies in the solver entirely
+            if world.get::<Sleeping>(e).is_some() {
+                return None;
+            }
+            let inv_mass = world
+                .get::<Mass>(e)
+                .map(|m| m.inverse_mass)
+                .unwrap_or_else(|| {
+                    if body.body_type == RigidBodyType::Dynamic {
+                        1.0 // default: 1 kg
+                    } else {
+                        0.0 // static/kinematic: immovable
+                    }
+                });
+            Some(Body {
+                entity: e,
+                pos: lt.0.translation,
+                shape: col.shape.clone(),
+                body_type: body.body_type,
+                restitution: col.restitution,
+                friction: col.friction,
+                layer: col.layer,
+                mask: col.mask,
+                inverse_mass: inv_mass,
             })
-            .collect()
-    };
+        }));
+    }
 
     // Compute broadphase once.
-    let cell_size = adaptive_cell_size(&bodies);
-    let candidate_pairs = broadphase_spatial_hash(&bodies, cell_size);
+    let cell_size = adaptive_cell_size(&cache.bodies, &mut cache.extents_sample);
+    broadphase_spatial_hash(
+        &cache.bodies,
+        cell_size,
+        &mut cache.broadphase_pairs,
+        &mut cache.large_bodies,
+    );
 
     // Build islands (connected components of interacting bodies).
-    let islands = build_islands(&bodies, &candidate_pairs);
+    build_islands_into(&cache.bodies, &cache.broadphase_pairs, &mut cache.islands);
 
     // Count total active bodies across all non-trivial islands to decide
     // whether parallel dispatch is worthwhile.
-    let total_active: usize = islands.iter().map(|isl| isl.body_indices.len()).sum();
+    let total_active: usize = cache.islands.iter().map(|isl| isl.body_indices.len()).sum();
 
-    // Solve islands — in parallel if enough work to justify it.
-    let mut all_events: Vec<CollisionEvent> = Vec::new();
-    let mut all_velocity_responses: Vec<DeferredVelocityResponse> = Vec::new();
-
-    if total_active >= PARALLEL_ISLAND_THRESHOLD && islands.len() > 1 {
+    if total_active >= PARALLEL_ISLAND_THRESHOLD && cache.islands.len() > 1 {
         // Solve islands concurrently using rayon::in_place_scope.
         // Safety: each island operates on disjoint body indices, so no two
         // islands write the same body position.
@@ -763,17 +797,30 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
         }
 
         let shared = SendSlice {
-            ptr: bodies.as_mut_ptr(),
-            len: bodies.len(),
+            ptr: cache.bodies.as_mut_ptr(),
+            len: cache.bodies.len(),
         };
 
-        // Pre-allocate per-island result storage.
-        let mut island_results: Vec<(Vec<CollisionEvent>, Vec<DeferredVelocityResponse>)> =
-            islands.iter().map(|_| (Vec::new(), Vec::new())).collect();
+        // Ensure we have enough per-island result slots.
+        let island_count = cache.islands.len();
+        cache.island_events.resize_with(island_count, Vec::new);
+        cache.island_responses.resize_with(island_count, Vec::new);
+        for v in &mut cache.island_events[..island_count] {
+            v.clear();
+        }
+        for v in &mut cache.island_responses[..island_count] {
+            v.clear();
+        }
+
+        // Zip islands with their per-island result vecs before entering the
+        // rayon scope. This avoids raw-pointer casts by giving each task
+        // ownership of disjoint &mut references through the iterator.
+        let results_iter = cache.island_events[..island_count]
+            .iter_mut()
+            .zip(cache.island_responses[..island_count].iter_mut());
 
         rayon::in_place_scope(|s| {
-            for (island, result) in islands.iter().zip(island_results.iter_mut()) {
-                let (ref mut events, ref mut responses) = *result;
+            for (island, (events, responses)) in cache.islands.iter().zip(results_iter) {
                 s.spawn(|_| {
                     // Safety: islands have disjoint body_indices, so no two
                     // tasks write the same Body entry.
@@ -783,24 +830,27 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
             }
         });
 
-        for (events, responses) in island_results {
-            all_events.extend(events);
-            all_velocity_responses.extend(responses);
+        for (events, responses) in cache.island_events[..island_count]
+            .iter_mut()
+            .zip(cache.island_responses[..island_count].iter_mut())
+        {
+            cache.events.append(events);
+            cache.velocity_responses.append(responses);
         }
     } else {
         // Sequential: solve all islands inline.
-        for island in &islands {
+        for island in &cache.islands {
             solve_island(
-                &mut bodies,
+                &mut cache.bodies,
                 island,
-                &mut all_events,
-                &mut all_velocity_responses,
+                &mut cache.events,
+                &mut cache.velocity_responses,
             );
         }
     }
 
     // Apply deferred velocity responses (needs &mut World).
-    for resp in &all_velocity_responses {
+    for resp in &cache.velocity_responses {
         apply_velocity_response(
             world,
             resp.entity_a,
@@ -816,9 +866,11 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
     }
 
     // ── Solve joint constraints (using body positions from the solver) ──
+    let joints = &cache.cached_joints;
     if !joints.is_empty() {
         // Build entity -> body index map for fast lookup
-        let entity_to_idx: std::collections::HashMap<Entity, usize> = bodies
+        let entity_to_idx: std::collections::HashMap<Entity, usize> = cache
+            .bodies
             .iter()
             .enumerate()
             .map(|(i, b)| (b.entity, i))
@@ -830,28 +882,34 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
                 let idx_b = entity_to_idx.get(&joint.entity_b).copied();
 
                 let (pos_a, is_a_dyn) = match idx_a {
-                    Some(i) => (bodies[i].pos, bodies[i].body_type == RigidBodyType::Dynamic),
+                    Some(i) => (
+                        cache.bodies[i].pos,
+                        cache.bodies[i].body_type == RigidBodyType::Dynamic,
+                    ),
                     None => continue,
                 };
                 let (pos_b, is_b_dyn) = match idx_b {
-                    Some(i) => (bodies[i].pos, bodies[i].body_type == RigidBodyType::Dynamic),
+                    Some(i) => (
+                        cache.bodies[i].pos,
+                        cache.bodies[i].body_type == RigidBodyType::Dynamic,
+                    ),
                     None => continue,
                 };
 
                 let (ca, cb) = joint.solve(pos_a, pos_b, is_a_dyn, is_b_dyn);
 
                 if let Some(i) = idx_a {
-                    bodies[i].pos = bodies[i].pos + ca;
+                    cache.bodies[i].pos = cache.bodies[i].pos + ca;
                 }
                 if let Some(i) = idx_b {
-                    bodies[i].pos = bodies[i].pos + cb;
+                    cache.bodies[i].pos = cache.bodies[i].pos + cb;
                 }
             }
         }
     }
 
     // Write solved positions back to world
-    for body in &bodies {
+    for body in &cache.bodies {
         if body.body_type == RigidBodyType::Dynamic
             && let Some(lt) = world.get_mut::<LocalTransform>(body.entity)
         {
@@ -859,8 +917,8 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
         }
     }
 
-    // Emit collision events
-    for event in all_events {
+    // Emit collision events (drain to avoid cloning; capacity is preserved).
+    for event in cache.events.drain(..) {
         world.send_event(event);
     }
 }
