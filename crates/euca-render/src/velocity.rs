@@ -20,18 +20,19 @@
 //! let textures = VelocityTextures::new(&device, width, height);
 //! let pipeline = VelocityPipeline::new(&device, &prepass_instance_bgl, unified_memory);
 //! // ... each frame:
-//! pipeline.update_previous_models(&device, &queue, &current_model_matrices);
-//! pipeline.write_scene(&queue, view_proj, prev_view_proj);
-//! pipeline.execute(&mut encoder, &textures, &prepass_depth_view, |pass| {
+//! pipeline.update_previous_models(&device, &current_model_matrices);
+//! pipeline.write_scene(&device, view_proj, prev_view_proj);
+//! pipeline.execute(&device, &mut encoder, &textures, &prepass_depth_view, |pass| {
 //!     // draw opaque geometry (same draw calls as prepass)
 //! });
 //! ```
 
 use crate::buffer::{BufferKind, SmartBuffer};
 use crate::vertex::Vertex;
+use euca_rhi::RenderPassOps;
 
 /// Texture format for the velocity buffer (2-channel half-float).
-pub const VELOCITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+pub const VELOCITY_FORMAT: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Rg16Float;
 
 /// Initial velocity instance buffer capacity. Grows dynamically when exceeded.
 const INITIAL_VELOCITY_INSTANCE_CAPACITY: usize = 16384;
@@ -59,27 +60,29 @@ pub struct VelocityTextures<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::
     pub height: u32,
 }
 
-impl VelocityTextures {
+impl<D: euca_rhi::RenderDevice> VelocityTextures<D> {
     /// Create the velocity buffer texture at the given resolution.
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+    pub fn new(device: &D, width: u32, height: u32) -> Self {
         let w = width.max(1);
         let h = height.max(1);
 
-        let velocity_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let velocity_texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("Velocity Buffer"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: w,
                 height: h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: euca_rhi::TextureDimension::D2,
             format: VELOCITY_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let velocity_view = velocity_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let velocity_view =
+            device.create_texture_view(&velocity_texture, &euca_rhi::TextureViewDesc::default());
 
         Self {
             velocity_texture,
@@ -90,7 +93,7 @@ impl VelocityTextures {
     }
 
     /// Recreate texture at a new resolution (e.g. window resize).
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         *self = Self::new(device, width, height);
     }
 }
@@ -118,42 +121,36 @@ pub struct VelocityPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::
     unified_memory: bool,
 }
 
-impl VelocityPipeline {
+impl<D: euca_rhi::RenderDevice> VelocityPipeline<D> {
     /// Create the velocity pass pipeline and allocate GPU buffers.
     ///
     /// `instance_bgl` should be the same bind group layout used by the prepass
     /// (group 0: storage buffer of `InstanceData`). This allows re-using the
     /// prepass instance buffer directly.
-    pub fn new(
-        device: &wgpu::Device,
-        instance_bgl: &wgpu::BindGroupLayout,
-        unified_memory: bool,
-    ) -> Self {
+    pub fn new(device: &D, instance_bgl: &D::BindGroupLayout, unified_memory: bool) -> Self {
         // Group 1: scene uniforms (current + previous view-projection)
-        let scene_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let scene_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("Velocity Scene BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[euca_rhi::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                visibility: euca_rhi::ShaderStages::VERTEX,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(
-                        std::mem::size_of::<VelocitySceneUniforms>() as u64,
-                    ),
+                    min_binding_size: Some(std::mem::size_of::<VelocitySceneUniforms>() as u64),
                 },
                 count: None,
             }],
         });
 
         // Group 2: previous frame model matrices (storage buffer)
-        let prev_model_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let prev_model_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("Velocity PrevModel BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[euca_rhi::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                visibility: euca_rhi::ShaderStages::VERTEX,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -161,7 +158,7 @@ impl VelocityPipeline {
             }],
         });
 
-        let scene_buffer = SmartBuffer::from_wgpu(
+        let scene_buffer = SmartBuffer::new(
             device,
             std::mem::size_of::<VelocitySceneUniforms>() as u64,
             BufferKind::Uniform,
@@ -172,7 +169,7 @@ impl VelocityPipeline {
         // Each previous model is a mat4x4 = 64 bytes.
         let prev_model_size =
             (INITIAL_VELOCITY_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
-        let prev_model_buffer = SmartBuffer::from_wgpu(
+        let prev_model_buffer = SmartBuffer::new(
             device,
             prev_model_size,
             BufferKind::Storage,
@@ -180,72 +177,70 @@ impl VelocityPipeline {
             "Velocity PrevModel SSBO",
         );
 
-        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let scene_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Velocity Scene BG"),
             layout: &scene_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: scene_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: scene_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
 
-        let prev_model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let prev_model_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Velocity PrevModel BG"),
             layout: &prev_model_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: prev_model_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: prev_model_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("Velocity Shader"),
-            source: wgpu::ShaderSource::Wgsl(VELOCITY_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(VELOCITY_SHADER.into()),
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Velocity Pipeline Layout"),
-            bind_group_layouts: &[instance_bgl, &scene_bgl, &prev_model_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("Velocity Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            layout: &[instance_bgl, &scene_bgl, &prev_model_bgl],
+            vertex: euca_rhi::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::LAYOUT],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &[Vertex::RHI_LAYOUT],
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(euca_rhi::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
                     format: VELOCITY_FORMAT,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(euca_rhi::BlendState::REPLACE),
+                    write_mask: euca_rhi::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Back),
                 ..Default::default()
             },
             // Read-only depth test: use prepass depth to avoid overdraw,
             // but do not write depth (the prepass already wrote it).
-            depth_stencil: Some(wgpu::DepthStencilState {
+            depth_stencil: Some(euca_rhi::DepthStencilState {
                 format: crate::prepass::PREPASS_DEPTH_FORMAT,
                 depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Equal,
+                depth_compare: euca_rhi::CompareFunction::Equal,
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: Default::default(),
-            multiview: None,
-            cache: None,
         });
 
         Self {
@@ -264,25 +259,29 @@ impl VelocityPipeline {
     }
 
     /// Grow the previous-model buffer if `count` exceeds capacity.
-    pub fn ensure_prev_model_capacity(&mut self, device: &wgpu::Device, count: usize) {
+    pub fn ensure_prev_model_capacity(&mut self, device: &D, count: usize) {
         if count <= self.prev_model_capacity {
             return;
         }
         self.prev_model_capacity = count.next_power_of_two();
         let size = (self.prev_model_capacity * std::mem::size_of::<[[f32; 4]; 4]>()) as u64;
-        self.prev_model_buffer = SmartBuffer::from_wgpu(
+        self.prev_model_buffer = SmartBuffer::new(
             device,
             size,
             BufferKind::Storage,
             self.unified_memory,
             "Velocity PrevModel SSBO",
         );
-        self.prev_model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.prev_model_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Velocity PrevModel BG"),
             layout: &self.prev_model_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: self.prev_model_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: self.prev_model_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
     }
@@ -290,7 +289,7 @@ impl VelocityPipeline {
     /// Upload per-frame scene matrices (current and previous view-projection).
     pub fn write_scene(
         &self,
-        queue: &wgpu::Queue,
+        device: &D,
         view_projection: [[f32; 4]; 4],
         prev_view_projection: [[f32; 4]; 4],
     ) {
@@ -299,7 +298,7 @@ impl VelocityPipeline {
             prev_view_projection,
         };
         self.scene_buffer
-            .write_bytes_wgpu(queue, bytemuck::bytes_of(&uniforms));
+            .write_bytes(device, bytemuck::bytes_of(&uniforms));
     }
 
     /// Save current frame model matrices and upload the previous frame's matrices to the GPU.
@@ -307,12 +306,7 @@ impl VelocityPipeline {
     /// Call this **before** rendering the velocity pass each frame. On the very
     /// first call, `prev_models` is initialized to the current matrices so that
     /// all objects report zero velocity on the first frame.
-    pub fn update_previous_models(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        current_models: &[[[f32; 4]; 4]],
-    ) {
+    pub fn update_previous_models(&mut self, device: &D, current_models: &[[[f32; 4]; 4]]) {
         if !self.initialized {
             // First frame: previous == current so velocity is zero everywhere.
             self.prev_models = current_models.to_vec();
@@ -324,7 +318,7 @@ impl VelocityPipeline {
 
         // Upload previous frame's models to the GPU.
         if !self.prev_models.is_empty() {
-            self.prev_model_buffer.write_wgpu(queue, &self.prev_models);
+            self.prev_model_buffer.write(device, &self.prev_models);
         }
 
         // Store current frame for next frame's "previous".
@@ -342,42 +336,39 @@ impl VelocityPipeline {
     /// `instance_bind_group` should be the prepass instance bind group.
     pub fn execute<'a, F>(
         &'a self,
-        encoder: &'a mut wgpu::CommandEncoder,
-        textures: &'a VelocityTextures,
-        depth_view: &'a wgpu::TextureView,
-        instance_bind_group: &'a wgpu::BindGroup,
+        device: &'a D,
+        encoder: &'a mut D::CommandEncoder,
+        textures: &'a VelocityTextures<D>,
+        depth_view: &'a D::TextureView,
+        instance_bind_group: &'a D::BindGroup,
         draw_fn: F,
     ) where
-        F: FnOnce(&mut wgpu::RenderPass<'a>),
+        F: FnOnce(&mut D::RenderPass<'a>),
     {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Velocity Buffer Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &textures.velocity_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    // Clear to zero velocity (no motion).
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 0.0,
+        let mut pass = device.begin_render_pass(
+            encoder,
+            &euca_rhi::RenderPassDesc {
+                label: Some("Velocity Buffer Pass"),
+                color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
+                    view: &textures.velocity_view,
+                    resolve_target: None,
+                    ops: euca_rhi::Operations {
+                        // Clear to zero velocity (no motion).
+                        load: euca_rhi::LoadOp::Clear(euca_rhi::Color::TRANSPARENT),
+                        store: euca_rhi::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(euca_rhi::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(euca_rhi::Operations {
+                        // Load existing depth from prepass; do not clear or write.
+                        load: euca_rhi::LoadOp::Load,
+                        store: euca_rhi::StoreOp::Store,
                     }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    // Load existing depth from prepass; do not clear or write.
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            ..Default::default()
-        });
+            },
+        );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, instance_bind_group, &[]);
         pass.set_bind_group(1, &self.scene_bind_group, &[]);
@@ -386,12 +377,12 @@ impl VelocityPipeline {
     }
 
     /// Access the velocity scene bind group layout.
-    pub fn scene_bgl(&self) -> &wgpu::BindGroupLayout {
+    pub fn scene_bgl(&self) -> &D::BindGroupLayout {
         &self.scene_bgl
     }
 
     /// Access the previous model bind group layout.
-    pub fn prev_model_bgl(&self) -> &wgpu::BindGroupLayout {
+    pub fn prev_model_bgl(&self) -> &D::BindGroupLayout {
         &self.prev_model_bgl
     }
 }
@@ -402,7 +393,7 @@ mod tests {
 
     #[test]
     fn velocity_texture_format() {
-        assert_eq!(VELOCITY_FORMAT, wgpu::TextureFormat::Rg16Float);
+        assert_eq!(VELOCITY_FORMAT, euca_rhi::TextureFormat::Rg16Float);
     }
 
     #[test]
@@ -513,7 +504,7 @@ mod tests {
         prev_models.extend_from_slice(&frame1_current);
 
         // Frame 2: current = translated
-        let frame2_current = vec![translated];
+        let _frame2_current = vec![translated];
         // prev_models still holds frame1's identity.
         assert_eq!(prev_models.len(), 1);
         assert!(
@@ -522,7 +513,7 @@ mod tests {
         );
         // Would upload prev_models (identity) to GPU, then overwrite with frame2's current.
         prev_models.clear();
-        prev_models.extend_from_slice(&frame2_current);
+        prev_models.extend_from_slice(&_frame2_current);
 
         // After frame 2, prev_models holds translated for next frame.
         assert!(

@@ -15,6 +15,7 @@
 //!   the [`HZB_DOWNSAMPLE_SHADER`] compute shader through the `ComputeManager`.
 
 use euca_math::{Mat4, Vec3, Vec4};
+use euca_rhi::RenderDevice;
 
 use crate::compute::{ComputeManager, ComputePipeline, ComputePipelineDesc, GpuBuffer};
 
@@ -439,7 +440,7 @@ const HZB_PIPELINE_NAME: &str = "hzb_downsample";
 ///
 /// Call once at startup.  Subsequent frames call `dispatch_hzb_downsample`
 /// for each mip transition.
-pub fn setup_hzb_pipeline(device: &wgpu::Device, manager: &mut ComputeManager) {
+pub fn setup_hzb_pipeline<D: RenderDevice>(device: &D, manager: &mut ComputeManager<D>) {
     let pipeline = ComputePipeline::new(
         device,
         &ComputePipelineDesc {
@@ -447,9 +448,45 @@ pub fn setup_hzb_pipeline(device: &wgpu::Device, manager: &mut ComputeManager) {
             shader_source: HZB_DOWNSAMPLE_SHADER,
             entry_point: "main",
         },
+        &HZB_BIND_GROUP_LAYOUT_ENTRIES,
     );
     manager.add_pipeline(HZB_PIPELINE_NAME, pipeline);
 }
+
+/// Bind-group layout entries shared by `setup_hzb_pipeline` and callers that
+/// need to create the HZB bind group manually.
+const HZB_BIND_GROUP_LAYOUT_ENTRIES: [euca_rhi::BindGroupLayoutEntry; 3] = [
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
 
 /// Create GPU buffers for a single mip-transition dispatch.
 ///
@@ -457,9 +494,9 @@ pub fn setup_hzb_pipeline(device: &wgpu::Device, manager: &mut ComputeManager) {
 /// the given dimensions.  In a full implementation these would be backed by
 /// texture views; for now we use flat `f32` storage buffers to keep the
 /// compute infrastructure consistent with the frustum-culling path.
-pub fn create_hzb_buffers(
-    device: &wgpu::Device,
-    manager: &mut ComputeManager,
+pub fn create_hzb_buffers<D: RenderDevice>(
+    device: &D,
+    manager: &mut ComputeManager<D>,
     src_width: u32,
     src_height: u32,
 ) {
@@ -489,10 +526,10 @@ pub fn create_hzb_buffers(
 /// Create a bind group for one HZB downsample dispatch.
 ///
 /// Returns `None` if the pipeline or any required buffer has not been set up.
-pub fn create_hzb_bind_group(
-    device: &wgpu::Device,
-    manager: &ComputeManager,
-) -> Option<wgpu::BindGroup> {
+pub fn create_hzb_bind_group<D: RenderDevice>(
+    device: &D,
+    manager: &ComputeManager<D>,
+) -> Option<D::BindGroup> {
     let pipeline = match manager.pipeline(HZB_PIPELINE_NAME) {
         Some(p) => p,
         None => {
@@ -522,21 +559,33 @@ pub fn create_hzb_bind_group(
         }
     };
 
-    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+    Some(device.create_bind_group(&euca_rhi::BindGroupDesc {
         label: Some("hzb_downsample_bind_group"),
         layout: pipeline.bind_group_layout(),
         entries: &[
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: src_buf.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: src_buf.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 1,
-                resource: dst_buf.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: dst_buf.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 2,
-                resource: params_buf.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: params_buf.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             },
         ],
     }))

@@ -18,9 +18,11 @@ use crate::buffer::{BufferKind, SmartBuffer};
 use crate::material::MaterialHandle;
 use crate::texture::{TextureHandle, TextureStore};
 
-/// Required wgpu features for the bindless material path.
-pub const BINDLESS_FEATURES: wgpu::Features = wgpu::Features::TEXTURE_BINDING_ARRAY
-    .union(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING);
+/// Check whether a [`RenderDevice`](euca_rhi::RenderDevice) supports the
+/// bindless material path (texture binding arrays + non-uniform indexing).
+pub fn supports_bindless(caps: &euca_rhi::Capabilities) -> bool {
+    caps.texture_binding_array && caps.non_uniform_indexing
+}
 
 /// Maximum number of unique textures in the binding array.
 /// Each material can reference up to 5 texture slots (albedo, normal,
@@ -101,42 +103,47 @@ pub struct BindlessMaterialSystem<D: euca_rhi::RenderDevice = euca_rhi::wgpu_bac
     unified_memory: bool,
 }
 
-impl BindlessMaterialSystem {
-    /// Create a new bindless material system. Returns `None` if the GPU doesn't
-    /// support the required features.
-    pub fn new(device: &wgpu::Device, features: wgpu::Features, unified_memory: bool) -> Self {
-        let enabled = features.contains(BINDLESS_FEATURES);
+impl<D: euca_rhi::RenderDevice> BindlessMaterialSystem<D> {
+    /// Create a new bindless material system.
+    ///
+    /// Feature support is queried via [`device.capabilities()`](euca_rhi::RenderDevice::capabilities).
+    /// When the GPU lacks `texture_binding_array` + `non_uniform_indexing` the
+    /// system is created in disabled mode and acts as a pass-through.
+    pub fn new(device: &D, unified_memory: bool) -> Self {
+        let caps = device.capabilities();
+        let enabled = supports_bindless(caps);
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("Bindless Material Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: euca_rhi::AddressMode::Repeat,
+            address_mode_v: euca_rhi::AddressMode::Repeat,
+            address_mode_w: euca_rhi::AddressMode::Repeat,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
+            mipmap_filter: euca_rhi::FilterMode::Linear,
             ..Default::default()
         });
 
         // Create fallback 1x1 white texture.
-        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let fallback_texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("Bindless Fallback"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba8UnormSrgb,
+            usage: euca_rhi::TextureUsages::TEXTURE_BINDING | euca_rhi::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let fallback_view = fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let fallback_view =
+            device.create_texture_view(&fallback_texture, &euca_rhi::TextureViewDesc::default());
 
         // Material storage buffer (start with space for 64 materials).
-        let material_buffer = SmartBuffer::from_wgpu(
+        let material_buffer = SmartBuffer::new(
             device,
             (64 * std::mem::size_of::<BindlessMaterialGpu>()) as u64,
             BufferKind::Storage,
@@ -147,7 +154,7 @@ impl BindlessMaterialSystem {
         let initial_cap = (64 * std::mem::size_of::<BindlessMaterialGpu>()) as u64;
         let bind_group_layout = Self::create_layout(device, enabled);
         // Initial bind group: pad texture views to MAX_BINDLESS_TEXTURES with fallback.
-        let initial_views: Vec<&wgpu::TextureView> = if enabled {
+        let initial_views: Vec<&D::TextureView> = if enabled {
             (0..MAX_BINDLESS_TEXTURES as usize)
                 .map(|_| &fallback_view)
                 .collect()
@@ -240,7 +247,7 @@ impl BindlessMaterialSystem {
 
     /// Upload all material data to the GPU and rebuild the bind group if needed.
     /// Pass the `TextureStore` so texture handles can be resolved to views.
-    pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, textures: &TextureStore) {
+    pub fn flush(&mut self, device: &D, textures: &TextureStore<D>) {
         if self.materials.is_empty() {
             return;
         }
@@ -249,7 +256,7 @@ impl BindlessMaterialSystem {
         let needed = (self.materials.len() * std::mem::size_of::<BindlessMaterialGpu>()) as u64;
         if needed > self.material_buffer_capacity {
             let new_size = needed.next_power_of_two();
-            self.material_buffer = SmartBuffer::from_wgpu(
+            self.material_buffer = SmartBuffer::new(
                 device,
                 new_size,
                 BufferKind::Storage,
@@ -260,7 +267,7 @@ impl BindlessMaterialSystem {
             self.dirty = true;
         }
 
-        self.material_buffer.write_wgpu(queue, &self.materials);
+        self.material_buffer.write(device, &self.materials);
 
         if self.dirty {
             self.rebuild_bind_group(device, textures);
@@ -292,62 +299,62 @@ impl BindlessMaterialSystem {
         }
     }
 
-    fn create_layout(device: &wgpu::Device, bindless: bool) -> wgpu::BindGroupLayout {
+    fn create_layout(device: &D, bindless: bool) -> D::BindGroupLayout {
         if bindless {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
                 label: Some("Bindless Material BGL"),
                 entries: &[
                     // Binding 0: material storage buffer
-                    wgpu::BindGroupLayoutEntry {
+                    euca_rhi::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        visibility: euca_rhi::ShaderStages::FRAGMENT,
+                        ty: euca_rhi::BindingType::Buffer {
+                            ty: euca_rhi::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
                     },
                     // Binding 1: shared sampler
-                    wgpu::BindGroupLayoutEntry {
+                    euca_rhi::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        visibility: euca_rhi::ShaderStages::FRAGMENT,
+                        ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
                         count: None,
                     },
                     // Binding 2: texture binding array
-                    wgpu::BindGroupLayoutEntry {
+                    euca_rhi::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                        visibility: euca_rhi::ShaderStages::FRAGMENT,
+                        ty: euca_rhi::BindingType::Texture {
+                            sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                            view_dimension: euca_rhi::TextureViewDimension::D2,
                             multisampled: false,
                         },
-                        count: std::num::NonZeroU32::new(MAX_BINDLESS_TEXTURES),
+                        count: Some(MAX_BINDLESS_TEXTURES),
                     },
                 ],
             })
         } else {
             // Fallback: same layout as the traditional per-material bind group.
             // This allows the renderer to use the same pipeline layout regardless.
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
                 label: Some("Bindless Fallback BGL"),
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
+                    euca_rhi::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        visibility: euca_rhi::ShaderStages::FRAGMENT,
+                        ty: euca_rhi::BindingType::Buffer {
+                            ty: euca_rhi::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
+                    euca_rhi::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        visibility: euca_rhi::ShaderStages::FRAGMENT,
+                        ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
                         count: None,
                     },
                 ],
@@ -356,39 +363,43 @@ impl BindlessMaterialSystem {
     }
 
     fn create_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        material_buffer: &SmartBuffer,
-        sampler: &wgpu::Sampler,
-        texture_views: &[&wgpu::TextureView],
+        device: &D,
+        layout: &D::BindGroupLayout,
+        material_buffer: &SmartBuffer<D>,
+        sampler: &D::Sampler,
+        texture_views: &[&D::TextureView],
         bindless: bool,
-    ) -> wgpu::BindGroup {
+    ) -> D::BindGroup {
         let mut entries = vec![
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: material_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: material_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                resource: euca_rhi::BindingResource::Sampler(sampler),
             },
         ];
         if bindless {
-            entries.push(wgpu::BindGroupEntry {
+            entries.push(euca_rhi::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::TextureViewArray(texture_views),
+                resource: euca_rhi::BindingResource::TextureViewArray(texture_views.to_vec()),
             });
         }
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Bindless Material BG"),
             layout,
             entries: &entries,
         })
     }
 
-    fn rebuild_bind_group(&mut self, device: &wgpu::Device, textures: &TextureStore) {
+    fn rebuild_bind_group(&mut self, device: &D, textures: &TextureStore<D>) {
         // Build the texture view array, padded to MAX_BINDLESS_TEXTURES with fallback.
-        let mut views: Vec<&wgpu::TextureView> = self
+        let mut views: Vec<&D::TextureView> = self
             .texture_handles
             .iter()
             .map(|h| textures.view(*h))

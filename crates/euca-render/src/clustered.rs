@@ -149,7 +149,7 @@ pub struct ClusteredLightGrid {
 impl ClusteredLightGrid {
     /// Create the clustered light grid with all GPU resources.
     pub fn new(device: &wgpu::Device) -> Self {
-        let pipeline = ComputePipeline::new(
+        let pipeline = ComputePipeline::from_wgpu(
             device,
             &ComputePipelineDesc {
                 label: "light_assign_pipeline",
@@ -157,18 +157,21 @@ impl ClusteredLightGrid {
                 entry_point: "main",
             },
         );
-        let config_buffer =
-            GpuBuffer::new_uniform_with_data(device, &ClusterConfig::default(), "cluster_config");
+        let config_buffer = GpuBuffer::new_uniform_with_data_wgpu(
+            device,
+            &ClusterConfig::default(),
+            "cluster_config",
+        );
         let lights_size = (MAX_LIGHTS as u64) * std::mem::size_of::<GpuLightData>() as u64;
-        let lights_buffer = GpuBuffer::new_storage(device, lights_size, "cluster_lights");
+        let lights_buffer = GpuBuffer::new_storage_wgpu(device, lights_size, "cluster_lights");
         let indices_size = (CLUSTER_COUNT as u64)
             * (MAX_LIGHTS_PER_CLUSTER as u64)
             * std::mem::size_of::<u32>() as u64;
         let light_indices_buffer =
-            GpuBuffer::new_storage(device, indices_size, "cluster_light_indices");
+            GpuBuffer::new_storage_wgpu(device, indices_size, "cluster_light_indices");
         let counts_size = (CLUSTER_COUNT as u64) * std::mem::size_of::<u32>() as u64;
         let cluster_counts_buffer =
-            GpuBuffer::new_storage(device, counts_size, "cluster_light_counts");
+            GpuBuffer::new_storage_wgpu(device, counts_size, "cluster_light_counts");
         Self {
             pipeline,
             config_buffer,

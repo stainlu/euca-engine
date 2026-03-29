@@ -17,21 +17,22 @@
 //! let textures = PrepassTextures::new(&device, width, height);
 //! let pipeline = PrepassPipeline::new(&device, unified_memory);
 //! // ... each frame:
-//! pipeline.write_scene(&queue, view_projection, view);
-//! pipeline.write_instances(&queue, &instance_data);
-//! pipeline.execute(&mut encoder, &textures, |pass| {
+//! pipeline.write_scene(&device, view_projection, view);
+//! pipeline.write_instances(&device, &instance_data);
+//! pipeline.execute(&device, &mut encoder, &textures, |pass| {
 //!     // draw opaque geometry
 //! });
 //! ```
 
 use crate::buffer::{BufferKind, SmartBuffer};
 use crate::vertex::Vertex;
+use euca_rhi::RenderPassOps;
 
 /// Texture format for the depth attachment.
-pub const PREPASS_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub const PREPASS_DEPTH_FORMAT: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Depth32Float;
 
 /// Texture format for the normal attachment (view-space XYZ + spare channel).
-pub const PREPASS_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const PREPASS_NORMAL_FORMAT: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Rgba16Float;
 
 /// Initial pre-pass instance buffer capacity. Grows dynamically when exceeded.
 const INITIAL_PREPASS_INSTANCE_CAPACITY: usize = 16384;
@@ -57,43 +58,47 @@ pub struct PrepassTextures<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::W
     pub height: u32,
 }
 
-impl PrepassTextures {
+impl<D: euca_rhi::RenderDevice> PrepassTextures<D> {
     /// Create depth + normal textures for the given resolution.
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+    pub fn new(device: &D, width: u32, height: u32) -> Self {
         let w = width.max(1);
         let h = height.max(1);
 
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let depth_texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("Prepass Depth"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: w,
                 height: h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: euca_rhi::TextureDimension::D2,
             format: PREPASS_DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_view =
+            device.create_texture_view(&depth_texture, &euca_rhi::TextureViewDesc::default());
 
-        let normal_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let normal_texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("Prepass Normal"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: w,
                 height: h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: euca_rhi::TextureDimension::D2,
             format: PREPASS_NORMAL_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let normal_view = normal_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let normal_view =
+            device.create_texture_view(&normal_texture, &euca_rhi::TextureViewDesc::default());
 
         Self {
             depth_texture,
@@ -106,7 +111,7 @@ impl PrepassTextures {
     }
 
     /// Recreate textures at a new resolution (e.g. window resize).
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         *self = Self::new(device, width, height);
     }
 }
@@ -126,16 +131,16 @@ pub struct PrepassPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::W
     unified_memory: bool,
 }
 
-impl PrepassPipeline {
+impl<D: euca_rhi::RenderDevice> PrepassPipeline<D> {
     /// Create the pre-pass pipeline and allocate GPU buffers.
-    pub fn new(device: &wgpu::Device, unified_memory: bool) -> Self {
-        let instance_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    pub fn new(device: &D, unified_memory: bool) -> Self {
+        let instance_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("Prepass Instance BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[euca_rhi::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                visibility: euca_rhi::ShaderStages::VERTEX,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -143,17 +148,15 @@ impl PrepassPipeline {
             }],
         });
 
-        let scene_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let scene_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("Prepass Scene BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[euca_rhi::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                visibility: euca_rhi::ShaderStages::VERTEX,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(
-                        std::mem::size_of::<PrepassSceneUniforms>() as u64,
-                    ),
+                    min_binding_size: Some(std::mem::size_of::<PrepassSceneUniforms>() as u64),
                 },
                 count: None,
             }],
@@ -161,7 +164,7 @@ impl PrepassPipeline {
 
         let instance_size =
             (INITIAL_PREPASS_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        let instance_buffer = SmartBuffer::from_wgpu(
+        let instance_buffer = SmartBuffer::new(
             device,
             instance_size,
             BufferKind::Storage,
@@ -169,7 +172,7 @@ impl PrepassPipeline {
             "Prepass Instance SSBO",
         );
 
-        let scene_buffer = SmartBuffer::from_wgpu(
+        let scene_buffer = SmartBuffer::new(
             device,
             std::mem::size_of::<PrepassSceneUniforms>() as u64,
             BufferKind::Uniform,
@@ -177,70 +180,68 @@ impl PrepassPipeline {
             "Prepass Scene UBO",
         );
 
-        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let instance_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Prepass Instance BG"),
             layout: &instance_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: instance_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: instance_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
 
-        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let scene_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Prepass Scene BG"),
             layout: &scene_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: scene_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: scene_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("Prepass Shader"),
-            source: wgpu::ShaderSource::Wgsl(PREPASS_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(PREPASS_SHADER.into()),
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Prepass Pipeline Layout"),
-            bind_group_layouts: &[&instance_bgl, &scene_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("Prepass Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            layout: &[&instance_bgl, &scene_bgl],
+            vertex: euca_rhi::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::LAYOUT],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &[Vertex::RHI_LAYOUT],
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(euca_rhi::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
                     format: PREPASS_NORMAL_FORMAT,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(euca_rhi::BlendState::REPLACE),
+                    write_mask: euca_rhi::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
+            depth_stencil: Some(euca_rhi::DepthStencilState {
                 format: PREPASS_DEPTH_FORMAT,
                 depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: euca_rhi::CompareFunction::Less,
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: Default::default(),
-            multiview: None,
-            cache: None,
         });
 
         Self {
@@ -257,84 +258,85 @@ impl PrepassPipeline {
     }
 
     /// Upload per-frame scene matrices (view-projection and view).
-    pub fn write_scene(
-        &self,
-        queue: &wgpu::Queue,
-        view_projection: [[f32; 4]; 4],
-        view: [[f32; 4]; 4],
-    ) {
+    pub fn write_scene(&self, device: &D, view_projection: [[f32; 4]; 4], view: [[f32; 4]; 4]) {
         let uniforms = PrepassSceneUniforms {
             view_projection,
             view,
         };
         self.scene_buffer
-            .write_bytes_wgpu(queue, bytemuck::bytes_of(&uniforms));
+            .write_bytes(device, bytemuck::bytes_of(&uniforms));
     }
 
     /// Grow the instance buffer if `count` exceeds capacity.
-    pub fn ensure_instance_capacity(&mut self, device: &wgpu::Device, count: usize) {
+    pub fn ensure_instance_capacity(&mut self, device: &D, count: usize) {
         if count <= self.instance_capacity {
             return;
         }
         self.instance_capacity = count.next_power_of_two();
         let size = (self.instance_capacity * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        self.instance_buffer = SmartBuffer::from_wgpu(
+        self.instance_buffer = SmartBuffer::new(
             device,
             size,
             BufferKind::Storage,
             self.unified_memory,
             "Prepass Instance SSBO",
         );
-        self.instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.instance_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Prepass Instance BG"),
             layout: &self.instance_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: self.instance_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: self.instance_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
     }
 
     /// Upload instance data (model + normal matrices) for the current frame.
-    pub fn write_instances<T: bytemuck::Pod>(&self, queue: &wgpu::Queue, data: &[T]) {
-        self.instance_buffer.write_wgpu(queue, data);
+    pub fn write_instances<T: bytemuck::Pod>(&self, device: &D, data: &[T]) {
+        self.instance_buffer.write(device, data);
     }
 
     /// Execute the depth+normal pre-pass.
     pub fn execute<'a, F>(
         &'a self,
-        encoder: &'a mut wgpu::CommandEncoder,
-        textures: &'a PrepassTextures,
+        device: &'a D,
+        encoder: &'a mut D::CommandEncoder,
+        textures: &'a PrepassTextures<D>,
         draw_fn: F,
     ) where
-        F: FnOnce(&mut wgpu::RenderPass<'a>),
+        F: FnOnce(&mut D::RenderPass<'a>),
     {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Depth+Normal Prepass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &textures.normal_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.5,
-                        g: 0.5,
-                        b: 1.0,
-                        a: 1.0,
+        let mut pass = device.begin_render_pass(
+            encoder,
+            &euca_rhi::RenderPassDesc {
+                label: Some("Depth+Normal Prepass"),
+                color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
+                    view: &textures.normal_view,
+                    resolve_target: None,
+                    ops: euca_rhi::Operations {
+                        load: euca_rhi::LoadOp::Clear(euca_rhi::Color {
+                            r: 0.5,
+                            g: 0.5,
+                            b: 1.0,
+                            a: 1.0,
+                        }),
+                        store: euca_rhi::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(euca_rhi::RenderPassDepthStencilAttachment {
+                    view: &textures.depth_view,
+                    depth_ops: Some(euca_rhi::Operations {
+                        load: euca_rhi::LoadOp::Clear(1.0),
+                        store: euca_rhi::StoreOp::Store,
                     }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &textures.depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            ..Default::default()
-        });
+            },
+        );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.instance_bind_group, &[]);
         pass.set_bind_group(1, &self.scene_bind_group, &[]);
@@ -342,12 +344,12 @@ impl PrepassPipeline {
     }
 
     /// Access the instance bind group layout.
-    pub fn instance_bgl(&self) -> &wgpu::BindGroupLayout {
+    pub fn instance_bgl(&self) -> &D::BindGroupLayout {
         &self.instance_bgl
     }
 
     /// Access the scene bind group layout.
-    pub fn scene_bgl(&self) -> &wgpu::BindGroupLayout {
+    pub fn scene_bgl(&self) -> &D::BindGroupLayout {
         &self.scene_bgl
     }
 }
@@ -372,12 +374,15 @@ mod tests {
 
     #[test]
     fn prepass_texture_formats() {
-        assert_eq!(PREPASS_DEPTH_FORMAT, wgpu::TextureFormat::Depth32Float);
-        assert_eq!(PREPASS_NORMAL_FORMAT, wgpu::TextureFormat::Rgba16Float);
+        assert_eq!(PREPASS_DEPTH_FORMAT, euca_rhi::TextureFormat::Depth32Float);
+        assert_eq!(PREPASS_NORMAL_FORMAT, euca_rhi::TextureFormat::Rgba16Float);
+        // Prepass depth format must match G-buffer depth format.
+        // GBufferFormats::DEPTH is still wgpu-typed, so assert the underlying
+        // format value matches instead of a direct cross-type comparison.
         assert_eq!(
-            euca_rhi::TextureFormat::from(PREPASS_DEPTH_FORMAT),
             crate::deferred::GBufferFormats::DEPTH,
-            "Prepass depth format must match G-buffer depth format"
+            euca_rhi::TextureFormat::Depth32Float,
+            "G-buffer depth format must be Depth32Float (matching prepass)"
         );
     }
 

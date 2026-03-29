@@ -337,8 +337,8 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     msaa_hdr_texture: D::Texture,
     meshes: Vec<GpuMesh<D>>,
     depth_texture: D::TextureView,
-    depth_format: wgpu::TextureFormat,
-    surface_format: wgpu::TextureFormat,
+    depth_format: euca_rhi::TextureFormat,
+    surface_format: euca_rhi::TextureFormat,
     /// Advanced post-process stack (SSAO, FXAA, color grading, bloom).
     post_process_stack: PostProcessStack,
     /// Settings controlling the advanced post-process stack.
@@ -786,7 +786,7 @@ impl Renderer {
             ],
         });
 
-        let depth_format = wgpu::TextureFormat::Depth32Float;
+        let depth_format = euca_rhi::TextureFormat::Depth32Float;
         let shadow_shader = rhi.create_shader(&euca_rhi::ShaderDesc {
             label: Some("Shadow Shader"),
             source: euca_rhi::ShaderSource::Wgsl(SHADOW_SHADER.into()),
@@ -949,8 +949,8 @@ impl Renderer {
         let post_process_stack =
             PostProcessStack::new(gpu, &gpu.device, &gpu.queue, &gpu.surface_config);
 
-        let decal_renderer = DecalRenderer::new(&gpu.device);
-        decal_renderer.upload(&gpu.queue);
+        let decal_renderer = DecalRenderer::new(rhi);
+        decal_renderer.upload(rhi);
 
         let decal_uniform_buffer = SmartBuffer::new(
             rhi,
@@ -1012,7 +1012,7 @@ impl Renderer {
             meshes: Vec::new(),
             depth_texture,
             depth_format,
-            surface_format: gpu.surface_config.format,
+            surface_format: gpu.surface_config.format.into(),
             post_process_stack,
             post_process_settings: PostProcessSettings::default(),
             volumetric_fog_pass: None,
@@ -1035,7 +1035,7 @@ impl Renderer {
             pending_decals: Vec::new(),
             gpu_particle_systems: Vec::new(),
             velocity_textures: crate::velocity::VelocityTextures::new(
-                &gpu.device,
+                rhi,
                 gpu.surface_config.width,
                 gpu.surface_config.height,
             ),
@@ -1111,12 +1111,8 @@ impl Renderer {
     ///
     /// Call this once after creating the renderer, before uploading materials.
     pub fn enable_bindless(&mut self, gpu: &GpuContext) {
-        let features = gpu.device.features();
-        let system = crate::bindless::BindlessMaterialSystem::new(
-            &gpu.device,
-            features,
-            gpu.unified_memory(),
-        );
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let system = crate::bindless::BindlessMaterialSystem::new(rhi, gpu.unified_memory());
         if !system.is_enabled() {
             log::warn!("Bindless materials requested but GPU lacks required features");
             return;
@@ -1124,7 +1120,6 @@ impl Renderer {
 
         // Create the bindless render pipeline with the same vertex layout but
         // different group 2 bind group layout and shader.
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let shader = rhi.create_shader(&euca_rhi::ShaderDesc {
             label: Some("PBR Bindless Shader"),
             source: euca_rhi::ShaderSource::Wgsl(PBR_BINDLESS_SHADER.into()),
@@ -1369,11 +1364,8 @@ impl Renderer {
         }
         self.taa_pass
             .resize(rhi, gpu.surface_config.width, gpu.surface_config.height);
-        self.velocity_textures.resize(
-            &gpu.device,
-            gpu.surface_config.width,
-            gpu.surface_config.height,
-        );
+        self.velocity_textures
+            .resize(rhi, gpu.surface_config.width, gpu.surface_config.height);
     }
 
     /// Set interpolated SH probe coefficients for indirect lighting.
@@ -1956,7 +1948,7 @@ impl Renderer {
 
         // Flush bindless material data to GPU before rendering.
         if let Some(ref mut bl) = self.bindless {
-            bl.system.flush(&gpu.device, &gpu.queue, &self.textures);
+            bl.system.flush(&**gpu, &self.textures);
         }
 
         // Resolve MSAA into the post-process stack's ping buffer.
