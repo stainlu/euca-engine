@@ -16,13 +16,16 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
 
+    // Storage buffer approach for instance data — reads model matrix from
+    // device buffer. Simpler and faster than per-instance vertex attributes
+    // on Apple Silicon (GPU caches instance data efficiently).
     const SHADER_SRC: &str = r#"
         #include <metal_stdlib>
         using namespace metal;
 
-        struct VertexIn {
-            float3 position [[attribute(0)]];
-            float3 color    [[attribute(1)]];
+        struct VertexData {
+            packed_float3 position;
+            packed_float3 color;
         };
 
         struct InstanceData {
@@ -35,15 +38,16 @@ fn main() {
         };
 
         vertex VertexOut vertex_main(
-            VertexIn in [[stage_in]],
+            uint vid [[vertex_id]],
             uint iid [[instance_id]],
+            const device VertexData* vertices [[buffer(0)]],
             constant float4x4& vp [[buffer(1)]],
             const device InstanceData* instances [[buffer(2)]]
         ) {
             VertexOut out;
-            float4 world_pos = instances[iid].model * float4(in.position, 1.0);
-            out.position = vp * world_pos;
-            out.color = in.color;
+            float3 pos = float3(vertices[vid].position);
+            out.position = vp * (instances[iid].model * float4(pos, 1.0));
+            out.color = float3(vertices[vid].color);
             return out;
         }
 
@@ -52,28 +56,28 @@ fn main() {
         }
     "#;
 
-    // 8 unique vertices (indexed cube) — 4.5x fewer vertex shader invocations
+    // 36 vertices (non-indexed, 6 faces × 2 tris × 3 verts)
+    // Non-indexed is faster than indexed on Apple TBDR — avoids index lookup overhead
     #[rustfmt::skip]
     const CUBE_VERTICES: &[[f32; 6]] = &[
-        [-0.5,-0.5, 0.5,  0.9,0.2,0.2], // 0: front-bottom-left
-        [ 0.5,-0.5, 0.5,  0.2,0.9,0.2], // 1: front-bottom-right
-        [ 0.5, 0.5, 0.5,  0.2,0.2,0.9], // 2: front-top-right
-        [-0.5, 0.5, 0.5,  0.9,0.9,0.2], // 3: front-top-left
-        [-0.5,-0.5,-0.5,  0.2,0.9,0.9], // 4: back-bottom-left
-        [ 0.5,-0.5,-0.5,  0.9,0.2,0.9], // 5: back-bottom-right
-        [ 0.5, 0.5,-0.5,  0.5,0.5,0.5], // 6: back-top-right
-        [-0.5, 0.5,-0.5,  0.9,0.5,0.2], // 7: back-top-left
-    ];
-
-    // 36 indices (12 triangles, 6 faces)
-    #[rustfmt::skip]
-    const CUBE_INDICES: &[u16] = &[
-        0,1,2, 0,2,3, // front
-        5,4,7, 5,7,6, // back
-        3,2,6, 3,6,7, // top
-        4,5,1, 4,1,0, // bottom
-        1,5,6, 1,6,2, // right
-        4,0,3, 4,3,7, // left
+        // Front (red)
+        [-0.5,-0.5, 0.5, 0.9,0.2,0.2],[ 0.5,-0.5, 0.5, 0.9,0.2,0.2],[ 0.5, 0.5, 0.5, 0.9,0.2,0.2],
+        [-0.5,-0.5, 0.5, 0.9,0.2,0.2],[ 0.5, 0.5, 0.5, 0.9,0.2,0.2],[-0.5, 0.5, 0.5, 0.9,0.2,0.2],
+        // Back (green)
+        [ 0.5,-0.5,-0.5, 0.2,0.9,0.2],[-0.5,-0.5,-0.5, 0.2,0.9,0.2],[-0.5, 0.5,-0.5, 0.2,0.9,0.2],
+        [ 0.5,-0.5,-0.5, 0.2,0.9,0.2],[-0.5, 0.5,-0.5, 0.2,0.9,0.2],[ 0.5, 0.5,-0.5, 0.2,0.9,0.2],
+        // Top (blue)
+        [-0.5, 0.5, 0.5, 0.2,0.2,0.9],[ 0.5, 0.5, 0.5, 0.2,0.2,0.9],[ 0.5, 0.5,-0.5, 0.2,0.2,0.9],
+        [-0.5, 0.5, 0.5, 0.2,0.2,0.9],[ 0.5, 0.5,-0.5, 0.2,0.2,0.9],[-0.5, 0.5,-0.5, 0.2,0.2,0.9],
+        // Bottom (yellow)
+        [-0.5,-0.5,-0.5, 0.9,0.9,0.2],[ 0.5,-0.5,-0.5, 0.9,0.9,0.2],[ 0.5,-0.5, 0.5, 0.9,0.9,0.2],
+        [-0.5,-0.5,-0.5, 0.9,0.9,0.2],[ 0.5,-0.5, 0.5, 0.9,0.9,0.2],[-0.5,-0.5, 0.5, 0.9,0.9,0.2],
+        // Right (cyan)
+        [ 0.5,-0.5, 0.5, 0.2,0.9,0.9],[ 0.5,-0.5,-0.5, 0.2,0.9,0.9],[ 0.5, 0.5,-0.5, 0.2,0.9,0.9],
+        [ 0.5,-0.5, 0.5, 0.2,0.9,0.9],[ 0.5, 0.5,-0.5, 0.2,0.9,0.9],[ 0.5, 0.5, 0.5, 0.2,0.9,0.9],
+        // Left (magenta)
+        [-0.5,-0.5,-0.5, 0.9,0.2,0.9],[-0.5,-0.5, 0.5, 0.9,0.2,0.9],[-0.5, 0.5, 0.5, 0.9,0.2,0.9],
+        [-0.5,-0.5,-0.5, 0.9,0.2,0.9],[-0.5, 0.5, 0.5, 0.9,0.2,0.9],[-0.5, 0.5,-0.5, 0.9,0.2,0.9],
     ];
 
     #[repr(C)]
@@ -160,7 +164,6 @@ fn main() {
         device: Option<MetalDevice>,
         pipeline: Option<<MetalDevice as RenderDevice>::RenderPipeline>,
         vertex_buffer: Option<<MetalDevice as RenderDevice>::Buffer>,
-        index_buffer: Option<<MetalDevice as RenderDevice>::Buffer>,
         vp_buffer: Option<<MetalDevice as RenderDevice>::Buffer>,
         instance_buffer: Option<<MetalDevice as RenderDevice>::Buffer>,
         depth_view: Option<<MetalDevice as RenderDevice>::TextureView>,
@@ -202,29 +205,13 @@ fn main() {
                 source: ShaderSource::Msl(SHADER_SRC.into()),
             });
 
-            let vertex_layout = VertexBufferLayout {
-                array_stride: 24, // 6 × f32 = 24 bytes per vertex
-                step_mode: VertexStepMode::Vertex,
-                attributes: &[
-                    VertexAttribute {
-                        format: VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    }, // position
-                    VertexAttribute {
-                        format: VertexFormat::Float32x3,
-                        offset: 12,
-                        shader_location: 1,
-                    }, // color
-                ],
-            };
             let pipeline = device.create_render_pipeline(&RenderPipelineDesc {
                 label: Some("Stress Pipeline"),
                 layout: &[],
                 vertex: VertexState {
                     module: &shader,
                     entry_point: "vertex_main",
-                    buffers: &[vertex_layout],
+                    buffers: &[],
                 },
                 fragment: Some(FragmentState {
                     module: &shader,
@@ -263,16 +250,6 @@ fn main() {
                 mapped_at_creation: false,
             });
             device.write_buffer(&vertex_buffer, 0, &vdata);
-
-            // Index buffer (36 indices)
-            let idata: Vec<u8> = CUBE_INDICES.iter().flat_map(|i| i.to_le_bytes()).collect();
-            let index_buffer = device.create_buffer(&BufferDesc {
-                label: Some("Indices"),
-                size: idata.len() as u64,
-                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            device.write_buffer(&index_buffer, 0, &idata);
 
             // VP uniform buffer
             let vp_buffer = device.create_buffer(&BufferDesc {
@@ -330,7 +307,6 @@ fn main() {
 
             self.pipeline = Some(pipeline);
             self.vertex_buffer = Some(vertex_buffer);
-            self.index_buffer = Some(index_buffer);
             self.vp_buffer = Some(vp_buffer);
             self.instance_buffer = Some(instance_buffer);
             self.depth_view = Some(depth_view);
@@ -357,7 +333,6 @@ fn main() {
                     let device = self.device.as_ref().unwrap();
                     let pipeline = self.pipeline.as_ref().unwrap();
                     let vb = self.vertex_buffer.as_ref().unwrap();
-                    let ib = self.index_buffer.as_ref().unwrap();
                     let vp_buf = self.vp_buffer.as_ref().unwrap();
                     let inst_buf = self.instance_buffer.as_ref().unwrap();
                     let depth = self.depth_view.as_ref().unwrap();
@@ -444,19 +419,8 @@ fn main() {
                             std::mem::size_of_val(CUBE_VERTICES) as u64,
                         );
                         pass.set_vertex_buffer(1, vp_buf, 0, 64);
-                        pass.set_vertex_buffer(
-                            2,
-                            inst_buf,
-                            0,
-                            (self.instances.len() * std::mem::size_of::<InstanceData>()) as u64,
-                        );
-                        // DIAGNOSTIC: skip draw call to measure presentation overhead
-                        let skip_draw = std::env::var("EUCA_SKIP_DRAW").is_ok();
-                        if !skip_draw {
-                            let idx_size = (CUBE_INDICES.len() * 2) as u64;
-                            pass.set_index_buffer(ib, IndexFormat::Uint16, 0, idx_size);
-                            pass.draw_indexed(0..36, 0, 0..self.entity_count);
-                        }
+                        pass.set_vertex_buffer(2, inst_buf, 0, (self.instances.len() * 64) as u64);
+                        pass.draw(0..36, 0..self.entity_count);
                     }
                     let t_encode = std::time::Instant::now();
                     encoder.schedule_present(&output);
@@ -488,7 +452,6 @@ fn main() {
         device: None,
         pipeline: None,
         vertex_buffer: None,
-        index_buffer: None,
         vp_buffer: None,
         instance_buffer: None,
         depth_view: None,
