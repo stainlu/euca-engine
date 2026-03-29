@@ -3,6 +3,13 @@
 //! Provides trait-based component serialization, delta compression via change ticks,
 //! priority-based bandwidth allocation, server-authoritative state management,
 //! and a bidirectional RPC event system.
+//!
+//! # Prepare/Evaluate Split
+//!
+//! Following the Pretext pattern, expensive semantic work (field registration,
+//! name-to-ID mapping) happens once during the "prepare" phase when components
+//! are registered. The per-tick "evaluate" hot path uses only integer-indexed
+//! array access — no string hashing, no HashMap lookups, no per-frame allocations.
 
 use euca_ecs::{Entity, Query, With, World};
 use serde::{Deserialize, Serialize};
@@ -11,6 +18,74 @@ use std::collections::HashMap;
 use crate::bandwidth::BandwidthBudget;
 use crate::interest::InterestManager;
 use crate::protocol::{NetworkId, Replicated};
+
+// ── Field ID and registry (prepare phase) ──
+
+/// Integer identifier for a replicated field, assigned at registration time.
+///
+/// Replaces string-based field lookups on the hot path. The ID is an index into
+/// a dense array, enabling O(1) field comparison with zero hashing overhead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FieldId(pub u32);
+
+/// Registry that maps component type names to dense integer [`FieldId`]s.
+///
+/// This is the "prepare" phase: called once at startup when component types are
+/// registered. The resulting IDs are used on every tick for O(1) array-indexed
+/// field comparison instead of HashMap string lookups.
+#[derive(Clone, Debug, Default)]
+pub struct FieldRegistry {
+    /// Maps component type name -> FieldId. Only used during registration and
+    /// for debug/diagnostic lookups, never on the hot path.
+    name_to_id: HashMap<String, FieldId>,
+    /// Reverse mapping: FieldId index -> type name. Used for diagnostics and
+    /// network serialization that needs human-readable names.
+    id_to_name: Vec<String>,
+}
+
+impl FieldRegistry {
+    /// Create an empty field registry.
+    pub fn new() -> Self {
+        Self {
+            name_to_id: HashMap::new(),
+            id_to_name: Vec::new(),
+        }
+    }
+
+    /// Register a field name, returning its assigned [`FieldId`].
+    ///
+    /// If the name is already registered, returns the existing ID.
+    pub fn register(&mut self, name: &str) -> FieldId {
+        if let Some(&id) = self.name_to_id.get(name) {
+            return id;
+        }
+        let id = FieldId(self.id_to_name.len() as u32);
+        let owned = name.to_string();
+        self.name_to_id.insert(owned.clone(), id);
+        self.id_to_name.push(owned);
+        id
+    }
+
+    /// Look up the [`FieldId`] for a name. Returns `None` if not registered.
+    pub fn id_of(&self, name: &str) -> Option<FieldId> {
+        self.name_to_id.get(name).copied()
+    }
+
+    /// Look up the name for a [`FieldId`]. Returns `None` if out of range.
+    pub fn name_of(&self, id: FieldId) -> Option<&str> {
+        self.id_to_name.get(id.0 as usize).map(|s| s.as_str())
+    }
+
+    /// Total number of registered fields.
+    pub fn len(&self) -> usize {
+        self.id_to_name.len()
+    }
+
+    /// Returns true if no fields have been registered.
+    pub fn is_empty(&self) -> bool {
+        self.id_to_name.is_empty()
+    }
+}
 
 // ── ReplicatedComponent trait ──
 
@@ -38,10 +113,15 @@ pub trait ReplicatedComponent: Send + Sync + 'static {
 /// Stores a snapshot of each field's serialized bytes alongside the world tick
 /// at which the snapshot was taken. The replication collect system compares
 /// current field values against this state to detect changes.
+///
+/// Uses a dense `Vec<Option<Vec<u8>>>` indexed by [`FieldId`] instead of a
+/// `HashMap<String, Vec<u8>>`. This eliminates string hashing on the hot path —
+/// field comparison becomes a direct array index: `fields[id] != new_bytes`.
 #[derive(Clone, Debug, Default)]
 pub struct ReplicationState {
-    /// Last-sent serialized values keyed by field name.
-    pub fields: HashMap<String, Vec<u8>>,
+    /// Last-sent serialized values indexed by [`FieldId`]. `None` means the
+    /// field has never been sent for this entity.
+    pub fields: Vec<Option<Vec<u8>>>,
     /// World tick at which this state was last updated.
     pub change_tick: u32,
 }
@@ -50,20 +130,29 @@ impl ReplicationState {
     /// Create an empty replication state.
     pub fn new() -> Self {
         Self {
-            fields: HashMap::new(),
+            fields: Vec::new(),
             change_tick: 0,
         }
     }
 
+    /// Ensure the internal storage can hold the given field ID.
+    fn ensure_capacity(&mut self, id: FieldId) {
+        let needed = id.0 as usize + 1;
+        if self.fields.len() < needed {
+            self.fields.resize_with(needed, || None);
+        }
+    }
+
     /// Update a field's last-sent value and bump the change tick.
-    pub fn update_field(&mut self, name: impl Into<String>, data: Vec<u8>, tick: u32) {
-        self.fields.insert(name.into(), data);
+    pub fn update_field(&mut self, id: FieldId, data: Vec<u8>, tick: u32) {
+        self.ensure_capacity(id);
+        self.fields[id.0 as usize] = Some(data);
         self.change_tick = tick;
     }
 
     /// Check if a field's current data differs from the last-sent snapshot.
-    pub fn field_changed(&self, name: &str, current_data: &[u8]) -> bool {
-        match self.fields.get(name) {
+    pub fn field_changed(&self, id: FieldId, current_data: &[u8]) -> bool {
+        match self.fields.get(id.0 as usize).and_then(|v| v.as_ref()) {
             Some(last_sent) => last_sent.as_slice() != current_data,
             None => true, // Never sent before — treat as changed
         }
@@ -166,17 +255,20 @@ pub struct ClientRpc {
 pub struct ReplicationUpdate {
     /// The entity that has changed fields.
     pub entity: Entity,
-    /// The changed field names paired with their current serialized values.
-    pub fields: Vec<(String, Vec<u8>)>,
+    /// The changed field IDs paired with their current serialized values.
+    /// Uses [`FieldId`] instead of strings for zero-overhead hot-path access.
+    pub fields: Vec<(FieldId, Vec<u8>)>,
 }
 
 /// Resource holding pending replication data collected by the collect system.
 ///
 /// Populated by `replication_collect_system` and consumed by the network
-/// send system. Cleared each tick after sending.
+/// send system. The `updates` Vec is retained across ticks and `.clear()`ed
+/// instead of re-allocated — the capacity grows to a steady state and stays.
 #[derive(Clone, Debug, Default)]
 pub struct PendingReplication {
     /// Updates to be sent this tick, one per entity with changes.
+    /// Pre-allocated: `.clear()` preserves capacity across ticks.
     pub updates: Vec<ReplicationUpdate>,
 }
 
@@ -188,6 +280,10 @@ impl PendingReplication {
     }
 
     /// Take all pending updates, leaving the resource empty.
+    ///
+    /// Note: this transfers ownership of the Vec (capacity included) to the
+    /// caller. The collect system will `.clear()` and reuse the resource's
+    /// Vec on the next tick, so capacity is preserved across normal tick cycles.
     pub fn drain(&mut self) -> Vec<ReplicationUpdate> {
         std::mem::take(&mut self.updates)
     }
@@ -349,6 +445,7 @@ type ChangeDetectFn = Box<dyn Fn(&World, Entity, u32) -> bool + Send + Sync>;
 /// Registration entry for a replicated component type.
 struct ReplicatedComponentEntry {
     type_name: String,
+    field_id: FieldId,
     serialize_fn: SerializeFn,
     /// Returns true if the component changed since `since_tick`.
     change_detect_fn: ChangeDetectFn,
@@ -359,8 +456,14 @@ struct ReplicatedComponentEntry {
 /// Stores type-erased serialization functions keyed by stable type names.
 /// This allows the replication system to serialize any registered component
 /// without knowing its concrete type at compile time.
+///
+/// Integrates with [`FieldRegistry`] to assign each component type a dense
+/// [`FieldId`] at registration time (the "prepare" phase). The hot path then
+/// uses these integer IDs for O(1) array-indexed field comparison.
 pub struct ComponentReplicationRegistry {
     entries: Vec<ReplicatedComponentEntry>,
+    /// Field registry that maps type names to dense integer IDs.
+    pub field_registry: FieldRegistry,
     /// Estimated byte size per entity for bandwidth budgeting.
     pub estimated_bytes_per_entity: u32,
 }
@@ -369,6 +472,7 @@ impl ComponentReplicationRegistry {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            field_registry: FieldRegistry::new(),
             estimated_bytes_per_entity: 128,
         }
     }
@@ -376,8 +480,10 @@ impl ComponentReplicationRegistry {
     /// Register a component type for replication.
     ///
     /// The component must implement `ReplicatedComponent` and be stored in the ECS.
+    /// Assigns a [`FieldId`] to the component type name via the internal
+    /// [`FieldRegistry`] — this is the "prepare" phase.
     pub fn register<T: ReplicatedComponent + euca_ecs::Component>(&mut self, type_name: &str) {
-        let name = type_name.to_string();
+        let field_id = self.field_registry.register(type_name);
         let serialize_fn: SerializeFn = Box::new(|world: &World, entity: Entity| {
             world.get::<T>(entity).map(|c| c.net_serialize())
         });
@@ -388,7 +494,8 @@ impl ComponentReplicationRegistry {
                     .is_some_and(|tick| tick > since_tick)
             });
         self.entries.push(ReplicatedComponentEntry {
-            type_name: name,
+            type_name: type_name.to_string(),
+            field_id,
             serialize_fn,
             change_detect_fn: change_fn,
         });
@@ -420,7 +527,23 @@ impl ComponentReplicationRegistry {
         }
     }
 
+    /// Serialize all components for an entity as `(FieldId, data)` pairs.
+    ///
+    /// Returns only components that the entity actually has. Used by the
+    /// collect system for integer-indexed field comparison on the hot path.
+    pub fn serialize_all_indexed(&self, world: &World, entity: Entity) -> Vec<(FieldId, Vec<u8>)> {
+        let mut result = Vec::new();
+        for entry in &self.entries {
+            if let Some(data) = (entry.serialize_fn)(world, entity) {
+                result.push((entry.field_id, data));
+            }
+        }
+        result
+    }
+
     /// Serialize all components for an entity (full snapshot, ignoring change ticks).
+    ///
+    /// Returns `ComponentData` with string type names for network serialization.
     pub fn serialize_all(&self, world: &World, entity: Entity) -> Vec<ComponentData> {
         let mut components = Vec::new();
         for entry in &self.entries {
@@ -454,6 +577,11 @@ impl Default for ComponentReplicationRegistry {
 ///
 /// This is the first stage of the replication pipeline. Downstream systems
 /// consume `PendingReplication` to send data over the network.
+///
+/// Hot-path optimizations (Pretext prepare/evaluate split):
+/// - Field comparison uses `state.fields[field_id]` — integer-indexed, no string hashing.
+/// - `PendingReplication.updates` is `.clear()`ed instead of re-allocated, preserving capacity.
+/// - `changed_fields` Vec is reused across entities within the same tick.
 pub fn replication_collect_system(world: &mut World) {
     let registry_exists = world.resource::<ComponentReplicationRegistry>().is_some();
     if !registry_exists {
@@ -467,37 +595,48 @@ pub fn replication_collect_system(world: &mut World) {
     };
 
     let current_tick = world.current_tick() as u32;
-    let mut updates: Vec<ReplicationUpdate> = Vec::new();
+
+    // Take the updates Vec out of the resource so we can collect into it without
+    // holding a mutable borrow on the world. `.clear()` preserves capacity so the
+    // Vec grows to a steady state and stays there across ticks.
+    let mut updates = world
+        .resource_mut::<PendingReplication>()
+        .map(|pending| std::mem::take(&mut pending.updates))
+        .unwrap_or_default();
+    updates.clear();
+
+    // Retained scratch buffer for changed fields within a single entity.
+    // Reused across entities to avoid per-entity allocation.
+    let mut changed_fields: Vec<(FieldId, Vec<u8>)> = Vec::new();
 
     for entity in replicated_entities {
-        // Serialize all registered component fields for this entity
-        let serialized: Vec<(String, Vec<u8>)> = {
+        // Serialize all registered component fields using FieldId-indexed access
+        let serialized: Vec<(FieldId, Vec<u8>)> = {
             let registry = match world.resource::<ComponentReplicationRegistry>() {
                 Some(r) => r,
                 None => continue,
             };
-            registry
-                .serialize_all(world, entity)
-                .into_iter()
-                .map(|cd| (cd.type_name, cd.data))
-                .collect()
+            registry.serialize_all_indexed(world, entity)
         };
 
         if serialized.is_empty() {
             continue;
         }
 
-        // Compare against last-sent state
-        let changed_fields: Vec<(String, Vec<u8>)> = {
+        // Compare against last-sent state using integer-indexed array access
+        changed_fields.clear();
+        {
             let state = world.get::<ReplicationState>(entity);
-            serialized
-                .into_iter()
-                .filter(|(name, data)| match &state {
-                    Some(s) => s.field_changed(name, data),
+            for (field_id, data) in serialized {
+                let changed = match &state {
+                    Some(s) => s.field_changed(field_id, &data),
                     None => true, // No prior state — everything is new
-                })
-                .collect()
-        };
+                };
+                if changed {
+                    changed_fields.push((field_id, data));
+                }
+            }
+        }
 
         if changed_fields.is_empty() {
             continue;
@@ -505,18 +644,18 @@ pub fn replication_collect_system(world: &mut World) {
 
         // Update the entity's ReplicationState with new values
         if let Some(state) = world.get_mut::<ReplicationState>(entity) {
-            for (name, data) in &changed_fields {
-                state.update_field(name.clone(), data.clone(), current_tick);
+            for &(field_id, ref data) in &changed_fields {
+                state.update_field(field_id, data.clone(), current_tick);
             }
         }
 
         updates.push(ReplicationUpdate {
             entity,
-            fields: changed_fields,
+            fields: changed_fields.clone(),
         });
     }
 
-    // Write to PendingReplication resource
+    // Put the updates Vec back into the resource (or create it)
     if let Some(pending) = world.resource_mut::<PendingReplication>() {
         pending.updates = updates;
     } else {
@@ -913,13 +1052,16 @@ mod tests {
 
     #[test]
     fn replication_state_tracks_fields() {
+        let health_id = FieldId(0);
+        let mana_id = FieldId(1);
+
         let mut state = ReplicationState::new();
         assert!(state.fields.is_empty());
-        assert!(state.field_changed("health", &[0, 0, 200, 66]));
-        state.update_field("health", vec![0, 0, 200, 66], 5);
-        assert!(!state.field_changed("health", &[0, 0, 200, 66]));
-        assert!(state.field_changed("health", &[0, 0, 0, 67]));
-        assert!(state.field_changed("mana", &[1, 2, 3, 4]));
+        assert!(state.field_changed(health_id, &[0, 0, 200, 66]));
+        state.update_field(health_id, vec![0, 0, 200, 66], 5);
+        assert!(!state.field_changed(health_id, &[0, 0, 200, 66]));
+        assert!(state.field_changed(health_id, &[0, 0, 0, 67]));
+        assert!(state.field_changed(mana_id, &[1, 2, 3, 4]));
     }
 
     #[test]
@@ -966,7 +1108,7 @@ mod tests {
         let mut pending = PendingReplication::new();
         pending.updates.push(ReplicationUpdate {
             entity,
-            fields: vec![("Pos".into(), vec![0; 12])],
+            fields: vec![(FieldId(0), vec![0; 12])],
         });
         let drained = pending.drain();
         assert_eq!(drained.len(), 1);

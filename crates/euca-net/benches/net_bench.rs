@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use euca_net::{EntityState, NetworkId, PacketHeader, ReplicationState};
+use euca_net::{EntityState, FieldId, NetworkId, PacketHeader, ReplicationState};
 
 // ---------------------------------------------------------------------------
 // Deterministic pseudo-random number generator (avoids adding `rand` dep)
@@ -128,14 +128,15 @@ fn bench_delta_field_comparison(c: &mut Criterion) {
 
         // Build a ReplicationState with N fields of 64 bytes each, then compare
         // against N "current" snapshots where ~10% of bytes differ.
+        // Uses FieldId-indexed access (integer array indexing, no string hashing).
         let mut state = ReplicationState::new();
-        let mut current_fields: Vec<(String, Vec<u8>)> = Vec::with_capacity(n);
+        let mut current_fields: Vec<(FieldId, Vec<u8>)> = Vec::with_capacity(n);
 
         for i in 0..n {
-            let field_name = format!("component_{i}");
+            let field_id = FieldId(i as u32);
             let (old, new) = make_snapshot_pair(&mut rng, 64);
-            state.update_field(field_name.clone(), old, 1);
-            current_fields.push((field_name, new));
+            state.update_field(field_id, old, 1);
+            current_fields.push((field_id, new));
         }
 
         group.bench_with_input(
@@ -144,8 +145,8 @@ fn bench_delta_field_comparison(c: &mut Criterion) {
             |b, (state, fields)| {
                 b.iter(|| {
                     let mut changed_count = 0u32;
-                    for (name, data) in fields {
-                        if state.field_changed(name, data) {
+                    for &(field_id, ref data) in fields {
+                        if state.field_changed(field_id, data) {
                             changed_count += 1;
                         }
                     }

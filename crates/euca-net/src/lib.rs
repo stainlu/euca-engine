@@ -25,9 +25,10 @@ pub use protocol::{ClientMessage, EntityState, NetworkId, Replicated, ServerMess
 pub use quic_transport::{QuicTransport, generate_self_signed_cert};
 pub use replication::{
     ClientReplicationReceiver, ClientRpc, ComponentData, ComponentDeserializationRegistry,
-    ComponentReplicationRegistry, EntityReplicationData, PendingReplication, ReplicatedComponent,
-    ReplicatedField, ReplicationManager, ReplicationPriority, ReplicationState, ReplicationUpdate,
-    ServerRpc, replication_collect_system, replication_receive_system, replication_send_system,
+    ComponentReplicationRegistry, EntityReplicationData, FieldId, FieldRegistry,
+    PendingReplication, ReplicatedComponent, ReplicatedField, ReplicationManager,
+    ReplicationPriority, ReplicationState, ReplicationUpdate, ServerRpc,
+    replication_collect_system, replication_receive_system, replication_send_system,
 };
 pub use server::GameServer;
 pub use tick_rate::{NetworkTickAccumulator, TickRateConfig};
