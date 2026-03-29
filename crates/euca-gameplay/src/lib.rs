@@ -26,6 +26,8 @@ pub mod cleanup;
 pub mod combat;
 /// Dota 2-accurate combat math formulas (armor, magic resistance, crits, evasion, etc.).
 pub mod combat_math;
+/// Dota 2-style creep wave spawning, lane routing, aggro, denial, and last-hit.
+pub mod creep_wave;
 /// Dota 2 crowd control — stun, silence, root, hex, disarm, break, mute, dispel, spell immunity.
 pub mod crowd_control;
 /// Tabular game data loaded from config files.
@@ -116,11 +118,11 @@ pub use crowd_control::{
     CcState, CcType, CrowdControl, DisableFlags, DispelType, SpellImmunity, StatusResistance,
 };
 pub use economy::{
-    BuybackState, CreepType, EconomyError, Gold, GoldBounty, GoldWallet, HeroEconomy,
-    apply_death_penalty, assist_gold, attempt_buyback, award_kill, buyback_cost, creep_bounty,
-    gold_loss_on_death, gold_on_kill_system, hero_kill_bounty, respawn_time,
-    tick_buyback_cooldown, tick_passive_income, tower_bounty,
-    BUYBACK_COOLDOWN, PASSIVE_GOLD_PER_SECOND, STARTING_GOLD,
+    BUYBACK_COOLDOWN, BuybackState, CreepType, EconomyError, Gold, GoldBounty, GoldWallet,
+    HeroEconomy, PASSIVE_GOLD_PER_SECOND, STARTING_GOLD, apply_death_penalty, assist_gold,
+    attempt_buyback, award_kill, buyback_cost, creep_bounty, gold_loss_on_death,
+    gold_on_kill_system, hero_kill_bounty, respawn_time, tick_buyback_cooldown,
+    tick_passive_income, tower_bounty,
 };
 pub use hero::{AbilityDef, HeroDef, HeroName, HeroRegistry, StatGrowth, spawn_hero};
 pub use inventory::{
