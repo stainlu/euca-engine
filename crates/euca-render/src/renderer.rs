@@ -432,7 +432,7 @@ impl Renderer {
             unified,
             "Shadow Instance SSBO",
         );
-        let textures = TextureStore::new(&gpu.device, &gpu.queue);
+        let textures = TextureStore::new(rhi);
         let sampler = rhi.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("Material Sampler"),
             address_mode_u: euca_rhi::AddressMode::Repeat,
@@ -1219,13 +1219,14 @@ impl Renderer {
         height: u32,
         rgba: &[u8],
     ) -> TextureHandle {
-        self.textures
-            .upload_rgba(&gpu.device, &gpu.queue, width, height, rgba)
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        self.textures.upload_rgba(rhi, width, height, rgba)
     }
 
     /// Decode an image file (PNG, JPEG, etc.) from memory and upload it as a texture.
     pub fn upload_texture_image(&mut self, gpu: &GpuContext, data: &[u8]) -> TextureHandle {
-        self.textures.upload_image(&gpu.device, &gpu.queue, data)
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        self.textures.upload_image(rhi, data)
     }
 
     /// Generate and upload a checkerboard test pattern texture.
@@ -1235,8 +1236,8 @@ impl Renderer {
         size: u32,
         tile: u32,
     ) -> TextureHandle {
-        self.textures
-            .checkerboard(&gpu.device, &gpu.queue, size, tile)
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        self.textures.checkerboard(rhi, size, tile)
     }
 
     /// Upload a PBR material (uniforms + texture bindings) to the GPU and
@@ -1283,7 +1284,7 @@ impl Renderer {
         });
         rhi.write_buffer(&buffer, 0, ubo_data);
 
-        let dw = TextureStore::default_white();
+        let dw = TextureHandle::DEFAULT_WHITE;
         let albedo_view = self.textures.view(mat.albedo_texture.unwrap_or(dw));
         let normal_view = self.textures.view(mat.normal_texture.unwrap_or(dw));
         let mr_view = self
