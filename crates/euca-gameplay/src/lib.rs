@@ -24,8 +24,12 @@ pub mod camera;
 pub mod cleanup;
 /// Projectiles and auto-PvP melee combat.
 pub mod combat;
+/// Dota 2-accurate combat math formulas (armor, magic resistance, crits, evasion, etc.).
+pub mod combat_math;
 /// Dota 2-style creep wave spawning, lane routing, aggro, denial, and last-hit.
 pub mod creep_wave;
+/// Dota 2 crowd control — stun, silence, root, hex, disarm, break, mute, dispel, spell immunity.
+pub mod crowd_control;
 /// Tabular game data loaded from config files.
 pub mod data_table;
 /// Dota 2 economy — reliable/unreliable gold, bounties, buyback, respawn.
@@ -110,6 +114,9 @@ pub use abilities::{
     UseAbilityEvent, ability_tick_system, use_ability_system,
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
+pub use crowd_control::{
+    CcState, CcType, CrowdControl, DisableFlags, DispelType, SpellImmunity, StatusResistance,
+};
 pub use economy::{
     BUYBACK_COOLDOWN, BuybackState, CreepType, EconomyError, Gold, GoldBounty, GoldWallet,
     HeroEconomy, PASSIVE_GOLD_PER_SECOND, STARTING_GOLD, apply_death_penalty, assist_gold,
