@@ -1,8 +1,10 @@
 //! Rendering subsystem for the Euca engine.
 //!
-//! Provides a PBR forward renderer built on `wgpu` with support for cascaded
-//! shadow maps, MSAA, HDR post-processing (SSAO, FXAA, bloom, color grading),
-//! TAA, volumetric fog, decals, and GPU-driven rendering.
+//! Provides a PBR forward renderer generic over [`euca_rhi::RenderDevice`] with
+//! compile-time backend selection (`WgpuDevice` cross-platform, `MetalDevice`
+//! native on Apple Silicon). Features cascaded shadow maps, MSAA, HDR
+//! post-processing (SSAO, FXAA, bloom, color grading), TAA, volumetric fog,
+//! decals, GPU-driven rendering, mesh shaders, and MetalFX upscaling.
 //!
 //! # Key types
 //!

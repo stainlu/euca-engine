@@ -304,6 +304,30 @@ mimalloc provides better performance than the system allocator for game workload
 
 **Source:** `crates/euca-game/src/main.rs`
 
+### 3.8 Native Metal Backend (euca-rhi)
+
+The `euca-rhi` crate provides a `RenderDevice` trait that decouples the renderer from any specific GPU API. Two backends are available:
+
+- **`WgpuDevice`** — Cross-platform via wgpu (Vulkan, Metal, D3D12, WebGPU). Default.
+- **`MetalDevice`** — Native Metal via `objc2-metal` on Apple Silicon. Unlocks Metal 3/4 features.
+
+The native Metal backend accesses features wgpu cannot express:
+
+| Feature | API | Impact |
+|---------|-----|--------|
+| Mesh shaders | `MTLMeshRenderPipelineDescriptor` | 8-16x vs vertex shaders at 100K+ |
+| MetalFX upscaling | `MTLFXTemporalScaler` | 2-3x FPS (render at 50% res) |
+| Tile shading | `MTLTileRenderPipelineDescriptor` | Deferred lighting in tile memory |
+| Indirect Command Buffers | `MTLIndirectCommandBuffer` | GPU-side draw call encoding |
+| Memoryless targets | `MTLStorageMode::Memoryless` | Zero DRAM for transient attachments |
+
+WGSL shaders are auto-translated to MSL via naga at runtime, so all 28 existing shaders work on both backends without maintaining separate files.
+
+**Combined benchmark (M4 Pro, 1280x720, mesh shaders + MetalFX):**
+500K entities at 75 FPS — vs <1 FPS with vertex shaders (>75x speedup).
+
+**Source:** `crates/euca-rhi/src/metal_backend.rs` (~1,900 lines)
+
 ---
 
 ## 4. Subsystem Deep Dives

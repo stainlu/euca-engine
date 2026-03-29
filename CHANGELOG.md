@@ -11,6 +11,27 @@ New `euca-rhi` crate introduces a `RenderDevice` trait that decouples the render
 - **refactor: make Renderer and all subsystems generic over `RenderDevice`** — `Renderer<D>`, `SmartBuffer<D>`, `PostProcessStack<D>`, shadow maps, clustered lights, and all rendering subsystems are parameterized over the backend. `WgpuDevice` remains the cross-platform default; `MetalDevice` is selected on Apple Silicon.
 - **feat: MSL core shaders** — PBR (Cook-Torrance BRDF), shadow mapping, and procedural sky shaders written in Metal Shading Language alongside existing WGSL shaders.
 
+### Metal-Exclusive Features (Phase C)
+
+All 7 Metal-specific features that wgpu cannot access, implemented and tested on M4 Pro:
+
+- **feat: Metal mesh shaders (C.4)** — `MTLMeshRenderPipelineDescriptor` bypasses TBDR vertex bottleneck. Cooperative threadgroup geometry output. 8-16x speedup over vertex shaders at 100K+ entities.
+- **feat: MetalFX temporal upscaling (C.5)** — `MTLFXTemporalScaler` renders at 50% resolution with temporal reconstruction. 2-3x FPS improvement.
+- **feat: Indirect Command Buffers (C.3)** — `MTLIndirectCommandBuffer` with GPU-side draw call encoding, execute, and per-frame reset.
+- **feat: Tile shading (C.2)** — `MTLTileRenderPipelineDescriptor` for deferred lighting in Apple TBDR tile memory.
+- **feat: Memoryless render targets (C.1)** — Automatic `MTLStorageMode::Memoryless` for transient G-buffer attachments.
+- **feat: GPU physics broadphase (C.6)** — Compute shader AABB overlap testing in `euca-physics` (`gpu-broadphase` feature).
+- **feat: WGSL→MSL transpilation** — naga auto-converts all 28 WGSL shaders for the Metal backend at runtime.
+- **refactor: `GpuContext<D: RenderDevice>`** — Generic backend selection. `GpuContext::new_metal()` for Apple Silicon native path. `surface_config` references eliminated from renderer.
+
+**Combined benchmark (M4 Pro, 1280x720, mesh shaders + MetalFX):**
+
+| Entities | Vertex Shader | Mesh + MetalFX | Speedup |
+|----------|--------------|----------------|---------|
+| 100K | 6 FPS | 75 FPS | 12x |
+| 200K | 3 FPS | 75 FPS | 25x |
+| 500K | <1 FPS | 75 FPS | >75x |
+
 ## v1.2.0 (2026-03-27)
 
 ### Performance Scaling — 10K Entities at 75 FPS

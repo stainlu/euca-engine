@@ -48,7 +48,8 @@ External AI Agents (Claude Code, OpenClaw, etc.)
 | `euca-reflect` | Runtime reflection: field access, TypeRegistry, JSON serialization, `#[derive(Reflect)]` | 6 |
 | `euca-scene` | Transform hierarchy, prefabs, spatial index, world streaming, level file format | 28 |
 | `euca-core` | App lifecycle, Plugin trait, Time resource, frame Profiler | 9 |
-| `euca-render` | Forward+ PBR, cascaded shadows, FXAA, SSAO, SSR, volumetric fog, LOD, HLOD, HZB occlusion, GPU-driven, clustered lights (256+), foliage, decals, compute, Metal hints, SmartBuffer | 171 |
+| `euca-rhi` | Render Hardware Interface: `RenderDevice` trait, `WgpuDevice` + `MetalDevice` backends, compile-time dispatch, mesh shaders, ICBs, tile shading, MetalFX, WGSL→MSL transpilation | 9 |
+| `euca-render` | Forward+ PBR, cascaded shadows, FXAA, SSAO, SSR, volumetric fog, LOD, HLOD, HZB occlusion, GPU-driven, clustered lights (256+), foliage, decals, compute, generic over `RenderDevice` | 171 |
 | `euca-physics` | Collision layers/masks, mass, character controller, vehicle physics, CCD, spatial hash, scene queries, joints | 53 |
 | `euca-asset` | glTF loading, skeletal animation, async AssetStore, hot-reload | 11 |
 | `euca-agent` | HTTP API (axum), 75+ endpoints, nit auth, HUD canvas, level loading | — |
@@ -80,8 +81,9 @@ euca-ecs (euca-reflect, euca-math, serde)
        │
        ├── euca-scene (euca-ecs, euca-math)
        ├── euca-core (euca-ecs, euca-math, winit)
-       ├── euca-render (euca-ecs, euca-math, euca-scene, wgpu — SSAO, LOD, compute, materials)
-       ├── euca-physics (euca-ecs, euca-math — collision layers, mass, scene queries)
+       ├── euca-rhi (wgpu, objc2-metal, naga — backend-agnostic GPU trait)
+       ├── euca-render (euca-ecs, euca-math, euca-scene, euca-rhi — generic over RenderDevice)
+       ├── euca-physics (euca-ecs, euca-math, euca-rhi? — collision layers, mass, GPU broadphase)
        ├── euca-animation (euca-ecs, euca-math, euca-scene — blending, state machines)
        ├── euca-ai (euca-ecs, euca-math — behavior trees, blackboard)
        ├── euca-terrain (euca-ecs, euca-math, euca-physics — heightmap, LOD, splatting)
@@ -113,10 +115,10 @@ euca-ecs (euca-reflect, euca-math, serde)
 **Why**: Apple Silicon TBDR does deferred in hardware — our own G-buffer adds overhead. Forward handles transparency and MSAA natively. Clustered culling makes forward competitive with deferred for light count.
 **Trade-off**: Visibility buffer (Nanite-style) is the future but requires mesh shaders wgpu doesn't support yet.
 
-### 5. wgpu over raw Vulkan/Metal
-**Decision**: Use wgpu for GPU abstraction.
-**Why**: Cross-platform (Vulkan, Metal, D3D12, WebGPU), safe Rust API, well-maintained. Avoids writing platform-specific GPU code.
-**Trade-off**: Can't access bleeding-edge GPU features (mesh shaders, work graphs) until wgpu adds them.
+### 5. RHI with wgpu default + native Metal opt-in
+**Decision**: `RenderDevice` trait with `WgpuDevice` (cross-platform) and `MetalDevice` (Apple Silicon native).
+**Why**: wgpu provides safe cross-platform baseline. Native Metal via `objc2-metal` unlocks mesh shaders, tile shading, ICBs, MetalFX — features wgpu cannot access. Compile-time dispatch, zero dynamic overhead.
+**Trade-off**: Two backend paths to maintain. WGSL→MSL transpilation via naga keeps shader count manageable (28 WGSL shaders auto-convert).
 
 ### 6. egui for Editor UI
 **Decision**: egui (immediate-mode) rather than a retained-mode UI toolkit.
