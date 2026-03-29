@@ -24,6 +24,8 @@ pub mod cleanup;
 pub mod combat;
 /// Dota 2-accurate combat math formulas (armor, magic resistance, crits, evasion, etc.).
 pub mod combat_math;
+/// Dota 2 crowd control — stun, silence, root, hex, disarm, break, mute, dispel, spell immunity.
+pub mod crowd_control;
 /// Tabular game data loaded from config files.
 pub mod data_table;
 /// Gold currency, bounties, and kill rewards.
@@ -102,6 +104,9 @@ pub use abilities::{
     UseAbilityEvent, ability_tick_system, use_ability_system,
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
+pub use crowd_control::{
+    CcState, CcType, CrowdControl, DisableFlags, DispelType, SpellImmunity, StatusResistance,
+};
 pub use economy::{Gold, GoldBounty, gold_on_kill_system};
 pub use hero::{AbilityDef, HeroDef, HeroName, HeroRegistry, StatGrowth, spawn_hero};
 pub use inventory::{
