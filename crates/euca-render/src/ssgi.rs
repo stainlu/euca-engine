@@ -20,14 +20,16 @@
 //! 1. Store [`SsgiSettings`] in your post-process settings.
 //! 2. Create a [`SsgiPass`] once during renderer initialization.
 //! 3. Each frame, call [`SsgiPass::execute`] with the required inputs.
-//!    It returns a `&wgpu::TextureView` of the half-res GI result.
+//!    It returns a `&D::TextureView` of the half-res GI result.
 
 use euca_math::Mat4;
+use euca_rhi::pass::ComputePassOps;
 use euca_rhi::{
     BindGroupLayoutDesc, BindGroupLayoutEntry, BindingType, BufferBindingType, BufferDesc,
-    BufferUsages, ComputePipelineDesc, Extent3d, FilterMode, SamplerBindingType, SamplerDesc,
-    ShaderDesc, ShaderSource, ShaderStages, StorageTextureAccess, TextureDesc, TextureDimension,
-    TextureFormat, TextureSampleType, TextureUsages, TextureViewDesc, TextureViewDimension,
+    BufferUsages, ComputePipelineDesc, Extent3d, FilterMode, RenderDevice, SamplerBindingType,
+    SamplerDesc, ShaderDesc, ShaderSource, ShaderStages, StorageTextureAccess, TextureDesc,
+    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDesc,
+    TextureViewDimension,
 };
 
 const SSGI_SHADER: &str = include_str!("../shaders/ssgi.wgsl");
@@ -114,18 +116,17 @@ pub struct SsgiPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
 ///
 /// Bundles the per-frame GPU resources and matrices so
 /// [`SsgiPass::execute`] has a clean signature.
-pub struct SsgiExecuteParams<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub encoder: &'a mut wgpu::CommandEncoder,
+pub struct SsgiExecuteParams<'a, D: RenderDevice> {
+    pub device: &'a D,
+    pub encoder: &'a mut D::CommandEncoder,
     /// Full-resolution depth buffer from the current frame.
-    pub depth_view: &'a wgpu::TextureView,
+    pub depth_view: &'a D::TextureView,
     /// Full-resolution normal buffer from the prepass (encoded N*0.5+0.5).
-    pub normal_view: &'a wgpu::TextureView,
+    pub normal_view: &'a D::TextureView,
     /// Previous frame HDR color (full resolution).
-    pub prev_color_view: &'a wgpu::TextureView,
+    pub prev_color_view: &'a D::TextureView,
     /// Previous frame depth buffer (full resolution).
-    pub prev_depth_view: &'a wgpu::TextureView,
+    pub prev_depth_view: &'a D::TextureView,
     /// Current frame inverse view-projection matrix.
     pub inv_view_proj: &'a Mat4,
     /// Previous frame view-projection matrix.
@@ -321,11 +322,7 @@ impl<D: euca_rhi::RenderDevice> SsgiPass<D> {
         let view = device.create_texture_view(&tex, &TextureViewDesc::default());
         (tex, view)
     }
-}
 
-// Keep the wgpu-specific execute method in a separate impl block since the
-// execute params and command encoding are not yet abstracted through RHI.
-impl SsgiPass {
     /// Execute the SSGI compute pass.
     ///
     /// Ray-marches the depth buffer, samples indirect color from the previous
@@ -333,7 +330,7 @@ impl SsgiPass {
     /// texture.
     ///
     /// Returns the half-resolution GI texture view for compositing.
-    pub fn execute(&mut self, params: SsgiExecuteParams<'_>) -> &wgpu::TextureView {
+    pub fn execute(&mut self, params: SsgiExecuteParams<'_, D>) -> &D::TextureView {
         // Upload uniforms.
         let uniforms = SsgiUniforms {
             inv_view_proj: params.inv_view_proj.to_cols_array_2d(),
@@ -347,78 +344,80 @@ impl SsgiPass {
             frame_index: self.frame_index,
         };
         params
-            .queue
+            .device
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let read_idx = self.current_read;
         let write_idx = 1 - self.current_read;
 
-        let bind_group = params.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = params.device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("ssgi_bind_group"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(params.depth_view),
+                    resource: euca_rhi::BindingResource::TextureView(params.depth_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(params.normal_view),
+                    resource: euca_rhi::BindingResource::TextureView(params.normal_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(params.prev_color_view),
+                    resource: euca_rhi::BindingResource::TextureView(params.prev_color_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(params.prev_depth_view),
+                    resource: euca_rhi::BindingResource::TextureView(params.prev_depth_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.history_views[read_idx]),
+                    resource: euca_rhi::BindingResource::TextureView(&self.history_views[read_idx]),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 5,
-                    resource: self.uniform_buffer.as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &self.uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&self.output_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.output_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&self.sampler),
                 },
             ],
         });
 
         {
             let mut pass = params
-                .encoder
-                .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("ssgi_compute"),
-                    timestamp_writes: None,
-                });
+                .device
+                .begin_compute_pass(params.encoder, Some("ssgi_compute"));
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);
         }
 
         // Copy output to history[write_idx] for next frame's temporal blend.
-        params.encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
+        params.device.copy_texture_to_texture(
+            params.encoder,
+            &euca_rhi::TexelCopyTextureInfo {
                 texture: &self.output_texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: euca_rhi::Origin3d::default(),
+                aspect: euca_rhi::TextureAspect::All,
             },
-            wgpu::TexelCopyTextureInfo {
+            &euca_rhi::TexelCopyTextureInfo {
                 texture: &self.history[write_idx],
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: euca_rhi::Origin3d::default(),
+                aspect: euca_rhi::TextureAspect::All,
             },
-            wgpu::Extent3d {
+            Extent3d {
                 width: self.width,
                 height: self.height,
                 depth_or_array_layers: 1,
@@ -433,7 +432,7 @@ impl SsgiPass {
     }
 
     /// Returns the output texture view (half-res GI result).
-    pub fn output_view(&self) -> &wgpu::TextureView {
+    pub fn output_view(&self) -> &D::TextureView {
         &self.output_view
     }
 }
