@@ -13,6 +13,8 @@ use crate::vertex::Vertex;
 use crate::volumetric::{FrameParams, VolumetricFogPass, VolumetricFogSettings};
 use euca_math::Mat4;
 use euca_rhi::RenderDevice;
+#[allow(unused_imports)] // Used when impl Renderer becomes generic over D
+use euca_rhi::pass::RenderPassOps;
 
 /// Preset quality tiers that map to sensible [`PostProcessSettings`] defaults.
 ///
@@ -411,11 +413,10 @@ impl Renderer {
     /// The renderer is bound to the surface format and initial size reported
     /// by `gpu`. Call [`resize`](Self::resize) when the window size changes.
     pub fn new(gpu: &GpuContext) -> Self {
-        use euca_rhi::wgpu_backend::WgpuDevice;
         let instance_buf_size =
             (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64;
         let unified = gpu.unified_memory();
-        let rhi: &WgpuDevice = gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let (surface_w, surface_h) = rhi.surface_size();
         let surface_fmt = rhi.surface_format();
         let instance_buffer = SmartBuffer::new(
@@ -2154,20 +2155,21 @@ impl Renderer {
             // temporally resolved image.
             {
                 let (copy_w, copy_h) = rhi.surface_size();
-                encoder.copy_texture_to_texture(
-                    wgpu::TexelCopyTextureInfo {
+                rhi.copy_texture_to_texture(
+                    encoder,
+                    &euca_rhi::TexelCopyTextureInfo {
                         texture: self.taa_pass.output_texture(),
                         mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
+                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                        aspect: euca_rhi::TextureAspect::All,
                     },
-                    wgpu::TexelCopyTextureInfo {
+                    &euca_rhi::TexelCopyTextureInfo {
                         texture: self.post_process_stack.ping_texture(),
                         mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
+                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                        aspect: euca_rhi::TextureAspect::All,
                     },
-                    wgpu::Extent3d {
+                    euca_rhi::Extent3d {
                         width: copy_w,
                         height: copy_h,
                         depth_or_array_layers: 1,
