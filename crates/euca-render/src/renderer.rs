@@ -946,8 +946,12 @@ impl Renderer {
 
         let (msaa_hdr_texture, msaa_hdr_view) =
             Self::create_msaa_hdr_texture(rhi, gpu.surface_config.width, gpu.surface_config.height);
-        let post_process_stack =
-            PostProcessStack::new(gpu, &gpu.device, &gpu.queue, &gpu.surface_config);
+        let post_process_stack = PostProcessStack::new(
+            rhi,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
+            gpu.surface_config.format.into(),
+        );
 
         let decal_renderer = DecalRenderer::new(rhi);
         decal_renderer.upload(rhi);
@@ -1055,20 +1059,27 @@ impl Renderer {
 
     /// Grow the main instance buffer and rebuild its bind group if `count`
     /// exceeds the current capacity. Returns `true` if the buffer was grown.
-    fn ensure_instance_capacity(&mut self, device: &wgpu::Device, count: usize) -> bool {
+    fn ensure_instance_capacity(
+        &mut self,
+        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
+        count: usize,
+    ) -> bool {
         if count <= self.instance_capacity {
             return false;
         }
         self.instance_capacity = count.next_power_of_two();
         let size = (self.instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
-        self.instance_buffer = SmartBuffer::from_wgpu(
-            device,
+        self.instance_buffer = SmartBuffer::new(
+            rhi,
             size,
             BufferKind::Storage,
             self.unified_memory,
             "Instance SSBO",
         );
-        self.instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        // Bind group creation still uses raw wgpu — `as_entire_binding()` is
+        // wgpu-specific. This will be generified once the RHI exposes a
+        // backend-agnostic buffer-binding helper.
+        self.instance_bind_group = rhi.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Instance BG"),
             layout: &self.instance_bgl,
             entries: &[wgpu::BindGroupEntry {
@@ -1081,27 +1092,33 @@ impl Renderer {
 
     /// Grow the shadow instance buffer and rebuild its bind group if `count`
     /// exceeds the current capacity.
-    fn ensure_shadow_instance_capacity(&mut self, device: &wgpu::Device, count: usize) -> bool {
+    fn ensure_shadow_instance_capacity(
+        &mut self,
+        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
+        count: usize,
+    ) -> bool {
         if count <= self.shadow_instance_capacity {
             return false;
         }
         self.shadow_instance_capacity = count.next_power_of_two();
         let size = (self.shadow_instance_capacity * std::mem::size_of::<InstanceData>()) as u64;
-        self.shadow_instance_buffer = SmartBuffer::from_wgpu(
-            device,
+        self.shadow_instance_buffer = SmartBuffer::new(
+            rhi,
             size,
             BufferKind::Storage,
             self.unified_memory,
             "Shadow Instance SSBO",
         );
-        self.shadow_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Shadow Instance BG"),
-            layout: &self.instance_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.shadow_instance_buffer.raw().as_entire_binding(),
-            }],
-        });
+        // Bind group creation still uses raw wgpu — see ensure_instance_capacity.
+        self.shadow_instance_bind_group =
+            rhi.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Shadow Instance BG"),
+                layout: &self.instance_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.shadow_instance_buffer.raw().as_entire_binding(),
+                }],
+            });
         true
     }
 
@@ -1353,12 +1370,7 @@ impl Renderer {
         let (msaa_hdr_texture, msaa_hdr_view) = Self::create_msaa_hdr_texture(rhi, w, h);
         self.msaa_hdr_texture = msaa_hdr_texture;
         self.msaa_hdr_view = msaa_hdr_view;
-        self.post_process_stack.resize(
-            gpu,
-            &gpu.device,
-            gpu.surface_config.width,
-            gpu.surface_config.height,
-        );
+        self.post_process_stack.resize(rhi, w, h);
         if let Some(ref mut fog_pass) = self.volumetric_fog_pass {
             fog_pass.resize(&**gpu, gpu.surface_config.width, gpu.surface_config.height);
         }
@@ -1802,6 +1814,7 @@ impl Renderer {
         color_view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) {
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
@@ -1817,7 +1830,7 @@ impl Renderer {
         // Ensure capacity for the larger of opaque/transparent sets.
         let max_needed = opaque_instances.len().max(trans_instances.len());
         if max_needed > 0 {
-            self.ensure_instance_capacity(&gpu.device, max_needed);
+            self.ensure_instance_capacity(rhi, max_needed);
         }
         if !opaque_instances.is_empty() {
             self.instance_buffer.write(&**gpu, &opaque_instances);
@@ -1838,22 +1851,24 @@ impl Renderer {
                 })
                 .collect();
             if !shadow_instances.is_empty() {
-                self.ensure_shadow_instance_capacity(&gpu.device, shadow_instances.len());
+                self.ensure_shadow_instance_capacity(rhi, shadow_instances.len());
                 self.shadow_instance_buffer.write(&**gpu, &shadow_instances);
             }
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Shadow Pass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_cascade_views[cascade_idx],
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+            let mut pass = rhi.begin_render_pass(
+                encoder,
+                &euca_rhi::RenderPassDesc {
+                    label: Some("Shadow Pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(euca_rhi::RenderPassDepthStencilAttachment {
+                        view: &self.shadow_cascade_views[cascade_idx],
+                        depth_ops: Some(euca_rhi::Operations {
+                            load: euca_rhi::LoadOp::Clear(1.0),
+                            store: euca_rhi::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
+                },
+            );
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.shadow_instance_bind_group, &[]);
             for batch in &opaque_batches {
@@ -1955,32 +1970,33 @@ impl Renderer {
         let resolve_target = self.post_process_stack.ping_view();
 
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("PBR Pass (MSAA)"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.msaa_hdr_view,
-                    resolve_target: Some(resolve_target),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.05,
-                            b: 0.08,
-                            a: 1.0,
+            let mut pass = rhi.begin_render_pass(
+                encoder,
+                &euca_rhi::RenderPassDesc {
+                    label: Some("PBR Pass (MSAA)"),
+                    color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
+                        view: &self.msaa_hdr_view,
+                        resolve_target: Some(resolve_target),
+                        ops: euca_rhi::Operations {
+                            load: euca_rhi::LoadOp::Clear(euca_rhi::Color {
+                                r: 0.05,
+                                g: 0.05,
+                                b: 0.08,
+                                a: 1.0,
+                            }),
+                            store: euca_rhi::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(euca_rhi::RenderPassDepthStencilAttachment {
+                        view: &self.depth_texture,
+                        depth_ops: Some(euca_rhi::Operations {
+                            load: euca_rhi::LoadOp::Clear(1.0),
+                            store: euca_rhi::StoreOp::Store,
                         }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
+                },
+            );
             pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &self.scene_bind_group, &[]);
             pass.draw(0..3, 0..1);
@@ -2075,27 +2091,30 @@ impl Renderer {
 
             // Draw particles in a separate render pass (after opaque, blended on top)
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("gpu_particles"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: color_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_texture,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    ..Default::default()
-                });
+                let mut pass = rhi.begin_render_pass(
+                    encoder,
+                    &euca_rhi::RenderPassDesc {
+                        label: Some("gpu_particles"),
+                        color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
+                            view: color_view,
+                            resolve_target: None,
+                            ops: euca_rhi::Operations {
+                                load: euca_rhi::LoadOp::Load,
+                                store: euca_rhi::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(
+                            euca_rhi::RenderPassDepthStencilAttachment {
+                                view: &self.depth_texture,
+                                depth_ops: Some(euca_rhi::Operations {
+                                    load: euca_rhi::LoadOp::Load,
+                                    store: euca_rhi::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            },
+                        ),
+                    },
+                );
                 for system in &self.gpu_particle_systems {
                     system.draw(&mut pass);
                 }
@@ -2124,7 +2143,6 @@ impl Renderer {
         if self.post_process_settings.taa_enabled {
             let inv_vp = vp.inverse();
             let prev_vp = camera.prev_view_proj.unwrap_or(vp);
-            let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
             self.taa_pass.execute(
                 rhi,
                 encoder,
@@ -2166,8 +2184,8 @@ impl Renderer {
             let inv_projection = proj.inverse().to_cols_array_2d();
             let projection = proj.to_cols_array_2d();
             self.post_process_stack.execute(
-                &gpu.device,
-                &gpu.queue,
+                &rhi.device,
+                &rhi.queue,
                 encoder,
                 color_view,
                 &self.post_process_settings,

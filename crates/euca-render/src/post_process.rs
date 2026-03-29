@@ -235,30 +235,29 @@ pub struct PostProcessStack<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::
     width: u32,
     height: u32,
     #[allow(dead_code)]
-    surface_format: wgpu::TextureFormat,
+    surface_format: euca_rhi::TextureFormat,
 }
 
-impl PostProcessStack {
+impl<D: euca_rhi::RenderDevice> PostProcessStack<D> {
     pub fn new(
-        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        config: &wgpu::SurfaceConfiguration,
+        device: &D,
+        width: u32,
+        height: u32,
+        surface_format: euca_rhi::TextureFormat,
     ) -> Self {
-        let width = config.width.max(1);
-        let height = config.height.max(1);
-        let surface_format = config.format;
+        let width = width.max(1);
+        let height = height.max(1);
 
-        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let linear_sampler = device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("PostProcess Linear Sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
             ..Default::default()
         });
-        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let nearest_sampler = device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("PostProcess Nearest Sampler"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: euca_rhi::FilterMode::Nearest,
+            min_filter: euca_rhi::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -272,65 +271,64 @@ impl PostProcessStack {
         let (ssao_texture, ssao_view) = create_r8_target(device, half_w, half_h, "SSAO Raw");
         let (ssao_blur_texture, ssao_blur_view) =
             create_r8_target(device, half_w, half_h, "SSAO Blurred");
-        let (ssao_noise_texture, ssao_noise_view) = create_ssao_noise_texture(device, queue);
+        let (ssao_noise_texture, ssao_noise_view) = create_ssao_noise_texture(device);
 
-        let ssao_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let ssao_uniform_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("SSAO Uniforms"),
             size: std::mem::size_of::<SsaoUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("PostProcess Uniforms"),
             size: std::mem::size_of::<PostProcessUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         // ── Bind group layouts ──
-        let ssao_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let ssao_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("SSAO BGL"),
             entries: &[
                 // Depth resolve texture is R32Float — NOT filterable on most GPUs
-                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
-                bgl_texture_entry(1, wgpu::TextureSampleType::Float { filterable: false }),
+                bgl_texture_entry(0, euca_rhi::TextureSampleType::Float { filterable: false }),
+                bgl_texture_entry(1, euca_rhi::TextureSampleType::Float { filterable: false }),
                 // NonFiltering sampler — required when any texture is non-filterable
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::NonFiltering),
                     count: None,
                 },
                 bgl_uniform_entry(3, std::mem::size_of::<SsaoUniforms>() as u64),
             ],
         });
 
-        let ssao_blur_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let ssao_blur_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("SSAO Blur BGL"),
             entries: &[
-                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
+                bgl_texture_entry(0, euca_rhi::TextureSampleType::Float { filterable: true }),
                 bgl_sampler_entry(1),
             ],
         });
 
-        let ssao_composite_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("SSAO Composite BGL"),
-                entries: &[
-                    bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
-                    bgl_texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }),
-                    bgl_sampler_entry(2),
-                    bgl_uniform_entry(3, std::mem::size_of::<PostProcessUniforms>() as u64),
-                ],
-            });
+        let ssao_composite_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("SSAO Composite BGL"),
+            entries: &[
+                bgl_texture_entry(0, euca_rhi::TextureSampleType::Float { filterable: true }),
+                bgl_texture_entry(1, euca_rhi::TextureSampleType::Float { filterable: true }),
+                bgl_sampler_entry(2),
+                bgl_uniform_entry(3, std::mem::size_of::<PostProcessUniforms>() as u64),
+            ],
+        });
 
         // Main + FXAA share the same layout: texture + sampler + uniforms
         let tex_sampler_uniform_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
                 label: Some("PP Tex+Sampler+Uniform BGL"),
                 entries: &[
-                    bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
+                    bgl_texture_entry(0, euca_rhi::TextureSampleType::Float { filterable: true }),
                     bgl_sampler_entry(1),
                     bgl_uniform_entry(2, std::mem::size_of::<PostProcessUniforms>() as u64),
                 ],
@@ -424,24 +422,24 @@ impl PostProcessStack {
 
         let main_bgl = tex_sampler_uniform_bgl;
 
-        let ssr_pass = crate::ssr::SsrPass::new(rhi, width, height);
+        let ssr_pass = crate::ssr::SsrPass::new(device, width, height);
         let (ssr_normals_texture, ssr_normals_view) =
             create_texture_target(device, width, height, "SSR Normals", HDR_FORMAT);
-        let ssr_normals_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let ssr_normals_uniform_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("SSR Normals Uniforms"),
             size: std::mem::size_of::<SsrNormalsUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let ssr_normals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let ssr_normals_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("SSR Normals BGL"),
             entries: &[
                 // Depth resolve is R32Float — not filterable
-                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
-                wgpu::BindGroupLayoutEntry {
+                bgl_texture_entry(0, euca_rhi::TextureSampleType::Float { filterable: false }),
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::NonFiltering),
                     count: None,
                 },
                 bgl_uniform_entry(2, std::mem::size_of::<SsrNormalsUniforms>() as u64),
@@ -462,11 +460,11 @@ impl PostProcessStack {
             &ssr_normals_uniform_buffer,
             "SSR Normals BG",
         );
-        let ssr_composite_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let ssr_composite_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("SSR Composite BGL"),
             entries: &[
-                bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
-                bgl_texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }),
+                bgl_texture_entry(0, euca_rhi::TextureSampleType::Float { filterable: true }),
+                bgl_texture_entry(1, euca_rhi::TextureSampleType::Float { filterable: true }),
                 bgl_sampler_entry(2),
             ],
         });
@@ -520,10 +518,10 @@ impl PostProcessStack {
             // in Rust. We need to recreate the layout or accept the duplication.
             // Since BGL is cheap and the layout is identical, just reuse main_bgl
             // in execute() when creating dynamic bind groups.
-            fxaa_bgl: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            fxaa_bgl: device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
                 label: Some("FXAA BGL"),
                 entries: &[
-                    bgl_texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
+                    bgl_texture_entry(0, euca_rhi::TextureSampleType::Float { filterable: true }),
                     bgl_sampler_entry(1),
                     bgl_uniform_entry(2, std::mem::size_of::<PostProcessUniforms>() as u64),
                 ],
@@ -538,13 +536,7 @@ impl PostProcessStack {
     }
 
     /// Recreate all resolution-dependent textures and bind groups.
-    pub fn resize(
-        &mut self,
-        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         let width = width.max(1);
         let height = height.max(1);
         self.width = width;
@@ -602,7 +594,7 @@ impl PostProcessStack {
             "FXAA BG",
         );
 
-        self.ssr_pass.resize(rhi, width, height);
+        self.ssr_pass.resize(device, width, height);
         let (ssr_normals_texture, ssr_normals_view) =
             create_texture_target(device, width, height, "SSR Normals", HDR_FORMAT);
         self.ssr_normals_bind_group = create_tex_sampler_uniform_bind_group(
@@ -627,7 +619,11 @@ impl PostProcessStack {
         self.ssao_blur_texture = ssao_blur_texture;
         self.ssao_blur_view = ssao_blur_view;
     }
+}
 
+// Keep the wgpu-specific execute method in a separate impl block since the
+// SSR pass execute and command encoding are not yet fully abstracted through RHI.
+impl PostProcessStack {
     /// Execute the full post-processing chain.
     ///
     /// Assumes the scene has been rendered with MSAA resolved into `self.ping_view()`,
@@ -727,7 +723,7 @@ impl PostProcessStack {
             } else {
                 &self.pong_view
             };
-            let ssr_composite_bg = create_two_tex_sampler_bind_group(
+            let ssr_composite_bg = create_two_tex_sampler_bind_group_wgpu(
                 device,
                 &self.ssr_composite_bgl,
                 hdr_after_ssao,
@@ -746,7 +742,7 @@ impl PostProcessStack {
         } else {
             hdr_after_ssao
         };
-        let main_bg = create_tex_sampler_uniform_bind_group(
+        let main_bg = create_tex_sampler_uniform_bind_group_wgpu(
             device,
             &self.main_bgl,
             hdr_after_ssr,
@@ -767,7 +763,7 @@ impl PostProcessStack {
                 ldr_intermediate,
                 "PP Main (+FXAA)",
             );
-            let fxaa_bg = create_tex_sampler_uniform_bind_group(
+            let fxaa_bg = create_tex_sampler_uniform_bind_group_wgpu(
                 device,
                 &self.fxaa_bgl,
                 ldr_intermediate,
@@ -808,94 +804,166 @@ impl PostProcessStack {
 // Bind group creation helpers (shared between new() and resize())
 // ────────────────────────────────────────────────────────────────────────
 
-fn create_ssao_bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    depth_view: &wgpu::TextureView,
-    noise_view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
-    uniform_buffer: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+fn create_ssao_bind_group<D: euca_rhi::RenderDevice>(
+    device: &D,
+    layout: &D::BindGroupLayout,
+    depth_view: &D::TextureView,
+    noise_view: &D::TextureView,
+    sampler: &D::Sampler,
+    uniform_buffer: &D::Buffer,
+) -> D::BindGroup {
+    device.create_bind_group(&euca_rhi::BindGroupDesc {
         label: Some("SSAO BG"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(depth_view),
+                resource: euca_rhi::BindingResource::TextureView(depth_view),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(noise_view),
+                resource: euca_rhi::BindingResource::TextureView(noise_view),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                resource: euca_rhi::BindingResource::Sampler(sampler),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 3,
-                resource: uniform_buffer.as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: uniform_buffer,
+                    offset: 0,
+                    size: None,
+                }),
             },
         ],
     })
 }
 
-fn create_ssao_composite_bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    hdr_view: &wgpu::TextureView,
-    ao_view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
-    uniform_buffer: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+fn create_ssao_composite_bind_group<D: euca_rhi::RenderDevice>(
+    device: &D,
+    layout: &D::BindGroupLayout,
+    hdr_view: &D::TextureView,
+    ao_view: &D::TextureView,
+    sampler: &D::Sampler,
+    uniform_buffer: &D::Buffer,
+) -> D::BindGroup {
+    device.create_bind_group(&euca_rhi::BindGroupDesc {
         label: Some("SSAO Composite BG"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(hdr_view),
+                resource: euca_rhi::BindingResource::TextureView(hdr_view),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(ao_view),
+                resource: euca_rhi::BindingResource::TextureView(ao_view),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                resource: euca_rhi::BindingResource::Sampler(sampler),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 3,
-                resource: uniform_buffer.as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: uniform_buffer,
+                    offset: 0,
+                    size: None,
+                }),
             },
         ],
     })
 }
 
-fn create_tex_sampler_bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    texture_view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
+fn create_tex_sampler_bind_group<D: euca_rhi::RenderDevice>(
+    device: &D,
+    layout: &D::BindGroupLayout,
+    texture_view: &D::TextureView,
+    sampler: &D::Sampler,
     label: &str,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+) -> D::BindGroup {
+    device.create_bind_group(&euca_rhi::BindGroupDesc {
         label: Some(label),
         layout,
         entries: &[
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(texture_view),
+                resource: euca_rhi::BindingResource::TextureView(texture_view),
             },
-            wgpu::BindGroupEntry {
+            euca_rhi::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                resource: euca_rhi::BindingResource::Sampler(sampler),
             },
         ],
     })
 }
 
-fn create_tex_sampler_uniform_bind_group(
+fn create_tex_sampler_uniform_bind_group<D: euca_rhi::RenderDevice>(
+    device: &D,
+    layout: &D::BindGroupLayout,
+    texture_view: &D::TextureView,
+    sampler: &D::Sampler,
+    uniform_buffer: &D::Buffer,
+    label: &str,
+) -> D::BindGroup {
+    device.create_bind_group(&euca_rhi::BindGroupDesc {
+        label: Some(label),
+        layout,
+        entries: &[
+            euca_rhi::BindGroupEntry {
+                binding: 0,
+                resource: euca_rhi::BindingResource::TextureView(texture_view),
+            },
+            euca_rhi::BindGroupEntry {
+                binding: 1,
+                resource: euca_rhi::BindingResource::Sampler(sampler),
+            },
+            euca_rhi::BindGroupEntry {
+                binding: 2,
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: uniform_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+        ],
+    })
+}
+
+#[allow(dead_code)]
+fn create_two_tex_sampler_bind_group<D: euca_rhi::RenderDevice>(
+    device: &D,
+    layout: &D::BindGroupLayout,
+    tex0: &D::TextureView,
+    tex1: &D::TextureView,
+    sampler: &D::Sampler,
+    label: &str,
+) -> D::BindGroup {
+    device.create_bind_group(&euca_rhi::BindGroupDesc {
+        label: Some(label),
+        layout,
+        entries: &[
+            euca_rhi::BindGroupEntry {
+                binding: 0,
+                resource: euca_rhi::BindingResource::TextureView(tex0),
+            },
+            euca_rhi::BindGroupEntry {
+                binding: 1,
+                resource: euca_rhi::BindingResource::TextureView(tex1),
+            },
+            euca_rhi::BindGroupEntry {
+                binding: 2,
+                resource: euca_rhi::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+// ────────────────────────────────────────────────────────────────────────
+
+// wgpu-specific bind group helpers for the `execute` method.
+fn create_tex_sampler_uniform_bind_group_wgpu(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     texture_view: &wgpu::TextureView,
@@ -923,7 +991,7 @@ fn create_tex_sampler_uniform_bind_group(
     })
 }
 
-fn create_two_tex_sampler_bind_group(
+fn create_two_tex_sampler_bind_group_wgpu(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     tex0: &wgpu::TextureView,
@@ -951,7 +1019,6 @@ fn create_two_tex_sampler_bind_group(
     })
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Texture and pipeline creation helpers
 // ────────────────────────────────────────────────────────────────────────
 
@@ -981,72 +1048,71 @@ fn run_fullscreen_pass(
     pass.draw(0..3, 0..1);
 }
 
-const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const R8_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+const HDR_FORMAT: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Rgba16Float;
+const R8_FORMAT: euca_rhi::TextureFormat = euca_rhi::TextureFormat::R8Unorm;
 
-fn create_hdr_target(
-    device: &wgpu::Device,
+fn create_hdr_target<D: euca_rhi::RenderDevice>(
+    device: &D,
     width: u32,
     height: u32,
     label: &str,
-) -> (wgpu::Texture, wgpu::TextureView) {
+) -> (D::Texture, D::TextureView) {
     create_texture_target(device, width, height, label, HDR_FORMAT)
 }
 
-fn create_r8_target(
-    device: &wgpu::Device,
+fn create_r8_target<D: euca_rhi::RenderDevice>(
+    device: &D,
     width: u32,
     height: u32,
     label: &str,
-) -> (wgpu::Texture, wgpu::TextureView) {
+) -> (D::Texture, D::TextureView) {
     create_texture_target(device, width, height, label, R8_FORMAT)
 }
 
-fn create_texture_target(
-    device: &wgpu::Device,
+fn create_texture_target<D: euca_rhi::RenderDevice>(
+    device: &D,
     width: u32,
     height: u32,
     label: &str,
-    format: wgpu::TextureFormat,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    format: euca_rhi::TextureFormat,
+) -> (D::Texture, D::TextureView) {
+    let texture = device.create_texture(&euca_rhi::TextureDesc {
         label: Some(label),
-        size: wgpu::Extent3d {
+        size: euca_rhi::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
+        dimension: euca_rhi::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_DST,
+        usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+            | euca_rhi::TextureUsages::TEXTURE_BINDING
+            | euca_rhi::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = device.create_texture_view(&texture, &euca_rhi::TextureViewDesc::default());
     (texture, view)
 }
 
-fn create_depth_resolve_target(
-    device: &wgpu::Device,
+fn create_depth_resolve_target<D: euca_rhi::RenderDevice>(
+    device: &D,
     width: u32,
     height: u32,
-) -> (wgpu::Texture, wgpu::TextureView) {
+) -> (D::Texture, D::TextureView) {
     create_texture_target(
         device,
         width,
         height,
         "Depth Resolve",
-        wgpu::TextureFormat::R32Float,
+        euca_rhi::TextureFormat::R32Float,
     )
 }
 
-fn create_ssao_noise_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_ssao_noise_texture<D: euca_rhi::RenderDevice>(
+    device: &D,
+) -> (D::Texture, D::TextureView) {
     // 4x4 tile of random unit vectors for per-pixel rotation in SSAO kernel.
     let noise_data: [[f32; 2]; 16] = [
         [0.536, 0.844],
@@ -1075,126 +1141,114 @@ fn create_ssao_noise_texture(
         rgba[i * 4 + 3] = 255;
     }
 
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = device.create_texture(&euca_rhi::TextureDesc {
         label: Some("SSAO Noise 4x4"),
-        size: wgpu::Extent3d {
+        size: euca_rhi::Extent3d {
             width: 4,
             height: 4,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        dimension: euca_rhi::TextureDimension::D2,
+        format: euca_rhi::TextureFormat::Rgba8Unorm,
+        usage: euca_rhi::TextureUsages::TEXTURE_BINDING | euca_rhi::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
+    device.write_texture(
+        &euca_rhi::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
+            origin: euca_rhi::Origin3d::default(),
+            aspect: euca_rhi::TextureAspect::All,
         },
         &rgba,
-        wgpu::TexelCopyBufferLayout {
+        &euca_rhi::TextureDataLayout {
             offset: 0,
             bytes_per_row: Some(4 * 4),
             rows_per_image: Some(4),
         },
-        wgpu::Extent3d {
+        euca_rhi::Extent3d {
             width: 4,
             height: 4,
             depth_or_array_layers: 1,
         },
     );
 
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = device.create_texture_view(&texture, &euca_rhi::TextureViewDesc::default());
     (texture, view)
 }
 
 fn bgl_texture_entry(
     binding: u32,
-    sample_type: wgpu::TextureSampleType,
-) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+    sample_type: euca_rhi::TextureSampleType,
+) -> euca_rhi::BindGroupLayoutEntry {
+    euca_rhi::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
+        visibility: euca_rhi::ShaderStages::FRAGMENT,
+        ty: euca_rhi::BindingType::Texture {
             sample_type,
-            view_dimension: wgpu::TextureViewDimension::D2,
+            view_dimension: euca_rhi::TextureViewDimension::D2,
             multisampled: false,
         },
         count: None,
     }
 }
 
-fn bgl_sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_sampler_entry(binding: u32) -> euca_rhi::BindGroupLayoutEntry {
+    euca_rhi::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        visibility: euca_rhi::ShaderStages::FRAGMENT,
+        ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
         count: None,
     }
 }
 
-fn bgl_uniform_entry(binding: u32, min_size: u64) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_uniform_entry(binding: u32, min_size: u64) -> euca_rhi::BindGroupLayoutEntry {
+    euca_rhi::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
+        visibility: euca_rhi::ShaderStages::FRAGMENT,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Uniform,
             has_dynamic_offset: false,
-            min_binding_size: wgpu::BufferSize::new(min_size),
+            min_binding_size: if min_size > 0 { Some(min_size) } else { None },
         },
         count: None,
     }
 }
 
-fn create_fullscreen_pipeline(
-    device: &wgpu::Device,
-    bgl: &wgpu::BindGroupLayout,
+fn create_fullscreen_pipeline<D: euca_rhi::RenderDevice>(
+    device: &D,
+    bgl: &D::BindGroupLayout,
     shader_source: &str,
     label: &str,
-    target_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    target_format: euca_rhi::TextureFormat,
+) -> D::RenderPipeline {
+    let shader = device.create_shader(&euca_rhi::ShaderDesc {
         label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+        source: euca_rhi::ShaderSource::Wgsl(shader_source.into()),
     });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
         label: Some(label),
-        bind_group_layouts: &[bgl],
-        push_constant_ranges: &[],
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
+        layout: &[bgl],
+        vertex: euca_rhi::VertexState {
             module: &shader,
-            entry_point: Some("vs_main"),
+            entry_point: "vs_main",
             buffers: &[],
-            compilation_options: Default::default(),
         },
-        fragment: Some(wgpu::FragmentState {
+        fragment: Some(euca_rhi::FragmentState {
             module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
+            entry_point: "fs_main",
+            targets: &[Some(euca_rhi::ColorTargetState {
                 format: target_format,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
+                blend: Some(euca_rhi::BlendState::REPLACE),
+                write_mask: euca_rhi::ColorWrites::ALL,
             })],
-            compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            ..Default::default()
-        },
+        primitive: euca_rhi::PrimitiveState::default(),
         depth_stencil: None,
         multisample: Default::default(),
-        multiview: None,
-        cache: None,
     })
 }
 
