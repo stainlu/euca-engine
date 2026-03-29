@@ -1,0 +1,35 @@
+[package]
+name = "euca-web"
+version.workspace = true
+edition.workspace = true
+description = "Web/WASM entry point for Euca engine games"
+keywords = ["gamedev", "game-engine", "wasm", "webgpu", "web"]
+categories = ["game-development"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+euca-core = { path = "../euca-core" }
+euca-ecs = { path = "../euca-ecs" }
+euca-render = { path = "../euca-render" }
+euca-input = { path = "../euca-input" }
+euca-math = { path = "../euca-math" }
+wgpu = "27"
+winit = "0.30"
+log = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "console",
+] }
+js-sys = "0.3"
+console_log = "1"
+console_error_panic_hook = "0.1"
+web-time = "1"

@@ -25,7 +25,9 @@ members = [
     "crates/euca-ui",
     "crates/euca-terrain",
     "crates/euca-script",
+    "crates/euca-web",
     "tools/euca-cli",
+    "examples/web_hello",
 ]
 
 [workspace.package]

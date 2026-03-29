@@ -1,0 +1,14 @@
+[package]
+name = "web-hello"
+version = "0.1.0"
+edition.workspace = true
+description = "Minimal web hello-world for the Euca engine"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+euca-web = { path = "../../crates/euca-web" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
