@@ -6,9 +6,12 @@
 //! 2. Dispatches a compute shader (`gpu_cull.wgsl`) that performs frustum
 //!    culling and LOD selection entirely on the GPU.
 //! 3. The compute shader writes `DrawIndexedIndirect` arguments into an
-//!    output storage buffer.
-//! 4. The render pass calls `draw_indexed_indirect` once per entity slot,
-//!    where culled entities have `index_count = 0` (zero-cost no-op).
+//!    output storage buffer and atomically increments a draw count.
+//! 4. **Preferred path:** A single `multi_draw_indexed_indirect_count` call
+//!    renders all visible entities in one GPU submission, using the draw
+//!    count buffer to skip culled entries entirely.
+//! 5. **Fallback:** `draw_indirect()` loops per entity slot calling
+//!    `draw_indexed_indirect`, where culled entities have `index_count = 0`.
 //!
 //! This replaces per-entity CPU frustum culling and draw-call submission
 //! with a single compute dispatch, dramatically reducing CPU overhead for
@@ -74,6 +77,55 @@ pub struct DrawCommandGpu {
     pub lod_vertex_offsets: [i32; 4],
     /// Squared distance thresholds for LOD transitions (ascending order).
     pub lod_distance_sq: [f32; 4],
+}
+
+impl DrawCommandGpu {
+    /// Build a GPU draw command from raw geometry and material components.
+    ///
+    /// `model` is the 4x4 column-major model matrix.
+    /// `vertex_offset`, `first_index`, `index_count` describe the mesh region
+    /// in the global geometry pool.
+    /// `aabb_center` and `aabb_half_extents` are in world space.
+    /// `mesh_id` is the mesh handle index; `material_id` is the bindless
+    /// material index.
+    ///
+    /// A single LOD level is created from the provided geometry. Use the
+    /// struct fields directly to configure multi-LOD entries.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_components(
+        model: &[[f32; 4]; 4],
+        vertex_offset: i32,
+        first_index: u32,
+        index_count: u32,
+        aabb_center: [f32; 3],
+        aabb_half_extents: [f32; 3],
+        mesh_id: u32,
+        material_id: u32,
+    ) -> Self {
+        Self {
+            model_col0: model[0],
+            model_col1: model[1],
+            model_col2: model[2],
+            model_col3: model[3],
+            aabb_center: [aabb_center[0], aabb_center[1], aabb_center[2], 0.0],
+            aabb_half_extents: [
+                aabb_half_extents[0],
+                aabb_half_extents[1],
+                aabb_half_extents[2],
+                0.0,
+            ],
+            mesh_id,
+            material_id,
+            index_count,
+            first_index,
+            vertex_offset,
+            lod_count: 1,
+            lod_index_counts: [index_count, 0, 0, 0],
+            lod_first_indices: [first_index, 0, 0, 0],
+            lod_vertex_offsets: [vertex_offset, 0, 0, 0],
+            lod_distance_sq: [f32::MAX, f32::MAX, f32::MAX, f32::MAX],
+        }
+    }
 }
 
 /// Mirrors the `DrawIndexedIndirect` GPU layout -- the output of the compute shader.
@@ -390,11 +442,36 @@ impl<D: euca_rhi::RenderDevice> GpuDrivenPipeline<D> {
     /// Issue indirect draw calls from the indirect buffer.
     ///
     /// Call inside a render pass after `cull_and_prepare` has been submitted.
+    ///
+    /// This loops per entity calling `draw_indexed_indirect` individually.
+    /// Prefer [`draw_indirect_multi`](Self::draw_indirect_multi) when the
+    /// `MULTI_DRAW_INDIRECT_COUNT` capability is available.
     pub fn draw_indirect<'a>(&'a self, render_pass: &mut D::RenderPass<'a>, entity_count: u32) {
         for i in 0..entity_count {
             let offset = (i as u64) * DRAW_INDEXED_INDIRECT_SIZE;
             render_pass.draw_indexed_indirect(self.indirect_buffer.raw(), offset);
         }
+    }
+
+    /// Issue a single multi-draw-indirect-count call that renders all visible
+    /// entities in one GPU submission. The `draw_count_buffer` (populated by
+    /// the compute cull shader) tells the GPU how many draws to execute.
+    ///
+    /// Requires `MULTI_DRAW_INDIRECT_COUNT` capability. Falls back to
+    /// [`draw_indirect`](Self::draw_indirect) loop if not available.
+    pub fn draw_indirect_multi<'a>(&'a self, render_pass: &mut D::RenderPass<'a>, max_count: u32) {
+        render_pass.multi_draw_indexed_indirect_count(
+            self.indirect_buffer.raw(),
+            0,
+            self.draw_count_buffer.raw(),
+            0,
+            max_count,
+        );
+    }
+
+    /// Access the raw indirect draw buffer handle for binding in render passes.
+    pub fn indirect_buffer_raw(&self) -> &D::Buffer {
+        self.indirect_buffer.raw()
     }
 
     /// Access the indirect draw buffer.
@@ -539,6 +616,59 @@ mod tests {
         let capacity = 1024u32;
         let expected_size = capacity as u64 * DRAW_INDEXED_INDIRECT_SIZE;
         assert_eq!(expected_size, 1024 * 20);
+    }
+
+    #[test]
+    fn draw_command_gpu_from_components() {
+        let model: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [10.0, 20.0, 30.0, 1.0],
+        ];
+        let cmd = DrawCommandGpu::from_components(
+            &model,
+            100, // vertex_offset
+            200, // first_index
+            36,  // index_count
+            [5.0, 6.0, 7.0],
+            [1.0, 2.0, 3.0],
+            42, // mesh_id
+            7,  // material_id
+        );
+
+        // Model matrix columns
+        assert_eq!(cmd.model_col0, [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(cmd.model_col1, [0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(cmd.model_col2, [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(cmd.model_col3, [10.0, 20.0, 30.0, 1.0]);
+
+        // AABB (w-component should be 0.0)
+        assert_eq!(cmd.aabb_center, [5.0, 6.0, 7.0, 0.0]);
+        assert_eq!(cmd.aabb_half_extents, [1.0, 2.0, 3.0, 0.0]);
+
+        // IDs
+        assert_eq!(cmd.mesh_id, 42);
+        assert_eq!(cmd.material_id, 7);
+
+        // Geometry
+        assert_eq!(cmd.index_count, 36);
+        assert_eq!(cmd.first_index, 200);
+        assert_eq!(cmd.vertex_offset, 100);
+
+        // Single LOD populated from the provided geometry
+        assert_eq!(cmd.lod_count, 1);
+        assert_eq!(cmd.lod_index_counts, [36, 0, 0, 0]);
+        assert_eq!(cmd.lod_first_indices, [200, 0, 0, 0]);
+        assert_eq!(cmd.lod_vertex_offsets, [100, 0, 0, 0]);
+        assert_eq!(
+            cmd.lod_distance_sq,
+            [f32::MAX, f32::MAX, f32::MAX, f32::MAX]
+        );
+
+        // Verify it's still 184 bytes and bytemuck-safe
+        let bytes = bytemuck::bytes_of(&cmd);
+        assert_eq!(bytes.len(), 184);
     }
 
     #[test]
