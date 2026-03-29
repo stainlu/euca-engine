@@ -319,6 +319,7 @@ fn apply_hero_template(world: &mut World, entity: Entity, hero_name: &str) {
                 cooldown_remaining: 0.0,
                 mana_cost: ability_def.mana_cost,
                 effect: ability_def.effect.clone(),
+                ..Default::default()
             },
         );
     }

@@ -100,8 +100,10 @@ pub use visibility::{
 };
 
 pub use abilities::{
-    Ability, AbilityEffect, AbilitySet, AbilitySlot, AppliedEffect, Mana, SpeedBuff,
-    UseAbilityEvent, ability_tick_system, use_ability_system,
+    Ability, AbilityBehavior, AbilityEffect, AbilityLevel, AbilityScaling, AbilitySet, AbilitySlot,
+    AppliedEffect, CastTime, ChannelState, DamageType, Mana, SpeedBuff, TargetType,
+    UseAbilityEvent, ability_tick_system, can_level_ability, interrupt_channel, level_up_ability,
+    scaled_value, start_channel, tick_channel, toggle_ability, use_ability_system,
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use crowd_control::{

@@ -117,6 +117,7 @@ pub fn spawn_hero(world: &mut World, def: &HeroDef) -> Entity {
                 cooldown_remaining: 0.0,
                 mana_cost: ability_def.mana_cost,
                 effect: ability_def.effect.clone(),
+                ..Default::default()
             },
         );
     }
