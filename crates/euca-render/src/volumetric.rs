@@ -11,12 +11,11 @@
 //! 1. Store a [`VolumetricFogSettings`] as an ECS resource.
 //! 2. Create a [`VolumetricFogPass`] once during renderer initialisation.
 //! 3. Each frame, call [`VolumetricFogPass::execute`] with the current camera
-//!    and light state. It returns a `&wgpu::TextureView` for compositing.
+//!    and light state. It returns a `&D::TextureView` for compositing.
 
 use euca_rhi::RenderDevice;
+use euca_rhi::pass::{ComputePassOps, RenderPassOps};
 use euca_rhi::wgpu_backend::WgpuDevice;
-
-use crate::compute::{ComputePipeline, ComputePipelineDesc};
 
 // ---------------------------------------------------------------------------
 // Settings (ECS resource)
@@ -130,7 +129,8 @@ pub struct FrameParams<'a> {
 /// Generic over [`RenderDevice`] — defaults to [`WgpuDevice`] for
 /// backward compatibility.
 pub struct VolumetricFogPass<D: RenderDevice = WgpuDevice> {
-    compute_pipeline: ComputePipeline,
+    compute_pipeline: D::ComputePipeline,
+    compute_bgl: D::BindGroupLayout,
     #[allow(dead_code)]
     fog_texture: D::Texture,
     fog_texture_view: D::TextureView,
@@ -145,135 +145,145 @@ pub struct VolumetricFogPass<D: RenderDevice = WgpuDevice> {
     height: u32,
 }
 
-impl VolumetricFogPass {
+impl<D: RenderDevice> VolumetricFogPass<D> {
     /// Create the pass for the given screen dimensions.
     pub fn new(
-        device: &wgpu::Device,
+        device: &D,
         width: u32,
         height: u32,
-        surface_format: wgpu::TextureFormat,
+        surface_format: euca_rhi::TextureFormat,
     ) -> Self {
         // --- Compute pipeline --------------------------------------------------
-        let compute_pipeline = ComputePipeline::new(
-            device,
-            &ComputePipelineDesc {
-                label: "volumetric_fog_compute",
-                shader_source: VOLUMETRIC_FOG_SHADER,
-                entry_point: "main",
-            },
-        );
+        let compute_shader = device.create_shader(&euca_rhi::ShaderDesc {
+            label: Some("volumetric_fog_compute"),
+            source: euca_rhi::ShaderSource::Wgsl(VOLUMETRIC_FOG_SHADER.into()),
+        });
+
+        let compute_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("volumetric_fog_compute_bgl"),
+            entries: &[
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::StorageTexture {
+                        access: euca_rhi::StorageTextureAccess::WriteOnly,
+                        format: euca_rhi::TextureFormat::Rgba16Float,
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let compute_pipeline = device.create_compute_pipeline(&euca_rhi::ComputePipelineDesc {
+            label: Some("volumetric_fog_compute"),
+            layout: &[&compute_bgl],
+            module: &compute_shader,
+            entry_point: "main",
+        });
 
         // --- Fog output texture ------------------------------------------------
         let (fog_texture, fog_texture_view, fog_texture_sample_view) =
             Self::create_fog_texture(device, width, height);
 
         // --- Uniform buffer ----------------------------------------------------
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("volumetric_fog_params"),
             size: std::mem::size_of::<FogParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         // --- Bind group (group 0) for compute ----------------------------------
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("volumetric_fog_bg"),
-            layout: compute_pipeline.bind_group_layout(),
+            layout: &compute_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&fog_texture_view),
+                    resource: euca_rhi::BindingResource::TextureView(&fog_texture_view),
                 },
             ],
         });
 
         // --- Composite render pipeline -----------------------------------------
-        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let composite_shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("volumetric_fog_composite"),
-            source: wgpu::ShaderSource::Wgsl(COMPOSITE_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(COMPOSITE_SHADER.into()),
         });
 
-        let composite_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let composite_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("volumetric_fog_composite_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
         });
 
-        let composite_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("volumetric_fog_composite_layout"),
-            bind_group_layouts: &[&composite_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let composite_pipeline = device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("volumetric_fog_composite"),
-            layout: Some(&composite_layout),
-            vertex: wgpu::VertexState {
+            layout: &[&composite_bgl],
+            vertex: euca_rhi::VertexState {
                 module: &composite_shader,
-                entry_point: Some("vs_main"),
+                entry_point: "vs_main",
                 buffers: &[],
-                compilation_options: Default::default(),
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(euca_rhi::FragmentState {
                 module: &composite_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
                     format: surface_format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(euca_rhi::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: euca_rhi::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
+            primitive: euca_rhi::PrimitiveState::default(),
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
+            multisample: euca_rhi::MultisampleState::default(),
         });
 
-        let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let composite_sampler = device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("volumetric_fog_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
             ..Default::default()
         });
 
         Self {
             compute_pipeline,
+            compute_bgl,
             fog_texture,
             fog_texture_view,
             fog_texture_sample_view,
@@ -288,7 +298,7 @@ impl VolumetricFogPass {
     }
 
     /// Recreate the fog texture and bind group after a window resize.
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         if width == self.width && height == self.height {
             return;
         }
@@ -301,17 +311,21 @@ impl VolumetricFogPass {
         self.fog_texture_sample_view = sample_view;
 
         // Re-create the compute bind group with the new texture view.
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("volumetric_fog_bg"),
-            layout: self.compute_pipeline.bind_group_layout(),
+            layout: &self.compute_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: self.uniform_buffer.as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &self.uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.fog_texture_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.fog_texture_view),
                 },
             ],
         });
@@ -324,12 +338,11 @@ impl VolumetricFogPass {
     /// compositing strategies if desired.
     pub fn execute(
         &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        queue: &wgpu::Queue,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        target: &D::TextureView,
         frame: &FrameParams<'_>,
-    ) -> &wgpu::TextureView {
+    ) -> &D::TextureView {
         // Upload uniforms.
         let uniforms = FogParams {
             camera_pos: [
@@ -370,55 +383,52 @@ impl VolumetricFogPass {
                 0.0,
             ],
         };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        device.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // --- Compute dispatch --------------------------------------------------
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("volumetric_fog_compute"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(self.compute_pipeline.raw());
-            pass.set_bind_group(0, Some(&self.bind_group), &[]);
+            let mut pass = device.begin_compute_pass(encoder, Some("volumetric_fog_compute"));
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             let wg_x = self.width.div_ceil(8);
             let wg_y = self.height.div_ceil(8);
             pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 
         // --- Composite pass (alpha-blend fog over scene) ----------------------
-        let composite_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let composite_bg = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("volumetric_fog_composite_bg"),
             layout: &self.composite_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.fog_texture_sample_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.fog_texture_sample_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.composite_sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&self.composite_sampler),
                 },
             ],
         });
 
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("volumetric_fog_composite"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = device.begin_render_pass(
+                encoder,
+                &euca_rhi::RenderPassDesc {
+                    label: Some("volumetric_fog_composite"),
+                    color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
+                        view: target,
+                        resolve_target: None,
+                        ops: euca_rhi::Operations {
+                            load: euca_rhi::LoadOp::Load,
+                            store: euca_rhi::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                },
+            );
             pass.set_pipeline(&self.composite_pipeline);
-            pass.set_bind_group(0, Some(&composite_bg), &[]);
+            pass.set_bind_group(0, &composite_bg, &[]);
             pass.draw(0..3, 0..1);
         }
 
@@ -431,7 +441,7 @@ impl VolumetricFogPass {
     /// the identically-named field `fog_texture_view` (the storage/render-target
     /// view), because external consumers always need the sampling view.
     #[allow(clippy::misnamed_getters)]
-    pub fn fog_texture_view(&self) -> &wgpu::TextureView {
+    pub fn fog_texture_view(&self) -> &D::TextureView {
         &self.fog_texture_sample_view
     }
 
@@ -440,33 +450,38 @@ impl VolumetricFogPass {
     // -----------------------------------------------------------------------
 
     fn create_fog_texture(
-        device: &wgpu::Device,
+        device: &D,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+    ) -> (D::Texture, D::TextureView, D::TextureView) {
+        let texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("volumetric_fog_texture"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::STORAGE_BINDING
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
         // Storage view for the compute shader (write).
-        let storage_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let storage_view =
+            device.create_texture_view(&texture, &euca_rhi::TextureViewDesc::default());
 
         // Sampling view for the composite fragment shader (read).
-        let sample_view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("volumetric_fog_sample_view"),
-            ..Default::default()
-        });
+        let sample_view = device.create_texture_view(
+            &texture,
+            &euca_rhi::TextureViewDesc {
+                label: Some("volumetric_fog_sample_view"),
+                ..Default::default()
+            },
+        );
 
         (texture, storage_view, sample_view)
     }
