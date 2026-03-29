@@ -7,31 +7,67 @@ use euca_rhi::{Capabilities, RenderDevice};
 
 /// Owns the GPU device, queue, surface — everything needed to talk to the GPU.
 ///
-/// Wraps [`WgpuDevice`] (the RHI backend) and adds engine-level metadata
-/// (adapter info, render backend selection). Access the underlying wgpu
-/// objects via `Deref` (e.g., `gpu.device`, `gpu.queue`).
-pub struct GpuContext {
-    /// The RHI backend device. Access wgpu objects via Deref:
-    /// `gpu.device`, `gpu.queue`, `gpu.surface`, etc.
-    rhi: WgpuDevice,
-    /// Info about the adapter actually in use (from surface-compatible selection).
+/// Generic over `D: RenderDevice` to support multiple backends:
+/// - `GpuContext` (default) = `GpuContext<WgpuDevice>` — cross-platform via wgpu
+/// - `GpuContext<MetalDevice>` — native Metal on Apple Silicon
+///
+/// Access the underlying RHI device via `Deref` (e.g., `gpu.create_buffer()`).
+pub struct GpuContext<D: RenderDevice = WgpuDevice> {
+    /// The RHI backend device.
+    rhi: D,
+    /// Info about the adapter actually in use.
     pub adapter_info: AdapterInfo,
     /// Rendering backend chosen by the hardware survey.
     pub render_backend: RenderBackend,
 }
 
-impl std::ops::Deref for GpuContext {
-    type Target = WgpuDevice;
-    fn deref(&self) -> &WgpuDevice {
+impl<D: RenderDevice> std::ops::Deref for GpuContext<D> {
+    type Target = D;
+    fn deref(&self) -> &D {
         &self.rhi
     }
 }
 
-impl std::ops::DerefMut for GpuContext {
-    fn deref_mut(&mut self) -> &mut WgpuDevice {
+impl<D: RenderDevice> std::ops::DerefMut for GpuContext<D> {
+    fn deref_mut(&mut self) -> &mut D {
         &mut self.rhi
     }
 }
+
+// =========================================================================
+// Generic methods (work for any backend)
+// =========================================================================
+
+impl<D: RenderDevice> GpuContext<D> {
+    /// Whether the GPU has unified memory (Apple Silicon).
+    pub fn unified_memory(&self) -> bool {
+        self.rhi.capabilities().unified_memory
+    }
+
+    /// Whether the GPU supports `multi_draw_indexed_indirect`.
+    pub fn has_multi_draw_indirect(&self) -> bool {
+        self.rhi.capabilities().multi_draw_indirect
+    }
+
+    /// Whether the GPU supports `multi_draw_indexed_indirect_count`.
+    pub fn has_multi_draw_indirect_count(&self) -> bool {
+        self.rhi.capabilities().multi_draw_indirect_count
+    }
+
+    /// Handle window resize.
+    pub fn resize(&mut self, new_width: u32, new_height: u32) {
+        self.rhi.resize_surface(new_width, new_height);
+    }
+
+    /// Current surface aspect ratio.
+    pub fn aspect_ratio(&self) -> f32 {
+        self.rhi.aspect_ratio()
+    }
+}
+
+// =========================================================================
+// wgpu backend: GpuContext (= GpuContext<WgpuDevice>)
+// =========================================================================
 
 impl GpuContext {
     /// Initialize wgpu from a winit window, hardware survey, and the wgpu Instance.
@@ -157,29 +193,38 @@ impl GpuContext {
             render_backend: survey.render_backend,
         }
     }
+}
 
-    /// Whether the GPU has unified memory (Apple Silicon).
-    pub fn unified_memory(&self) -> bool {
-        self.rhi.capabilities().unified_memory
-    }
+// =========================================================================
+// Metal backend: GpuContext<MetalDevice>
+// =========================================================================
 
-    /// Whether the GPU supports `multi_draw_indexed_indirect`.
-    pub fn has_multi_draw_indirect(&self) -> bool {
-        self.rhi.capabilities().multi_draw_indirect
-    }
+#[cfg(all(target_os = "macos", feature = "metal-native"))]
+impl GpuContext<euca_rhi::metal_backend::MetalDevice> {
+    /// Create a GpuContext backed by native Metal.
+    ///
+    /// Bypasses wgpu to access Metal 3/4 features: mesh shaders, tile shading,
+    /// indirect command buffers, MetalFX upscaling, memoryless render targets.
+    pub fn new_metal(window: &winit::window::Window) -> Self {
+        use crate::hardware::GpuVendor;
 
-    /// Whether the GPU supports `multi_draw_indexed_indirect_count`.
-    pub fn has_multi_draw_indirect_count(&self) -> bool {
-        self.rhi.capabilities().multi_draw_indirect_count
-    }
+        let device = euca_rhi::metal_backend::MetalDevice::from_window(window);
+        let caps = device.capabilities().clone();
 
-    /// Handle window resize.
-    pub fn resize(&mut self, new_width: u32, new_height: u32) {
-        self.rhi.resize_surface(new_width, new_height);
-    }
-
-    /// Current surface aspect ratio.
-    pub fn aspect_ratio(&self) -> f32 {
-        self.rhi.aspect_ratio()
+        Self {
+            adapter_info: AdapterInfo {
+                name: caps.device_name.clone(),
+                vendor: GpuVendor::Apple,
+                vendor_id: 0x106B, // Apple vendor ID
+                device_type: wgpu::DeviceType::IntegratedGpu,
+                wgpu_backend: wgpu::Backend::Metal,
+                driver: "Native Metal".into(),
+                driver_info: String::new(),
+                features: wgpu::Features::empty(),
+                limits: wgpu::Limits::default(),
+            },
+            render_backend: RenderBackend::MetalNative,
+            rhi: device,
+        }
     }
 }

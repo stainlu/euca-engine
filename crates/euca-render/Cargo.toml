@@ -8,7 +8,7 @@ categories = ["game-development", "rendering"]
 
 [features]
 default = []
-metal-native = []  # Future: metal-rs, objc2 for native Metal rendering
+metal-native = ["euca-rhi/metal-backend"]  # Native Metal rendering on Apple Silicon
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
