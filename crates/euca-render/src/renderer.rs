@@ -1125,7 +1125,7 @@ impl Renderer {
     ///
     /// Call this once after creating the renderer, before uploading materials.
     pub fn enable_bindless(&mut self, gpu: &GpuContext) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let system = crate::bindless::BindlessMaterialSystem::new(rhi, gpu.unified_memory());
         if !system.is_enabled() {
             log::warn!("Bindless materials requested but GPU lacks required features");
@@ -1192,7 +1192,7 @@ impl Renderer {
     /// [`DrawCommand`]s.
     pub fn upload_mesh(&mut self, gpu: &GpuContext, mesh: &Mesh) -> MeshHandle {
         use euca_rhi::{BufferDesc, BufferUsages, RenderDevice};
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
 
         let vdata = bytemuck::cast_slice::<_, u8>(&mesh.vertices);
         let vb = rhi.create_buffer(&BufferDesc {
@@ -1230,13 +1230,13 @@ impl Renderer {
         height: u32,
         rgba: &[u8],
     ) -> TextureHandle {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         self.textures.upload_rgba(rhi, width, height, rgba)
     }
 
     /// Decode an image file (PNG, JPEG, etc.) from memory and upload it as a texture.
     pub fn upload_texture_image(&mut self, gpu: &GpuContext, data: &[u8]) -> TextureHandle {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         self.textures.upload_image(rhi, data)
     }
 
@@ -1247,7 +1247,7 @@ impl Renderer {
         size: u32,
         tile: u32,
     ) -> TextureHandle {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         self.textures.checkerboard(rhi, size, tile)
     }
 
@@ -1258,7 +1258,7 @@ impl Renderer {
             BindGroupDesc, BindGroupEntry, BindingResource, BufferBinding, BufferDesc,
             BufferUsages, RenderDevice,
         };
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
 
         let handle = MaterialHandle(self.materials.len() as u32);
         let uniforms = MaterialUniforms {
@@ -1362,7 +1362,7 @@ impl Renderer {
     /// Recreate size-dependent GPU resources (depth buffer, MSAA target, etc.)
     /// after the window has been resized.
     pub fn resize(&mut self, gpu: &GpuContext) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let (w, h) = rhi.surface_size();
         self.depth_texture =
             Self::create_depth_texture(rhi, w, h, euca_rhi::TextureFormat::Depth32Float);
@@ -1504,7 +1504,7 @@ impl Renderer {
         gpu: &GpuContext,
         config: crate::gpu_particles::GpuParticleConfig,
     ) -> usize {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let format = rhi.surface_format();
         let system = crate::gpu_particles::GpuParticleSystem::new(&**gpu, config, format);
         self.gpu_particle_systems.push(system);
@@ -1560,7 +1560,7 @@ impl Renderer {
     /// shader and composite the result over the HDR buffer after the PBR pass
     /// and before post-processing.
     pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let (sw, sh) = rhi.surface_size();
         let sf = rhi.surface_format();
         self.volumetric_fog_pass = Some(VolumetricFogPass::new(&**gpu, sw, sh, sf));
@@ -1740,7 +1740,7 @@ impl Renderer {
         spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
     ) {
         use euca_rhi::RenderDevice;
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
 
         let output = match rhi.get_current_texture() {
             Ok(t) => t,
@@ -1811,7 +1811,7 @@ impl Renderer {
         color_view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = &**gpu;
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
