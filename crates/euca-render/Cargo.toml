@@ -65,3 +65,8 @@ required-features = ["euca-rhi/metal-backend"]
 name = "metal_fx_upscale"
 path = "../../examples/metal_fx_upscale.rs"
 required-features = ["euca-rhi/metal-backend"]
+
+[[example]]
+name = "metal_combined"
+path = "../../examples/metal_combined.rs"
+required-features = ["euca-rhi/metal-backend"]
