@@ -279,7 +279,7 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
 
         // Try the shared cache first (read lock)
         {
-            let cache = world.query_cache.read().expect("query cache lock poisoned");
+            let cache = crate::lock_util::read_or_recover(&world.query_cache, "Query::new_cached");
             if let Some(cached) = cache.get::<Q, F>() {
                 return Self {
                     world,
@@ -293,10 +293,8 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
         // Cache miss: compute and store (write lock)
         let cached_archetypes = Self::compute_matching(world);
         {
-            let mut cache = world
-                .query_cache
-                .write()
-                .expect("query cache lock poisoned");
+            let mut cache =
+                crate::lock_util::write_or_recover(&world.query_cache, "Query::new_cached");
             cache.insert::<Q, F>(cached_archetypes.clone());
         }
 

@@ -147,9 +147,7 @@ impl World {
         // results have changed.
         if self.archetypes[arch_idx].is_empty() {
             self.archetype_generation += 1;
-            self.query_cache
-                .write()
-                .expect("query cache lock poisoned")
+            crate::lock_util::write_or_recover(&self.query_cache, "World::despawn")
                 .increment_generation();
         }
 
@@ -493,9 +491,7 @@ impl World {
         self.archetype_index.insert(sorted, id);
         self.archetype_generation += 1;
         // Keep the shared QueryCache generation in sync
-        self.query_cache
-            .write()
-            .expect("query cache lock poisoned")
+        crate::lock_util::write_or_recover(&self.query_cache, "World::get_or_create_archetype")
             .increment_generation();
         id
     }
