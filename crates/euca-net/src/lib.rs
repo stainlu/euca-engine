@@ -14,6 +14,8 @@ pub mod replication;
 mod server;
 pub mod tick_rate;
 mod transport;
+#[cfg(feature = "websocket")]
+pub mod ws_transport;
 
 pub use bandwidth::{BandwidthBudget, PriorityCalculator, select_entities_for_replication};
 pub use client::GameClient;
@@ -33,3 +35,5 @@ pub use replication::{
 pub use server::GameServer;
 pub use tick_rate::{NetworkTickAccumulator, TickRateConfig};
 pub use transport::{MAX_PACKET_SIZE, PacketHeader, ReliableTransport, UdpTransport};
+#[cfg(feature = "websocket")]
+pub use ws_transport::{WsError, WsEvent, WsServer, WsTransport};
