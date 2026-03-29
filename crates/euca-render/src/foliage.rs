@@ -13,9 +13,24 @@
 //!    by distance and frustum, producing `FoliageDrawData` with model matrices.
 
 use crate::camera::Frustum;
+use crate::compute::{ComputePipeline, ComputePipelineDesc, GpuBuffer};
+use crate::gpu_driven::GpuFrustumData;
 use crate::material::MaterialHandle;
 use crate::mesh::MeshHandle;
 use euca_math::{Mat4, Quat, Vec3};
+
+// ---------------------------------------------------------------------------
+// GPU foliage culling — shader & constants
+// ---------------------------------------------------------------------------
+
+/// WGSL compute shader source for GPU foliage instance culling.
+pub const FOLIAGE_CULL_SHADER: &str = include_str!("../shaders/foliage_cull.wgsl");
+
+/// Workgroup size used by the foliage cull shader (must match `@workgroup_size` in WGSL).
+const FOLIAGE_CULL_WORKGROUP_SIZE: u32 = 64;
+
+/// Size of one `ModelMatrix` in bytes (4 x vec4<f32> = 64 bytes).
+const MODEL_MATRIX_SIZE: u64 = 64;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -75,6 +90,315 @@ impl FoliageDrawData {
     /// Whether there are any visible instances.
     pub fn is_empty(&self) -> bool {
         self.instance_matrices.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GPU foliage culling — CPU-side structs mirroring WGSL layout
+// ---------------------------------------------------------------------------
+
+/// GPU-side foliage instance for upload to storage buffer.
+///
+/// Mirrors the `FoliageInstance` struct in `foliage_cull.wgsl` exactly.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuFoliageInstance {
+    /// Position (xyz) + rotation angle (w).
+    pub position_rotation: [f32; 4],
+    /// Scale (xyz) + max_distance (w).
+    pub scale_distance: [f32; 4],
+}
+
+impl GpuFoliageInstance {
+    /// Create a GPU foliage instance with the given max draw distance.
+    pub fn from_instance(inst: &FoliageInstance, max_distance: f32) -> Self {
+        Self {
+            position_rotation: [
+                inst.position.x,
+                inst.position.y,
+                inst.position.z,
+                inst.rotation,
+            ],
+            scale_distance: [inst.scale, inst.scale, inst.scale, max_distance],
+        }
+    }
+}
+
+impl From<&FoliageInstance> for GpuFoliageInstance {
+    fn from(inst: &FoliageInstance) -> Self {
+        Self {
+            position_rotation: [
+                inst.position.x,
+                inst.position.y,
+                inst.position.z,
+                inst.rotation,
+            ],
+            // max_distance defaults to 0; callers should use `from_instance` with the layer's
+            // max_distance, or patch `scale_distance[3]` after conversion.
+            scale_distance: [inst.scale, inst.scale, inst.scale, 0.0],
+        }
+    }
+}
+
+/// Uniform data for the foliage cull compute shader.
+///
+/// Mirrors the `CullUniforms` struct in `foliage_cull.wgsl` exactly.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct FoliageCullUniforms {
+    /// Six frustum planes: `(nx, ny, nz, d)` each.
+    pub frustum_planes: [[f32; 4]; 6],
+    /// Camera eye position (xyz), w unused.
+    pub camera_position: [f32; 4],
+    /// Number of instances to process.
+    pub instance_count: u32,
+    /// Padding to align to 16 bytes.
+    pub _pad: [u32; 3],
+}
+
+impl FoliageCullUniforms {
+    /// Build from `GpuFrustumData` and an instance count.
+    pub fn from_frustum_data(frustum: &GpuFrustumData, instance_count: u32) -> Self {
+        Self {
+            frustum_planes: frustum.planes,
+            camera_position: frustum.camera_position,
+            instance_count,
+            _pad: [0; 3],
+        }
+    }
+}
+
+/// Bind-group layout entries for the foliage cull compute shader (group 0).
+///
+/// - binding 0: storage read (foliage instances)
+/// - binding 1: uniform (cull uniforms)
+/// - binding 2: storage read_write (visible model matrices output)
+/// - binding 3: storage read_write (draw count atomic)
+pub const FOLIAGE_CULL_BINDINGS: &[euca_rhi::BindGroupLayoutEntry] = &[
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 3,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
+
+// ---------------------------------------------------------------------------
+// GpuFoliageCuller
+// ---------------------------------------------------------------------------
+
+/// GPU-accelerated foliage culling resources.
+///
+/// Holds all GPU buffers and the compute pipeline needed to perform per-instance
+/// frustum + distance culling entirely on the GPU. Visible instances are compacted
+/// into an output model matrix buffer suitable for instanced draw calls.
+///
+/// # Usage
+///
+/// ```text
+/// let culler = GpuFoliageCuller::new(&device, max_instances);
+/// culler.upload_instances(&device, &gpu_instances);
+/// // Each frame:
+/// culler.cull(&device, &mut encoder, &frustum_data, instance_count);
+/// // Then bind culler.visible_matrix_buffer() in the render pass.
+/// ```
+pub struct GpuFoliageCuller<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    instance_buffer: GpuBuffer<D>,
+    output_matrix_buffer: GpuBuffer<D>,
+    draw_count_buffer: GpuBuffer<D>,
+    uniforms_buffer: GpuBuffer<D>,
+    pipeline: ComputePipeline<D>,
+    instance_count: u32,
+    capacity: u32,
+}
+
+impl<D: euca_rhi::RenderDevice> GpuFoliageCuller<D> {
+    /// Create a foliage culler sized for up to `max_instances` foliage instances.
+    pub fn new(device: &D, max_instances: u32) -> Self {
+        let pipeline = ComputePipeline::new(
+            device,
+            &ComputePipelineDesc {
+                label: "foliage_cull_pipeline",
+                shader_source: FOLIAGE_CULL_SHADER,
+                entry_point: "main",
+            },
+            FOLIAGE_CULL_BINDINGS,
+        );
+
+        let instance_buf_size =
+            (max_instances as u64) * std::mem::size_of::<GpuFoliageInstance>() as u64;
+        let instance_buffer =
+            GpuBuffer::new_storage(device, instance_buf_size, "foliage_instances");
+
+        let output_buf_size = (max_instances as u64) * MODEL_MATRIX_SIZE;
+        let output_matrix_buffer =
+            GpuBuffer::new_storage(device, output_buf_size, "foliage_visible_matrices");
+
+        let draw_count_buffer = GpuBuffer::new_storage(device, 4, "foliage_draw_count");
+
+        let uniforms_buffer = GpuBuffer::new_uniform_with_data(
+            device,
+            &FoliageCullUniforms {
+                frustum_planes: [[0.0; 4]; 6],
+                camera_position: [0.0; 4],
+                instance_count: 0,
+                _pad: [0; 3],
+            },
+            "foliage_cull_uniforms",
+        );
+
+        Self {
+            instance_buffer,
+            output_matrix_buffer,
+            draw_count_buffer,
+            uniforms_buffer,
+            pipeline,
+            instance_count: 0,
+            capacity: max_instances,
+        }
+    }
+
+    /// Upload all foliage instances to the GPU storage buffer.
+    ///
+    /// Call this when the foliage layer changes (e.g. after scattering).
+    /// The instance data persists across frames until the next upload.
+    pub fn upload_instances(&mut self, device: &D, instances: &[GpuFoliageInstance]) {
+        assert!(
+            instances.len() <= self.capacity as usize,
+            "Too many foliage instances ({}) for culler capacity ({})",
+            instances.len(),
+            self.capacity
+        );
+        self.instance_buffer.write(device, instances);
+        self.instance_count = instances.len() as u32;
+    }
+
+    /// Dispatch the foliage cull compute shader.
+    ///
+    /// Clears the draw count, uploads the frustum uniforms, and dispatches the
+    /// compute shader. After submission, `visible_matrix_buffer` contains the
+    /// compacted model matrices and `draw_count_buffer` holds the count.
+    pub fn cull(&self, device: &D, encoder: &mut D::CommandEncoder, frustum: &GpuFrustumData) {
+        if self.instance_count == 0 {
+            return;
+        }
+
+        // Upload uniforms for this frame.
+        let uniforms = FoliageCullUniforms::from_frustum_data(frustum, self.instance_count);
+        self.uniforms_buffer
+            .write(device, std::slice::from_ref(&uniforms));
+
+        // Clear the atomic draw count to zero.
+        device.clear_buffer(encoder, self.draw_count_buffer.raw(), 0, None);
+
+        // Create bind group.
+        let bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
+            label: Some("foliage_cull_bind_group"),
+            layout: self.pipeline.bind_group_layout(),
+            entries: &[
+                euca_rhi::BindGroupEntry {
+                    binding: 0,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.instance_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 1,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.uniforms_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 2,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.output_matrix_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 3,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.draw_count_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        });
+
+        // Dispatch.
+        let workgroup_count = self.instance_count.div_ceil(FOLIAGE_CULL_WORKGROUP_SIZE);
+        crate::compute::dispatch_compute_generic(
+            device,
+            encoder,
+            &self.pipeline,
+            &[&bind_group],
+            [workgroup_count, 1, 1],
+            None,
+        );
+    }
+
+    /// The output buffer containing compacted model matrices for visible instances.
+    ///
+    /// Bind this as a vertex/storage buffer in the render pass for instanced drawing.
+    pub fn visible_matrix_buffer(&self) -> &D::Buffer {
+        self.output_matrix_buffer.raw()
+    }
+
+    /// The buffer containing the number of visible instances (single `u32`).
+    ///
+    /// Can be used for `multi_draw_indirect_count` or read back to the CPU.
+    pub fn draw_count_buffer(&self) -> &D::Buffer {
+        self.draw_count_buffer.raw()
+    }
+
+    /// The number of instances currently uploaded.
+    pub fn instance_count(&self) -> u32 {
+        self.instance_count
+    }
+
+    /// Maximum number of instances this culler can handle.
+    pub fn capacity(&self) -> u32 {
+        self.capacity
     }
 }
 
@@ -713,5 +1037,144 @@ mod integration_tests {
         // Each matrix should be a valid 4x4 with the correct mesh/material preserved
         assert_eq!(layers.layers[0].mesh, MeshHandle(5));
         assert_eq!(layers.layers[0].material, MaterialHandle(2));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests for GPU foliage culling types
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod gpu_cull_tests {
+    use super::*;
+
+    // ── Struct layout tests ──────────────────────────────────────────────
+
+    #[test]
+    fn gpu_foliage_instance_layout() {
+        // 2 x vec4<f32> = 32 bytes
+        assert_eq!(std::mem::size_of::<GpuFoliageInstance>(), 32);
+    }
+
+    #[test]
+    fn foliage_cull_uniforms_layout() {
+        // 6 x vec4<f32> (planes) + vec4<f32> (camera) + u32 + 3 x u32 (pad)
+        // = 96 + 16 + 16 = 128 bytes
+        assert_eq!(std::mem::size_of::<FoliageCullUniforms>(), 128);
+    }
+
+    // ── Conversion tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn gpu_foliage_instance_from_foliage_instance() {
+        let inst = FoliageInstance {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            rotation: 1.57,
+            scale: 0.8,
+        };
+
+        let gpu: GpuFoliageInstance = (&inst).into();
+        assert_eq!(gpu.position_rotation, [1.0, 2.0, 3.0, 1.57]);
+        assert_eq!(gpu.scale_distance, [0.8, 0.8, 0.8, 0.0]);
+    }
+
+    #[test]
+    fn gpu_foliage_instance_from_instance_with_distance() {
+        let inst = FoliageInstance {
+            position: Vec3::new(10.0, 0.0, -5.0),
+            rotation: 3.14,
+            scale: 1.5,
+        };
+
+        let gpu = GpuFoliageInstance::from_instance(&inst, 200.0);
+        assert_eq!(gpu.position_rotation, [10.0, 0.0, -5.0, 3.14]);
+        assert_eq!(gpu.scale_distance, [1.5, 1.5, 1.5, 200.0]);
+    }
+
+    // ── Uniforms construction ────────────────────────────────────────────
+
+    #[test]
+    fn foliage_cull_uniforms_from_frustum_data() {
+        let frustum_data = GpuFrustumData {
+            planes: [
+                [1.0, 0.0, 0.0, -1.0],
+                [-1.0, 0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0, -1.0],
+                [0.0, -1.0, 0.0, -1.0],
+                [0.0, 0.0, 1.0, -0.1],
+                [0.0, 0.0, -1.0, -100.0],
+            ],
+            camera_position: [10.0, 20.0, 30.0, 0.0],
+        };
+
+        let uniforms = FoliageCullUniforms::from_frustum_data(&frustum_data, 500);
+        assert_eq!(uniforms.frustum_planes, frustum_data.planes);
+        assert_eq!(uniforms.camera_position, [10.0, 20.0, 30.0, 0.0]);
+        assert_eq!(uniforms.instance_count, 500);
+        assert_eq!(uniforms._pad, [0; 3]);
+    }
+
+    // ── Bytemuck roundtrip ───────────────────────────────────────────────
+
+    #[test]
+    fn gpu_foliage_instance_bytemuck_roundtrip() {
+        let inst = GpuFoliageInstance {
+            position_rotation: [1.0, 2.0, 3.0, 0.5],
+            scale_distance: [0.8, 0.8, 0.8, 100.0],
+        };
+        let bytes = bytemuck::bytes_of(&inst);
+        assert_eq!(bytes.len(), 32);
+        let restored: &GpuFoliageInstance = bytemuck::from_bytes(bytes);
+        assert_eq!(restored.position_rotation, inst.position_rotation);
+        assert_eq!(restored.scale_distance, inst.scale_distance);
+    }
+
+    #[test]
+    fn foliage_cull_uniforms_bytemuck_roundtrip() {
+        let uniforms = FoliageCullUniforms {
+            frustum_planes: [[1.0; 4]; 6],
+            camera_position: [5.0, 10.0, 15.0, 0.0],
+            instance_count: 1000,
+            _pad: [0; 3],
+        };
+        let bytes = bytemuck::bytes_of(&uniforms);
+        assert_eq!(bytes.len(), 128);
+        let restored: &FoliageCullUniforms = bytemuck::from_bytes(bytes);
+        assert_eq!(restored.instance_count, 1000);
+        assert_eq!(restored.camera_position, [5.0, 10.0, 15.0, 0.0]);
+    }
+
+    // ── Shader source sanity ─────────────────────────────────────────────
+
+    #[test]
+    fn foliage_cull_shader_is_valid_wgsl() {
+        assert!(!FOLIAGE_CULL_SHADER.is_empty());
+        assert!(FOLIAGE_CULL_SHADER.contains("@compute"));
+        assert!(FOLIAGE_CULL_SHADER.contains("@workgroup_size(64)"));
+        assert!(FOLIAGE_CULL_SHADER.contains("fn main"));
+        assert!(FOLIAGE_CULL_SHADER.contains("FoliageInstance"));
+        assert!(FOLIAGE_CULL_SHADER.contains("CullUniforms"));
+        assert!(FOLIAGE_CULL_SHADER.contains("ModelMatrix"));
+        assert!(FOLIAGE_CULL_SHADER.contains("frustum_test_sphere"));
+        assert!(FOLIAGE_CULL_SHADER.contains("rotation_y"));
+        assert!(FOLIAGE_CULL_SHADER.contains("atomicAdd"));
+    }
+
+    // ── Bind group layout ────────────────────────────────────────────────
+
+    #[test]
+    fn foliage_cull_bindings_count() {
+        assert_eq!(FOLIAGE_CULL_BINDINGS.len(), 4);
+    }
+
+    // ── Workgroup count rounding ─────────────────────────────────────────
+
+    #[test]
+    fn foliage_workgroup_count_rounding() {
+        assert_eq!(0_u32.div_ceil(FOLIAGE_CULL_WORKGROUP_SIZE), 0);
+        assert_eq!(1_u32.div_ceil(FOLIAGE_CULL_WORKGROUP_SIZE), 1);
+        assert_eq!(64_u32.div_ceil(FOLIAGE_CULL_WORKGROUP_SIZE), 1);
+        assert_eq!(65_u32.div_ceil(FOLIAGE_CULL_WORKGROUP_SIZE), 2);
+        assert_eq!(10000_u32.div_ceil(FOLIAGE_CULL_WORKGROUP_SIZE), 157);
     }
 }

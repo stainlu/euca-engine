@@ -104,7 +104,9 @@ pub use deferred::{
 pub use dof::{DofPass, DofSettings};
 pub use extract::RenderExtractor;
 pub use foliage::{
-    FoliageDrawData, FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, scatter_foliage,
+    FOLIAGE_CULL_BINDINGS, FOLIAGE_CULL_SHADER, FoliageCullUniforms, FoliageDrawData,
+    FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, GpuFoliageCuller,
+    GpuFoliageInstance, scatter_foliage,
 };
 pub use gpu::GpuContext;
 pub use gpu_driven::{
