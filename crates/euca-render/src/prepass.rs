@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(PREPASS_DEPTH_FORMAT, wgpu::TextureFormat::Depth32Float);
         assert_eq!(PREPASS_NORMAL_FORMAT, wgpu::TextureFormat::Rgba16Float);
         assert_eq!(
-            PREPASS_DEPTH_FORMAT,
+            euca_rhi::TextureFormat::from(PREPASS_DEPTH_FORMAT),
             crate::deferred::GBufferFormats::DEPTH,
             "Prepass depth format must match G-buffer depth format"
         );
