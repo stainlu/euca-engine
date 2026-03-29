@@ -32,6 +32,8 @@ pub mod crowd_control;
 pub mod data_table;
 /// Dota 2 economy — reliable/unreliable gold, bounties, buyback, respawn.
 pub mod economy;
+/// Fog of war, day/night cycle, and ward system.
+pub mod fog_of_war;
 /// Match lifecycle: lobby, countdown, playing, post-match.
 pub mod game_state;
 /// Hit points, damage events, death detection, and healing.
@@ -149,6 +151,11 @@ pub use attributes::{
     AttributeGrowth as AttrGrowth, BaseAttributes, ComputedAttributes, DerivedStats,
     HeroAttributes, HeroTimings, PrimaryAttribute, attack_interval, compute_attributes,
     derive_stats, total_armor, total_attack_speed, total_damage, total_hp, total_mana, turn_time,
+};
+
+pub use fog_of_war::{
+    CellVisibility, DayNightCycle, VisionMap, VisionSource, Ward, WardStock, WardType,
+    hero_vision_radius, is_unit_visible, place_ward, tick_ward_stock, tick_wards, update_vision,
 };
 
 pub use roshan::{
