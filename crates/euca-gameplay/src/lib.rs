@@ -16,6 +16,8 @@ pub mod abilities;
 pub mod ai;
 /// Engine-level assertions — testable expectations as ECS entities.
 pub mod assertions;
+/// Dota 2 hero attribute system — STR/AGI/INT with per-level growth and stat conversions.
+pub mod attributes;
 /// Dota 2 tower and building system — types, backdoor, fortification, aggro, bounties.
 pub mod building;
 /// Camera modes and follow systems.
@@ -110,8 +112,10 @@ pub use visibility::{
 };
 
 pub use abilities::{
-    Ability, AbilityEffect, AbilitySet, AbilitySlot, AppliedEffect, Mana, SpeedBuff,
-    UseAbilityEvent, ability_tick_system, use_ability_system,
+    Ability, AbilityBehavior, AbilityEffect, AbilityLevel, AbilityScaling, AbilitySet, AbilitySlot,
+    AppliedEffect, CastTime, ChannelState, DamageType, Mana, SpeedBuff, TargetType,
+    UseAbilityEvent, ability_tick_system, can_level_ability, interrupt_channel, level_up_ability,
+    scaled_value, start_channel, tick_channel, toggle_ability, use_ability_system,
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use crowd_control::{
@@ -153,6 +157,12 @@ pub use turns::{
 pub use zones::{Zone, ZoneDynamic, ZoneEffect, ZoneShape, zone_dynamic_system, zone_system};
 
 pub use tower_aggro::{TowerAggroOverride, tower_aggro_system};
+
+pub use attributes::{
+    AttributeGrowth as AttrGrowth, BaseAttributes, ComputedAttributes, DerivedStats,
+    HeroAttributes, HeroTimings, PrimaryAttribute, attack_interval, compute_attributes,
+    derive_stats, total_armor, total_attack_speed, total_damage, total_hp, total_mana, turn_time,
+};
 
 pub use building::{
     BackdoorProtection, BuildingStats, BuildingType, CreepEffect, Fortification, Lane, TowerAggro,

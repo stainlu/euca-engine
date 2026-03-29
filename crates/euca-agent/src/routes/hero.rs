@@ -197,6 +197,7 @@ pub async fn hero_select(
                     cooldown_remaining: 0.0,
                     mana_cost: ability_def.mana_cost,
                     effect: ability_def.effect.clone(),
+                    ..Default::default()
                 },
             );
         }
