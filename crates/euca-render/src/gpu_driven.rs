@@ -183,7 +183,7 @@ pub struct GpuDrivenPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend:
 impl GpuDrivenPipeline {
     /// Create a new GPU-driven pipeline sized for up to `max_entities`.
     pub fn new(device: &wgpu::Device, max_entities: u32) -> Self {
-        let cull_pipeline = ComputePipeline::new(
+        let cull_pipeline = ComputePipeline::from_wgpu(
             device,
             &ComputePipelineDesc {
                 label: "gpu_cull_pipeline",
@@ -193,9 +193,10 @@ impl GpuDrivenPipeline {
         );
 
         let command_buf_size = (max_entities as u64) * std::mem::size_of::<DrawCommandGpu>() as u64;
-        let command_buffer = GpuBuffer::new_storage(device, command_buf_size, "gpu_draw_commands");
+        let command_buffer =
+            GpuBuffer::new_storage_wgpu(device, command_buf_size, "gpu_draw_commands");
 
-        let frustum_buffer = GpuBuffer::new_uniform_with_data(
+        let frustum_buffer = GpuBuffer::new_uniform_with_data_wgpu(
             device,
             &GpuFrustumData {
                 planes: [[0.0; 4]; 6],
@@ -204,7 +205,7 @@ impl GpuDrivenPipeline {
             "gpu_cull_frustum",
         );
 
-        let params_buffer = GpuBuffer::new_uniform_with_data(
+        let params_buffer = GpuBuffer::new_uniform_with_data_wgpu(
             device,
             &GpuCullParams {
                 entity_count: 0,
@@ -213,7 +214,7 @@ impl GpuDrivenPipeline {
             "gpu_cull_params",
         );
 
-        let draw_count_buffer = GpuBuffer::new_storage(device, 4, "gpu_draw_count");
+        let draw_count_buffer = GpuBuffer::new_storage_wgpu(device, 4, "gpu_draw_count");
         let indirect_buffer = IndirectDrawBuffer::new(device, max_entities);
 
         Self {
@@ -235,13 +236,13 @@ impl GpuDrivenPipeline {
             commands.len(),
             self.max_entities
         );
-        self.command_buffer.write(queue, commands);
+        self.command_buffer.write_wgpu(queue, commands);
     }
 
     /// Upload frustum data for this frame.
     pub fn upload_frustum(&self, queue: &wgpu::Queue, frustum_data: &GpuFrustumData) {
         self.frustum_buffer
-            .write(queue, std::slice::from_ref(frustum_data));
+            .write_wgpu(queue, std::slice::from_ref(frustum_data));
     }
 
     /// Upload the entity count parameter. Call before `cull_and_prepare`.
@@ -251,7 +252,7 @@ impl GpuDrivenPipeline {
             _pad: [0; 3],
         };
         self.params_buffer
-            .write(queue, std::slice::from_ref(&params));
+            .write_wgpu(queue, std::slice::from_ref(&params));
     }
 
     /// Dispatch the GPU cull compute shader.

@@ -154,7 +154,7 @@ impl VolumetricFogPass {
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         // --- Compute pipeline --------------------------------------------------
-        let compute_pipeline = ComputePipeline::new(
+        let compute_pipeline = ComputePipeline::from_wgpu(
             device,
             &ComputePipelineDesc {
                 label: "volumetric_fog_compute",

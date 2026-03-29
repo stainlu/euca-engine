@@ -121,7 +121,7 @@ impl GpuParticleSystem {
         let device = &gpu.device;
 
         // ── Compute pipelines ──
-        let emit_pipeline = ComputePipeline::new(
+        let emit_pipeline = ComputePipeline::from_wgpu(
             device,
             &ComputePipelineDesc {
                 label: "particle_emit",
@@ -129,7 +129,7 @@ impl GpuParticleSystem {
                 entry_point: "emit",
             },
         );
-        let update_pipeline = ComputePipeline::new(
+        let update_pipeline = ComputePipeline::from_wgpu(
             device,
             &ComputePipelineDesc {
                 label: "particle_update",
@@ -140,14 +140,14 @@ impl GpuParticleSystem {
 
         // ── Buffers ──
         let particle_size = std::mem::size_of::<GpuParticle>() as u64;
-        let particle_buffer = GpuBuffer::new_storage(
+        let particle_buffer = GpuBuffer::new_storage_wgpu(
             device,
             particle_size * config.max_particles as u64,
             "particles",
         );
 
         // Counter buffer: one atomic u32 for alive_count
-        let counter_buffer = GpuBuffer::new_storage_with_data(device, &[0u32], "counters");
+        let counter_buffer = GpuBuffer::new_storage_with_data_wgpu(device, &[0u32], "counters");
 
         let initial_params = EmitParamsGpu {
             emitter_position: [0.0; 3],
@@ -170,7 +170,7 @@ impl GpuParticleSystem {
             cone_half_angle: config.cone_half_angle,
         };
         let params_buffer =
-            GpuBuffer::new_uniform_with_data(device, &initial_params, "emit_params");
+            GpuBuffer::new_uniform_with_data_wgpu(device, &initial_params, "emit_params");
 
         // Compute bind group (shared between emit and update — same layout)
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -200,7 +200,7 @@ impl GpuParticleSystem {
             ),
         });
 
-        let camera_buffer = GpuBuffer::new_uniform_with_data(
+        let camera_buffer = GpuBuffer::new_uniform_with_data_wgpu(
             device,
             &ParticleCameraGpu {
                 view: [[0.0; 4]; 4],

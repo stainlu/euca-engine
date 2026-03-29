@@ -440,7 +440,7 @@ const HZB_PIPELINE_NAME: &str = "hzb_downsample";
 /// Call once at startup.  Subsequent frames call `dispatch_hzb_downsample`
 /// for each mip transition.
 pub fn setup_hzb_pipeline(device: &wgpu::Device, manager: &mut ComputeManager) {
-    let pipeline = ComputePipeline::new(
+    let pipeline = ComputePipeline::from_wgpu(
         device,
         &ComputePipelineDesc {
             label: "hzb_downsample_pipeline",
@@ -468,9 +468,9 @@ pub fn create_hzb_buffers(
     let dst_h = src_height.div_ceil(2);
     let dst_size = (dst_w as u64) * (dst_h as u64) * 4;
 
-    let src_buf = GpuBuffer::new_storage(device, src_size, "hzb_src");
-    let dst_buf = GpuBuffer::new_storage(device, dst_size, "hzb_dst");
-    let params_buf = GpuBuffer::new_uniform_with_data(
+    let src_buf = GpuBuffer::new_storage_wgpu(device, src_size, "hzb_src");
+    let dst_buf = GpuBuffer::new_storage_wgpu(device, dst_size, "hzb_dst");
+    let params_buf = GpuBuffer::new_uniform_with_data_wgpu(
         device,
         &HzbParams {
             src_width,
