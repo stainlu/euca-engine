@@ -6,6 +6,7 @@
 //! between the main PBR pass and post-processing.
 
 use euca_math::Mat4;
+use euca_rhi::{ComputePassOps, RenderDevice};
 
 const TAA_SHADER: &str = include_str!("../shaders/taa_resolve.wgsl");
 
@@ -25,11 +26,9 @@ struct TaaParamsGpu {
 
 /// TAA resolve pass — manages history textures and dispatches the resolve shader.
 ///
-/// Generic over [`euca_rhi::RenderDevice`] — defaults to [`euca_rhi::wgpu_backend::WgpuDevice`]
-/// for backward compatibility. All GPU resource handles are backend-agnostic
-/// associated types; the `impl` blocks that touch raw wgpu APIs remain
-/// concrete on the default `WgpuDevice`.
-pub struct TaaPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+/// Fully generic over [`euca_rhi::RenderDevice`] — defaults to
+/// [`euca_rhi::wgpu_backend::WgpuDevice`] for backward compatibility.
+pub struct TaaPass<D: RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     pipeline: D::ComputePipeline,
     bind_group_layout: D::BindGroupLayout,
     /// Ping-pong history textures (Rgba16Float, full resolution).
@@ -47,86 +46,86 @@ pub struct TaaPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevic
     output_view: D::TextureView,
 }
 
-impl TaaPass {
+impl<D: RenderDevice> TaaPass<D> {
     /// Create a new TAA pass. Call once at renderer init.
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    pub fn new(device: &D, width: u32, height: u32) -> Self {
+        let shader_module = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("taa_resolve"),
-            source: wgpu::ShaderSource::Wgsl(TAA_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(TAA_SHADER.into()),
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("taa_bind_group_layout"),
             entries: &[
                 // 0: current frame (texture_2d<f32>)
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 1: history frame (texture_2d<f32>)
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 2: depth texture
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Depth,
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 3: uniform buffer
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // 4: output storage texture
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::StorageTexture {
+                        access: euca_rhi::StorageTextureAccess::WriteOnly,
+                        format: euca_rhi::TextureFormat::Rgba16Float,
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
                     },
                     count: None,
                 },
                 // 5: linear sampler (for bilinear history sampling)
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // 6: velocity buffer (Rg16Float motion vectors)
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: false },
+                        view_dimension: euca_rhi::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -134,32 +133,24 @@ impl TaaPass {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("taa_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline(&euca_rhi::ComputePipelineDesc {
             label: Some("taa_resolve_pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: &[&bind_group_layout],
             module: &shader_module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
+            entry_point: "main",
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("taa_uniforms"),
             size: std::mem::size_of::<TaaParamsGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("taa_linear_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
             ..Default::default()
         });
 
@@ -182,59 +173,57 @@ impl TaaPass {
     }
 
     fn create_history_textures(
-        device: &wgpu::Device,
+        device: &D,
         width: u32,
         height: u32,
-    ) -> ([wgpu::Texture; 2], [wgpu::TextureView; 2]) {
-        let desc = wgpu::TextureDescriptor {
+    ) -> ([D::Texture; 2], [D::TextureView; 2]) {
+        let desc = euca_rhi::TextureDesc {
             label: Some("taa_history"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_DST,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::TEXTURE_BINDING
+                | euca_rhi::TextureUsages::STORAGE_BINDING
+                | euca_rhi::TextureUsages::COPY_DST,
             view_formats: &[],
         };
 
         let t0 = device.create_texture(&desc);
         let t1 = device.create_texture(&desc);
-        let v0 = t0.create_view(&Default::default());
-        let v1 = t1.create_view(&Default::default());
+        let v0 = device.create_texture_view(&t0, &Default::default());
+        let v1 = device.create_texture_view(&t1, &Default::default());
         ([t0, t1], [v0, v1])
     }
 
-    fn create_output_texture(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
+    fn create_output_texture(device: &D, width: u32, height: u32) -> (D::Texture, D::TextureView) {
+        let tex = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("taa_output"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::TEXTURE_BINDING
+                | euca_rhi::TextureUsages::STORAGE_BINDING
+                | euca_rhi::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let view = tex.create_view(&Default::default());
+        let view = device.create_texture_view(&tex, &Default::default());
         (tex, view)
     }
 
     /// Resize history textures when the window changes size.
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         if self.width == width && self.height == height {
             return;
         }
@@ -251,12 +240,12 @@ impl TaaPass {
 
     /// Returns the output texture view (resolved TAA result).
     /// Post-processing reads from this instead of the raw PBR output.
-    pub fn output_view(&self) -> &wgpu::TextureView {
+    pub fn output_view(&self) -> &D::TextureView {
         &self.output_view
     }
 
     /// Returns a reference to the output texture (for copy operations).
-    pub fn output_texture(&self) -> &wgpu::Texture {
+    pub fn output_texture(&self) -> &D::Texture {
         &self.output_texture
     }
 
@@ -271,12 +260,11 @@ impl TaaPass {
     #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        current_frame_view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
-        velocity_view: &wgpu::TextureView,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        current_frame_view: &D::TextureView,
+        depth_view: &D::TextureView,
+        velocity_view: &D::TextureView,
         inv_vp: &Mat4,
         prev_vp: &Mat4,
         jitter: [f32; 2],
@@ -292,77 +280,80 @@ impl TaaPass {
             depth_threshold: 0.01,
             _pad: 0.0,
         };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
+        device.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
 
         // read_idx = current_read (history to sample from)
         // write_idx = 1 - current_read (history to write to = output)
         let read_idx = self.current_read;
         let write_idx = 1 - self.current_read;
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("taa_bind_group"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(current_frame_view),
+                    resource: euca_rhi::BindingResource::TextureView(current_frame_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.history_views[read_idx]),
+                    resource: euca_rhi::BindingResource::TextureView(&self.history_views[read_idx]),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
+                    resource: euca_rhi::BindingResource::TextureView(depth_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: self.uniform_buffer.as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &self.uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.output_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.output_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&self.sampler),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(velocity_view),
+                    resource: euca_rhi::BindingResource::TextureView(velocity_view),
                 },
             ],
         });
 
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("taa_resolve"),
-                timestamp_writes: None,
-            });
+            let mut pass = device.begin_compute_pass(encoder, Some("taa_resolve"));
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);
         }
 
         // Copy output to history[write_idx] for next frame
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
+        let copy_size = euca_rhi::Extent3d {
+            width: self.width,
+            height: self.height,
+            depth_or_array_layers: 1,
+        };
+        device.copy_texture_to_texture(
+            encoder,
+            &euca_rhi::TexelCopyTextureInfo {
                 texture: &self.output_texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: euca_rhi::Origin3d::default(),
+                aspect: euca_rhi::TextureAspect::All,
             },
-            wgpu::TexelCopyTextureInfo {
+            &euca_rhi::TexelCopyTextureInfo {
                 texture: &self.history[write_idx],
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: euca_rhi::Origin3d::default(),
+                aspect: euca_rhi::TextureAspect::All,
             },
-            wgpu::Extent3d {
-                width: self.width,
-                height: self.height,
-                depth_or_array_layers: 1,
-            },
+            copy_size,
         );
 
         // Swap: next frame reads from write_idx

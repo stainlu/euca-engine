@@ -945,6 +945,30 @@ impl RenderDevice for WgpuDevice {
         })
     }
 
+    fn copy_texture_to_texture(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &TexelCopyTextureInfo<Self>,
+        dst: &TexelCopyTextureInfo<Self>,
+        size: Extent3d,
+    ) {
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: src.texture,
+                mip_level: src.mip_level,
+                origin: src.origin.into(),
+                aspect: src.aspect.into(),
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: dst.texture,
+                mip_level: dst.mip_level,
+                origin: dst.origin.into(),
+                aspect: dst.aspect.into(),
+            },
+            size.into(),
+        );
+    }
+
     fn submit(&self, encoder: wgpu::CommandEncoder) {
         self.queue.submit(std::iter::once(encoder.finish()));
     }
