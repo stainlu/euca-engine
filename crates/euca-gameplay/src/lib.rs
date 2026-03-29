@@ -40,6 +40,8 @@ pub mod health;
 pub mod hero;
 /// Data-driven inventory, equipment, and stat aggregation.
 pub mod inventory;
+/// Active item abilities, cooldowns, charges, backpack, and neutral item slot.
+pub mod item_active;
 /// Experience points, levels, and XP bounties.
 pub mod leveling;
 /// Jungle neutral camp monsters with leash behavior.
@@ -119,6 +121,11 @@ pub use hero::{AbilityDef, HeroDef, HeroName, HeroRegistry, StatGrowth, spawn_he
 pub use inventory::{
     Equipment, Inventory, ItemDef, ItemRegistry, ItemStack, StatModifiers, add_item, equip,
     equipment_stat_system, find_item, has_space, remove_item, unequip,
+};
+pub use item_active::{
+    Backpack, BackpackItem, CooldownGroup, ItemActive, ItemCharges, ItemError, ItemState,
+    NeutralItemSlot, can_use_active, consume_charge, swap_to_backpack, tick_charges,
+    tick_cooldowns, use_item_active,
 };
 pub use leveling::{Level, XpBounty, XpShareRadius, xp_on_kill_system};
 pub use neutral_camp::{NeutralCamp, neutral_camp_system};
