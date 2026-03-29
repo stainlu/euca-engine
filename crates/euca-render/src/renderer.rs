@@ -1054,11 +1054,7 @@ impl<D: RenderDevice> Renderer<D> {
 
     /// Grow the main instance buffer and rebuild its bind group if `count`
     /// exceeds the current capacity. Returns `true` if the buffer was grown.
-    fn ensure_instance_capacity(
-        &mut self,
-        rhi: &D,
-        count: usize,
-    ) -> bool {
+    fn ensure_instance_capacity(&mut self, rhi: &D, count: usize) -> bool {
         if count <= self.instance_capacity {
             return false;
         }
@@ -1088,11 +1084,7 @@ impl<D: RenderDevice> Renderer<D> {
 
     /// Grow the shadow instance buffer and rebuild its bind group if `count`
     /// exceeds the current capacity.
-    fn ensure_shadow_instance_capacity(
-        &mut self,
-        rhi: &D,
-        count: usize,
-    ) -> bool {
+    fn ensure_shadow_instance_capacity(&mut self, rhi: &D, count: usize) -> bool {
         if count <= self.shadow_instance_capacity {
             return false;
         }
@@ -1872,7 +1864,12 @@ impl<D: RenderDevice> Renderer<D> {
             for batch in &opaque_batches {
                 let mesh = &self.meshes[batch.mesh.0 as usize];
                 pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                pass.set_index_buffer(
+                    &mesh.index_buffer,
+                    euca_rhi::IndexFormat::Uint32,
+                    0,
+                    mesh.index_buffer_size,
+                );
                 pass.draw_indexed(
                     0..mesh.index_count,
                     0,
@@ -2007,7 +2004,12 @@ impl<D: RenderDevice> Renderer<D> {
                 for batch in &opaque_batches {
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                    pass.set_index_buffer(
+                        &mesh.index_buffer,
+                        euca_rhi::IndexFormat::Uint32,
+                        0,
+                        mesh.index_buffer_size,
+                    );
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2022,7 +2024,12 @@ impl<D: RenderDevice> Renderer<D> {
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                    pass.set_index_buffer(
+                        &mesh.index_buffer,
+                        euca_rhi::IndexFormat::Uint32,
+                        0,
+                        mesh.index_buffer_size,
+                    );
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2037,7 +2044,12 @@ impl<D: RenderDevice> Renderer<D> {
             // decal texture. For now we bind the decal vertex/index buffers and
             // issue one draw per command so the integration path is exercised.
             if !self.pending_decals.is_empty() {
-                pass.set_vertex_buffer(0, self.decal_renderer.vertex_buffer(), 0, self.decal_renderer.vertex_buffer_size());
+                pass.set_vertex_buffer(
+                    0,
+                    self.decal_renderer.vertex_buffer(),
+                    0,
+                    self.decal_renderer.vertex_buffer_size(),
+                );
                 pass.set_index_buffer(
                     self.decal_renderer.index_buffer(),
                     euca_rhi::IndexFormat::Uint16,
@@ -2069,7 +2081,12 @@ impl<D: RenderDevice> Renderer<D> {
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                    pass.set_index_buffer(
+                        &mesh.index_buffer,
+                        euca_rhi::IndexFormat::Uint32,
+                        0,
+                        mesh.index_buffer_size,
+                    );
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
