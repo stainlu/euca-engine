@@ -2,6 +2,8 @@
 pub mod character;
 mod collision;
 mod components;
+/// Pre-allocated frame cache that eliminates per-tick heap allocations in the physics pipeline.
+pub mod frame_cache;
 /// GPU-accelerated AABB broadphase via compute shaders (requires `gpu-broadphase` feature).
 #[cfg(feature = "gpu-broadphase")]
 pub mod gpu_broadphase;
@@ -19,6 +21,7 @@ pub use components::{
     Collider, ColliderShape, CollisionEvent, Gravity, Mass, PhysicsBody, RigidBodyType,
     SLEEP_THRESHOLD, Sleeping, Velocity, layers_interact,
 };
+pub use frame_cache::PhysicsFrameCache;
 pub use joints::{Joint, JointKind};
 pub use raycast::{
     OverlapHit, Ray, RayHit, SweepHit, WorldRayHit, overlap_sphere, raycast_aabb, raycast_collider,
