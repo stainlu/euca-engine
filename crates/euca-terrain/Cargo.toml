@@ -6,8 +6,13 @@ description = "Terrain and heightmap system with chunk LOD, texture splatting, a
 keywords = ["terrain", "heightmap", "gamedev", "lod", "splatting"]
 categories = ["game-development"]
 
+[features]
+gpu-terrain = ["dep:euca-rhi", "dep:bytemuck"]
+
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
 euca-physics = { path = "../euca-physics" }
+euca-rhi = { path = "../euca-rhi", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
 log = "0.4"
