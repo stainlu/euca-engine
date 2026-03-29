@@ -8,6 +8,7 @@ mod command;
 mod component;
 mod entity;
 mod event;
+mod lock_util;
 mod query;
 mod resource;
 mod schedule;
