@@ -16,6 +16,8 @@ pub mod abilities;
 pub mod ai;
 /// Engine-level assertions — testable expectations as ECS entities.
 pub mod assertions;
+/// Dota 2 tower and building system — types, backdoor, fortification, aggro, bounties.
+pub mod building;
 /// Camera modes and follow systems.
 pub mod camera;
 /// Timed corpse/entity cleanup after death.
@@ -125,3 +127,10 @@ pub use turns::{
 pub use zones::{Zone, ZoneDynamic, ZoneEffect, ZoneShape, zone_dynamic_system, zone_system};
 
 pub use tower_aggro::{TowerAggroOverride, tower_aggro_system};
+
+pub use building::{
+    BackdoorProtection, BuildingStats, BuildingType, CreepEffect, Fortification, Lane, TowerAggro,
+    activate_fortification, backdoor_damage_modifier, barracks_destroyed_effect, building_stats,
+    is_building_invulnerable, tick_fortification, tower_bounty, update_backdoor_protection,
+    update_tower_aggro,
+};
