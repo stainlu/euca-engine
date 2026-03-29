@@ -22,6 +22,8 @@ pub mod camera;
 pub mod cleanup;
 /// Projectiles and auto-PvP melee combat.
 pub mod combat;
+/// Dota 2-accurate combat math formulas (armor, magic resistance, crits, evasion, etc.).
+pub mod combat_math;
 /// Tabular game data loaded from config files.
 pub mod data_table;
 /// Gold currency, bounties, and kill rewards.
