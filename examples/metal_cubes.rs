@@ -17,6 +17,7 @@ fn main() {
         pipeline: Option<<MetalDevice as RenderDevice>::RenderPipeline>,
         vertex_buffer: Option<<MetalDevice as RenderDevice>::Buffer>,
         uniform_buffer: Option<<MetalDevice as RenderDevice>::Buffer>,
+        depth_texture: Option<<MetalDevice as RenderDevice>::TextureView>,
         frame: u32,
     }
 
@@ -186,7 +187,13 @@ fn main() {
                     front_face: FrontFace::Ccw,
                     ..Default::default()
                 },
-                depth_stencil: None,
+                depth_stencil: Some(DepthStencilState {
+                    format: TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: CompareFunction::Less,
+                    stencil: StencilState::default(),
+                    bias: DepthBiasState::default(),
+                }),
                 multisample: MultisampleState::default(),
             });
 
@@ -211,9 +218,28 @@ fn main() {
                 mapped_at_creation: false,
             });
 
+            // Depth buffer
+            let (sw, sh) = device.surface_size();
+            let depth_tex = device.create_texture(&TextureDesc {
+                label: Some("Depth"),
+                size: Extent3d {
+                    width: sw.max(1),
+                    height: sh.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Depth32Float,
+                usage: TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let depth_view = device.create_texture_view(&depth_tex, &TextureViewDesc::default());
+
             self.pipeline = Some(pipeline);
             self.vertex_buffer = Some(vertex_buffer);
             self.uniform_buffer = Some(uniform_buffer);
+            self.depth_texture = Some(depth_view);
             self.device = Some(device);
             window.request_redraw(); // Kick off the render loop
             self.window = Some(window);
@@ -237,6 +263,7 @@ fn main() {
                     let pipeline = self.pipeline.as_ref().unwrap();
                     let vb = self.vertex_buffer.as_ref().unwrap();
                     let ub = self.uniform_buffer.as_ref().unwrap();
+                    let depth = self.depth_texture.as_ref().unwrap();
 
                     self.frame += 1;
                     let t = self.frame as f32 * 0.01;
@@ -288,7 +315,14 @@ fn main() {
                                         store: StoreOp::Store,
                                     },
                                 })],
-                                depth_stencil_attachment: None,
+                                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                                    view: depth,
+                                    depth_ops: Some(Operations {
+                                        load: LoadOp::Clear(1.0),
+                                        store: StoreOp::Discard,
+                                    }),
+                                    stencil_ops: None,
+                                }),
                             },
                         );
                         pass.set_pipeline(pipeline);
@@ -321,6 +355,7 @@ fn main() {
         pipeline: None,
         vertex_buffer: None,
         uniform_buffer: None,
+        depth_texture: None,
         frame: 0,
     };
     event_loop.run_app(&mut app).unwrap();
