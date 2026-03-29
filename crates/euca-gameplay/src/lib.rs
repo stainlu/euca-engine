@@ -50,6 +50,8 @@ pub mod player;
 pub mod player_input;
 /// Game replay recording and playback.
 pub mod replay;
+/// Roshan — the main boss objective, drops Aegis/Cheese/Refresher Shard.
+pub mod roshan;
 /// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
 /// Shop system — buy/sell items with gold, recipe combining.
@@ -147,4 +149,11 @@ pub use attributes::{
     AttributeGrowth as AttrGrowth, BaseAttributes, ComputedAttributes, DerivedStats,
     HeroAttributes, HeroTimings, PrimaryAttribute, attack_interval, compute_attributes,
     derive_stats, total_armor, total_attack_speed, total_damage, total_hp, total_mana, turn_time,
+};
+
+pub use roshan::{
+    Aegis, AegisResurrection, Cheese, RefresherShard, Roshan, RoshanDrops, RoshanSlam,
+    aegis_trigger, new_aegis, new_cheese, new_refresher_shard, new_roshan_slam, pick_up_aegis,
+    respawn_roshan, roshan_dies, roshan_respawn_time, roshan_slam_tick, roshan_takes_damage,
+    spawn_roshan, tick_aegis, tick_roshan, use_cheese,
 };
