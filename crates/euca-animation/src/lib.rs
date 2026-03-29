@@ -29,6 +29,7 @@
 //! - [`AnimStateMachine`] -- parametric state machine with conditions
 //! - [`AnimPose`] -- sampled per-joint transforms (the central data type)
 //! - [`AnimationBlender`] -- multi-layer pose blending
+//! - [`BlendWorkspace`] -- pre-allocated buffer for allocation-free blending
 //! - [`BlendSpace1D`] / [`BlendSpace2D`] -- parametric blend spaces
 //! - [`MontagePlayer`] -- one-shot overlay animations
 //! - [`RootMotionReceiver`] -- root bone to entity transform extraction
@@ -47,7 +48,7 @@ pub mod state_machine;
 pub mod system;
 
 // Re-exports for ergonomic access
-pub use blend::{AnimationBlender, Crossfade};
+pub use blend::{AnimationBlender, BlendWorkspace, Crossfade};
 pub use blend_space::{BlendSample1D, BlendSample2D, BlendSpace1D, BlendSpace2D};
 pub use clip::AnimPose;
 pub use event::{
