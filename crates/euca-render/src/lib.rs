@@ -52,6 +52,8 @@ pub mod light_probe;
 mod lod;
 mod material;
 mod mesh;
+/// Meshlet data structures and offline meshletizer for virtual geometry.
+pub mod meshlet;
 /// Apple Metal backend hints and render pass optimization.
 pub mod metal_hints;
 /// Per-pixel velocity-based motion blur.
@@ -126,6 +128,9 @@ pub use light_probe::{LightProbe, LightProbeGrid, evaluate_sh};
 pub use lod::{LodSettings, lod_select_system};
 pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
 pub use mesh::{Mesh, MeshHandle, MeshRenderer};
+pub use meshlet::{
+    GpuMeshlet, MAX_MESHLET_TRIANGLES, MAX_MESHLET_VERTICES, Meshlet, MeshletMesh, meshletize,
+};
 pub use metal_hints::{
     AttachmentOps, ComputeOptimizer, ComputeTimingHint, DepthAttachmentOps, MetalRenderHints,
     RenderPassLayout, RenderPassOptimizer,
