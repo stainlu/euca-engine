@@ -841,6 +841,45 @@ impl RenderDevice for MetalDevice {
         }
     }
 
+    fn copy_texture_to_texture(
+        &self,
+        encoder: &mut MetalCommandEncoder,
+        src: &TexelCopyTextureInfo<Self>,
+        dst: &TexelCopyTextureInfo<Self>,
+        size: Extent3d,
+    ) {
+        unsafe {
+            let blit = encoder
+                .command_buffer
+                .blitCommandEncoder()
+                .expect("Failed to create Metal blit encoder");
+            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                &(src.texture.0).0,
+                0, // source slice
+                src.mip_level as usize,
+                MTLOrigin {
+                    x: src.origin.x as usize,
+                    y: src.origin.y as usize,
+                    z: src.origin.z as usize,
+                },
+                MTLSize {
+                    width: size.width as usize,
+                    height: size.height as usize,
+                    depth: size.depth_or_array_layers as usize,
+                },
+                &(dst.texture.0).0,
+                0, // destination slice
+                dst.mip_level as usize,
+                MTLOrigin {
+                    x: dst.origin.x as usize,
+                    y: dst.origin.y as usize,
+                    z: dst.origin.z as usize,
+                },
+            );
+            blit.endEncoding();
+        }
+    }
+
     fn submit(&self, encoder: MetalCommandEncoder) {
         // Present any pending drawable BEFORE committing (Metal best practice)
         if let Some(ref drawable) = encoder.pending_drawable {

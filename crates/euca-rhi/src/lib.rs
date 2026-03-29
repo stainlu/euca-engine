@@ -98,6 +98,14 @@ pub trait RenderDevice: Send + Sync + 'static {
         label: Option<&str>,
     ) -> Self::ComputePass<'a>;
 
+    fn copy_texture_to_texture(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        src: &TexelCopyTextureInfo<Self>,
+        dst: &TexelCopyTextureInfo<Self>,
+        size: Extent3d,
+    );
+
     fn submit(&self, encoder: Self::CommandEncoder);
 
     // -- Surface management --

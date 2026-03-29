@@ -1021,7 +1021,7 @@ impl Renderer {
             prev_depth_buffer: Vec::new(),
             prev_depth_dims: (0, 0),
             taa_pass: crate::taa::TaaPass::new(
-                &gpu.device,
+                rhi,
                 gpu.surface_config.width,
                 gpu.surface_config.height,
             ),
@@ -1370,11 +1370,8 @@ impl Renderer {
                 gpu.surface_config.height,
             );
         }
-        self.taa_pass.resize(
-            &gpu.device,
-            gpu.surface_config.width,
-            gpu.surface_config.height,
-        );
+        self.taa_pass
+            .resize(rhi, gpu.surface_config.width, gpu.surface_config.height);
         self.velocity_textures.resize(
             &gpu.device,
             gpu.surface_config.width,
@@ -2138,9 +2135,9 @@ impl Renderer {
         if self.post_process_settings.taa_enabled {
             let inv_vp = vp.inverse();
             let prev_vp = camera.prev_view_proj.unwrap_or(vp);
+            let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
             self.taa_pass.execute(
-                &gpu.device,
-                &gpu.queue,
+                rhi,
                 encoder,
                 resolve_target,
                 &self.post_process_stack.depth_resolve_view,
