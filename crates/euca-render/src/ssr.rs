@@ -16,6 +16,7 @@
 //! - Reflection overlay texture (Rgba16Float) with premultiplied alpha.
 //!   The caller composites this over the scene using alpha blending.
 
+use euca_rhi::pass::RenderPassOps;
 use euca_rhi::{
     BindGroupLayoutDesc, BindGroupLayoutEntry, BindingType, BlendState, BufferBindingType,
     BufferDesc, BufferUsages, ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState,
@@ -219,8 +220,6 @@ impl<D: euca_rhi::RenderDevice> SsrPass<D> {
     /// Execute the SSR pass: dispatch a fullscreen triangle that ray-marches
     /// reflections and writes the result into the internal overlay texture.
     pub fn execute(&self, params: SsrExecuteParams<'_, D>) {
-        use euca_rhi::pass::RenderPassOps;
-
         if !params.settings.enabled {
             return;
         }

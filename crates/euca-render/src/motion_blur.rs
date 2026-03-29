@@ -15,6 +15,7 @@
 //! Run after TAA resolve and before tonemapping. The velocity buffer from
 //! `VelocityPipeline` (WU4) provides per-pixel Rg16Float motion vectors.
 
+use euca_rhi::pass::ComputePassOps;
 use euca_rhi::{
     BindGroupLayoutDesc, BindGroupLayoutEntry, BindingType, BufferBindingType, BufferDesc,
     BufferUsages, ComputePipelineDesc, Extent3d, ShaderDesc, ShaderSource, ShaderStages,
@@ -270,24 +271,19 @@ impl<D: euca_rhi::RenderDevice> MotionBlurPass<D> {
         let view = device.create_texture_view(&tex, &TextureViewDesc::default());
         (tex, view)
     }
-}
 
-// Keep the wgpu-specific execute/accessor methods in a separate impl block
-// since the execute params and command encoding are not yet abstracted.
-impl MotionBlurPass {
     /// Returns the output texture view (motion-blurred result).
-    pub fn output_view(&self) -> &wgpu::TextureView {
+    pub fn output_view(&self) -> &D::TextureView {
         &self.output_view
     }
 
     /// Execute the motion blur pass (tile + blur).
     pub fn execute(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        color_view: &wgpu::TextureView,
-        velocity_view: &wgpu::TextureView,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        color_view: &D::TextureView,
+        velocity_view: &D::TextureView,
         settings: &MotionBlurSettings,
     ) {
         let tile_w = self.width.div_ceil(TILE_SIZE);
@@ -303,41 +299,42 @@ impl MotionBlurPass {
             tile_count: [tile_w, tile_h],
             _pad: [0; 2],
         };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
+        device.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("motion_blur_bg"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: self.uniform_buffer.as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &self.uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(color_view),
+                    resource: euca_rhi::BindingResource::TextureView(color_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(velocity_view),
+                    resource: euca_rhi::BindingResource::TextureView(velocity_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.tile_max_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.tile_max_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.output_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.output_view),
                 },
             ],
         });
 
         // Pass 1: Tile max velocity
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("motion_blur_tile"),
-                timestamp_writes: None,
-            });
+            let mut pass = device.begin_compute_pass(encoder, Some("motion_blur_tile"));
             pass.set_pipeline(&self.tile_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             // Each workgroup is 16x16, processing one tile
@@ -346,10 +343,7 @@ impl MotionBlurPass {
 
         // Pass 2: Directional blur
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("motion_blur_blur"),
-                timestamp_writes: None,
-            });
+            let mut pass = device.begin_compute_pass(encoder, Some("motion_blur_blur"));
             pass.set_pipeline(&self.blur_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);

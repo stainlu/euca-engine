@@ -17,6 +17,7 @@
 //! Run after motion blur (if enabled) and before tonemapping. Reads the depth
 //! buffer and HDR color texture.
 
+use euca_rhi::pass::ComputePassOps;
 use euca_rhi::{
     BindGroupLayoutDesc, BindGroupLayoutEntry, BindingType, BufferBindingType, BufferDesc,
     BufferUsages, ComputePipelineDesc, Extent3d, ShaderDesc, ShaderSource, ShaderStages,
@@ -275,29 +276,24 @@ impl<D: euca_rhi::RenderDevice> DofPass<D> {
         let view = device.create_texture_view(&tex, &TextureViewDesc::default());
         (tex, view)
     }
-}
 
-// Keep the wgpu-specific execute/accessor methods in a separate impl block
-// since the execute params and command encoding are not yet abstracted.
-impl DofPass {
     /// Returns the output texture view (DoF-blurred result).
-    pub fn output_view(&self) -> &wgpu::TextureView {
+    pub fn output_view(&self) -> &D::TextureView {
         &self.output_view
     }
 
     /// Returns the CoC texture view (for debug visualization).
-    pub fn coc_view(&self) -> &wgpu::TextureView {
+    pub fn coc_view(&self) -> &D::TextureView {
         &self.coc_view
     }
 
     /// Execute the DoF pass (CoC computation + gather blur).
     pub fn execute(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        color_view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        color_view: &D::TextureView,
+        depth_view: &D::TextureView,
         settings: &DofSettings,
     ) {
         let params = DofParamsGpu {
@@ -310,41 +306,42 @@ impl DofPass {
             near_far: [settings.near_plane, settings.far_plane],
             _pad: [0.0; 2],
         };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
+        device.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("dof_bg"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: self.uniform_buffer.as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &self.uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(color_view),
+                    resource: euca_rhi::BindingResource::TextureView(color_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
+                    resource: euca_rhi::BindingResource::TextureView(depth_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.coc_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.coc_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.output_view),
+                    resource: euca_rhi::BindingResource::TextureView(&self.output_view),
                 },
             ],
         });
 
         // Pass 1: CoC computation
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("dof_coc"),
-                timestamp_writes: None,
-            });
+            let mut pass = device.begin_compute_pass(encoder, Some("dof_coc"));
             pass.set_pipeline(&self.coc_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);
@@ -352,10 +349,7 @@ impl DofPass {
 
         // Pass 2: Gather blur
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("dof_gather"),
-                timestamp_writes: None,
-            });
+            let mut pass = device.begin_compute_pass(encoder, Some("dof_gather"));
             pass.set_pipeline(&self.gather_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);
