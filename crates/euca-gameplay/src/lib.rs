@@ -167,8 +167,8 @@ pub use attributes::{
 pub use building::{
     BackdoorProtection, BuildingStats, BuildingType, CreepEffect, Fortification, Lane, TowerAggro,
     activate_fortification, backdoor_damage_modifier, barracks_destroyed_effect, building_stats,
-    is_building_invulnerable, tick_fortification, tower_bounty, update_backdoor_protection,
-    update_tower_aggro,
+    is_building_invulnerable, tick_fortification, tower_bounty as building_tower_bounty,
+    update_backdoor_protection, update_tower_aggro,
 };
 
 pub use fog_of_war::{
