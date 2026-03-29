@@ -32,6 +32,16 @@ pub struct PropagationState {
     pub last_tick: u32,
 }
 
+/// Retained heap allocations for the BFS traversal in
+/// [`transform_propagation_system`]. Stored as a world resource so that
+/// `Vec` / `VecDeque` capacity survives across frames — each frame only
+/// calls `.clear()`, which resets the length without freeing memory.
+#[derive(Debug, Default)]
+pub struct TransformPropagationCache {
+    roots: Vec<(Entity, euca_math::Transform)>,
+    queue: VecDeque<(Entity, euca_math::Transform, bool)>,
+}
+
 /// Returns true if component `T` on `entity` was modified since `since_tick`.
 fn changed_since<T: 'static + Send + Sync>(world: &World, entity: Entity, since_tick: u32) -> bool {
     world
@@ -56,16 +66,23 @@ pub fn transform_propagation_system(world: &mut World) {
         .unwrap_or(0);
     let current_tick = world.current_tick() as u32;
 
-    // First pass: process root entities (no Parent)
-    let roots: Vec<(Entity, euca_math::Transform)> = {
+    // Take the cache out of the world so we can mutate it without
+    // conflicting with other `world` borrows. On first call this
+    // creates a fresh (empty) cache; on subsequent calls the
+    // previously-inserted cache is returned with its heap capacity intact.
+    let mut cache = world
+        .remove_resource::<TransformPropagationCache>()
+        .unwrap_or_default();
+    cache.roots.clear();
+    cache.queue.clear();
+
+    // First pass: collect root entities (no Parent)
+    {
         let query = Query::<(Entity, &LocalTransform), euca_ecs::Without<Parent>>::new(world);
-        query.iter().map(|(e, lt)| (e, lt.0)).collect()
-    };
+        cache.roots.extend(query.iter().map(|(e, lt)| (e, lt.0)));
+    }
 
-    // BFS queue: (entity, parent_global_transform, parent_was_dirty)
-    let mut queue: VecDeque<(Entity, euca_math::Transform, bool)> = VecDeque::new();
-
-    for (entity, local) in &roots {
+    for (entity, local) in &cache.roots {
         let dirty = changed_since::<LocalTransform>(world, *entity, last_tick)
             || changed_since::<Children>(world, *entity, last_tick);
 
@@ -76,13 +93,13 @@ pub fn transform_propagation_system(world: &mut World) {
         // Always enqueue children — they need to check their own dirty state
         if let Some(children) = world.get::<Children>(*entity) {
             for &child in &children.0 {
-                queue.push_back((child, *local, dirty));
+                cache.queue.push_back((child, *local, dirty));
             }
         }
     }
 
     // Second pass: BFS through children
-    while let Some((entity, parent_global, parent_dirty)) = queue.pop_front() {
+    while let Some((entity, parent_global, parent_dirty)) = cache.queue.pop_front() {
         let self_dirty = changed_since::<LocalTransform>(world, entity, last_tick)
             || changed_since::<Parent>(world, entity, last_tick)
             || changed_since::<Children>(world, entity, last_tick);
@@ -102,10 +119,12 @@ pub fn transform_propagation_system(world: &mut World) {
 
         if let Some(children) = world.get::<Children>(entity) {
             for &child in &children.0 {
-                queue.push_back((child, global, needs_update));
+                cache.queue.push_back((child, global, needs_update));
             }
         }
     }
+
+    world.insert_resource(cache);
 
     // Update propagation state
     if let Some(state) = world.resource_mut::<PropagationState>() {
