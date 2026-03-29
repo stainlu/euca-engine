@@ -1249,6 +1249,38 @@ impl RenderDevice for MetalDevice {
         encoder.command_buffer.commit();
     }
 
+    fn submit_multiple(&self, encoders: Vec<MetalCommandEncoder>) {
+        let count = encoders.len();
+        for (i, encoder) in encoders.into_iter().enumerate() {
+            // Present any pending drawable BEFORE committing (Metal best practice)
+            if let Some(ref drawable) = encoder.pending_drawable {
+                let mtl_drawable: &ProtocolObject<dyn MTLDrawable> =
+                    ProtocolObject::from_ref(&**drawable);
+                encoder.command_buffer.presentDrawable(mtl_drawable);
+            }
+
+            // Only the last command buffer signals the frame semaphore,
+            // keeping one signal per frame for correct in-flight tracking.
+            let is_last = i + 1 == count;
+            if is_last {
+                let sem = self.frame_semaphore.0;
+                unsafe {
+                    let block = block2::RcBlock::new(
+                        move |_buf: NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
+                            dispatch_semaphore_signal(sem);
+                        },
+                    );
+                    let handler: *mut block2::DynBlock<
+                        dyn Fn(NonNull<ProtocolObject<dyn MTLCommandBuffer>>),
+                    > = (&*block as *const block2::DynBlock<_>).cast_mut();
+                    encoder.command_buffer.addCompletedHandler(handler);
+                }
+            }
+
+            encoder.command_buffer.commit();
+        }
+    }
+
     fn get_current_texture(&self) -> Result<MetalSurfaceTexture, SurfaceError> {
         // Wait for a frame slot — blocks if MAX_FRAMES_IN_FLIGHT are already
         // in-flight, allowing CPU/GPU overlap without exhausting drawables.
