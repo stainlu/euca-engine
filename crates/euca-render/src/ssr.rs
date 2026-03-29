@@ -99,16 +99,15 @@ impl SsrUniforms {
 ///
 /// Groups the input textures, matrices, and settings that `SsrPass::execute`
 /// needs, keeping the function signature clean and extensible.
-pub struct SsrExecuteParams<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub encoder: &'a mut wgpu::CommandEncoder,
+pub struct SsrExecuteParams<'a, D: euca_rhi::RenderDevice> {
+    pub rhi: &'a D,
+    pub encoder: &'a mut D::CommandEncoder,
     /// Resolved single-sample depth (R32Float).
-    pub depth_view: &'a wgpu::TextureView,
+    pub depth_view: &'a D::TextureView,
     /// G-buffer RT1 (octahedral normal + metallic + roughness).
-    pub normal_material_view: &'a wgpu::TextureView,
+    pub normal_material_view: &'a D::TextureView,
     /// HDR scene color before tonemapping.
-    pub color_view: &'a wgpu::TextureView,
+    pub color_view: &'a D::TextureView,
     pub settings: &'a SsrSettings,
     /// Inverse of the camera projection matrix (4x4 column-major).
     pub inv_projection: &'a [[f32; 4]; 4],
@@ -216,14 +215,12 @@ impl<D: euca_rhi::RenderDevice> SsrPass<D> {
     pub fn height(&self) -> u32 {
         self.height
     }
-}
 
-// Keep the wgpu-specific execute method in a separate impl block since the
-// execute params and command encoding are not yet abstracted through RHI.
-impl SsrPass {
     /// Execute the SSR pass: dispatch a fullscreen triangle that ray-marches
     /// reflections and writes the result into the internal overlay texture.
-    pub fn execute(&self, params: SsrExecuteParams<'_>) {
+    pub fn execute(&self, params: SsrExecuteParams<'_, D>) {
+        use euca_rhi::pass::RenderPassOps;
+
         if !params.settings.enabled {
             return;
         }
@@ -236,52 +233,55 @@ impl SsrPass {
             self.height,
         );
         params
-            .queue
+            .rhi
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let bind_group = params.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = params.rhi.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("SSR BG"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(params.depth_view),
+                    resource: euca_rhi::BindingResource::TextureView(params.depth_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(params.normal_material_view),
+                    resource: euca_rhi::BindingResource::TextureView(params.normal_material_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(params.color_view),
+                    resource: euca_rhi::BindingResource::TextureView(params.color_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: euca_rhi::BindingResource::Sampler(&self.sampler),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: self.uniform_buffer.as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &self.uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
             ],
         });
 
-        let mut pass = params
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = params.rhi.begin_render_pass(
+            params.encoder,
+            &euca_rhi::RenderPassDesc {
                 label: Some("SSR Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
                     view: &self.output_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
+                    ops: euca_rhi::Operations {
+                        load: euca_rhi::LoadOp::Clear(euca_rhi::Color::TRANSPARENT),
+                        store: euca_rhi::StoreOp::Store,
                     },
-                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                ..Default::default()
-            });
+            },
+        );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);
@@ -289,7 +289,7 @@ impl SsrPass {
 
     /// The texture view containing the SSR reflection overlay.
     /// Composite this over the scene with alpha blending.
-    pub fn output_view(&self) -> &wgpu::TextureView {
+    pub fn output_view(&self) -> &D::TextureView {
         &self.output_view
     }
 }

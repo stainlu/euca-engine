@@ -619,31 +619,23 @@ impl<D: euca_rhi::RenderDevice> PostProcessStack<D> {
         self.ssao_blur_texture = ssao_blur_texture;
         self.ssao_blur_view = ssao_blur_view;
     }
-}
 
-// Keep the wgpu-specific execute method in a separate impl block since the
-// SSR pass execute and command encoding are not yet fully abstracted through RHI.
-impl PostProcessStack {
     /// Execute the full post-processing chain.
     ///
     /// Assumes the scene has been rendered with MSAA resolved into `self.ping_view()`,
     /// and if SSAO is enabled, `self.depth_resolve_view` contains the resolved depth.
-    // clippy::too_many_arguments — post-processing requires GPU context,
-    // encoder, output view, settings, and camera matrices; all are distinct
-    // per-frame parameters from different ECS resources.
     #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        output_view: &wgpu::TextureView,
+        rhi: &D,
+        encoder: &mut D::CommandEncoder,
+        output_view: &D::TextureView,
         settings: &PostProcessSettings,
         inv_projection: &[[f32; 4]; 4],
         projection: &[[f32; 4]; 4],
     ) {
         let uniforms = PostProcessUniforms::from_settings(settings, self.width, self.height);
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        rhi.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         if settings.ssao_enabled {
             let ssao_uniforms = SsaoUniforms {
@@ -655,7 +647,7 @@ impl PostProcessStack {
                     self.height as f32,
                 ],
             };
-            queue.write_buffer(
+            rhi.write_buffer(
                 &self.ssao_uniform_buffer,
                 0,
                 bytemuck::bytes_of(&ssao_uniforms),
@@ -664,6 +656,7 @@ impl PostProcessStack {
 
         if settings.ssao_enabled {
             run_fullscreen_pass(
+                rhi,
                 encoder,
                 &self.ssao_pipeline,
                 &self.ssao_bind_group,
@@ -671,6 +664,7 @@ impl PostProcessStack {
                 "SSAO Generate",
             );
             run_fullscreen_pass(
+                rhi,
                 encoder,
                 &self.ssao_blur_pipeline,
                 &self.ssao_blur_bind_group,
@@ -678,6 +672,7 @@ impl PostProcessStack {
                 "SSAO Blur",
             );
             run_fullscreen_pass(
+                rhi,
                 encoder,
                 &self.ssao_composite_pipeline,
                 &self.ssao_composite_bind_group,
@@ -695,12 +690,13 @@ impl PostProcessStack {
                 inv_projection: *inv_projection,
                 params: [self.width as f32, self.height as f32, 0.0, 0.0],
             };
-            queue.write_buffer(
+            rhi.write_buffer(
                 &self.ssr_normals_uniform_buffer,
                 0,
                 bytemuck::bytes_of(&normals_uniforms),
             );
             run_fullscreen_pass(
+                rhi,
                 encoder,
                 &self.ssr_normals_pipeline,
                 &self.ssr_normals_bind_group,
@@ -708,8 +704,7 @@ impl PostProcessStack {
                 "SSR Normals",
             );
             self.ssr_pass.execute(crate::ssr::SsrExecuteParams {
-                device,
-                queue,
+                rhi,
                 encoder,
                 depth_view: &self.depth_resolve_view,
                 normal_material_view: &self.ssr_normals_view,
@@ -723,8 +718,8 @@ impl PostProcessStack {
             } else {
                 &self.pong_view
             };
-            let ssr_composite_bg = create_two_tex_sampler_bind_group_wgpu(
-                device,
+            let ssr_composite_bg = create_two_tex_sampler_bind_group(
+                rhi,
                 &self.ssr_composite_bgl,
                 hdr_after_ssao,
                 self.ssr_pass.output_view(),
@@ -732,6 +727,7 @@ impl PostProcessStack {
                 "SSR Composite BG",
             );
             run_fullscreen_pass(
+                rhi,
                 encoder,
                 &self.ssr_composite_pipeline,
                 &ssr_composite_bg,
@@ -742,8 +738,8 @@ impl PostProcessStack {
         } else {
             hdr_after_ssao
         };
-        let main_bg = create_tex_sampler_uniform_bind_group_wgpu(
-            device,
+        let main_bg = create_tex_sampler_uniform_bind_group(
+            rhi,
             &self.main_bgl,
             hdr_after_ssr,
             &self.linear_sampler,
@@ -757,23 +753,32 @@ impl PostProcessStack {
                 &self.ping_view
             };
             run_fullscreen_pass(
+                rhi,
                 encoder,
                 &self.main_to_hdr_pipeline,
                 &main_bg,
                 ldr_intermediate,
                 "PP Main (+FXAA)",
             );
-            let fxaa_bg = create_tex_sampler_uniform_bind_group_wgpu(
-                device,
+            let fxaa_bg = create_tex_sampler_uniform_bind_group(
+                rhi,
                 &self.fxaa_bgl,
                 ldr_intermediate,
                 &self.linear_sampler,
                 &self.uniform_buffer,
                 "FXAA (dynamic)",
             );
-            run_fullscreen_pass(encoder, &self.fxaa_pipeline, &fxaa_bg, output_view, "FXAA");
+            run_fullscreen_pass(
+                rhi,
+                encoder,
+                &self.fxaa_pipeline,
+                &fxaa_bg,
+                output_view,
+                "FXAA",
+            );
         } else {
             run_fullscreen_pass(
+                rhi,
                 encoder,
                 &self.main_pipeline,
                 &main_bg,
@@ -784,18 +789,18 @@ impl PostProcessStack {
     }
 
     /// The view the renderer should use as the MSAA resolve target.
-    pub fn ping_view(&self) -> &wgpu::TextureView {
+    pub fn ping_view(&self) -> &D::TextureView {
         &self.ping_view
     }
 
     /// The ping texture (for copy operations, e.g., TAA output → ping).
-    pub fn ping_texture(&self) -> &wgpu::Texture {
+    pub fn ping_texture(&self) -> &D::Texture {
         &self.ping_texture
     }
 
     /// The depth resolve texture. The renderer should resolve MSAA depth into this.
     #[allow(dead_code)]
-    pub fn depth_resolve_texture(&self) -> &wgpu::Texture {
+    pub fn depth_resolve_texture(&self) -> &D::Texture {
         &self.depth_resolve_texture
     }
 }
@@ -931,7 +936,6 @@ fn create_tex_sampler_uniform_bind_group<D: euca_rhi::RenderDevice>(
     })
 }
 
-#[allow(dead_code)]
 fn create_two_tex_sampler_bind_group<D: euca_rhi::RenderDevice>(
     device: &D,
     layout: &D::BindGroupLayout,
@@ -960,89 +964,34 @@ fn create_two_tex_sampler_bind_group<D: euca_rhi::RenderDevice>(
     })
 }
 
-// ────────────────────────────────────────────────────────────────────────
-
-// wgpu-specific bind group helpers for the `execute` method.
-fn create_tex_sampler_uniform_bind_group_wgpu(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    texture_view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
-    uniform_buffer: &wgpu::Buffer,
-    label: &str,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(label),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: uniform_buffer.as_entire_binding(),
-            },
-        ],
-    })
-}
-
-fn create_two_tex_sampler_bind_group_wgpu(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    tex0: &wgpu::TextureView,
-    tex1: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
-    label: &str,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(label),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(tex0),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(tex1),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
-    })
-}
-
 // Texture and pipeline creation helpers
 // ────────────────────────────────────────────────────────────────────────
 
-fn run_fullscreen_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    pipeline: &wgpu::RenderPipeline,
-    bind_group: &wgpu::BindGroup,
-    target: &wgpu::TextureView,
+fn run_fullscreen_pass<D: euca_rhi::RenderDevice>(
+    rhi: &D,
+    encoder: &mut D::CommandEncoder,
+    pipeline: &D::RenderPipeline,
+    bind_group: &D::BindGroup,
+    target: &D::TextureView,
     label: &str,
 ) {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: target,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        depth_stencil_attachment: None,
-        ..Default::default()
-    });
+    use euca_rhi::pass::RenderPassOps;
+
+    let mut pass = rhi.begin_render_pass(
+        encoder,
+        &euca_rhi::RenderPassDesc {
+            label: Some(label),
+            color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: euca_rhi::Operations {
+                    load: euca_rhi::LoadOp::Clear(euca_rhi::Color::BLACK),
+                    store: euca_rhi::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+        },
+    );
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, bind_group, &[]);
     pass.draw(0..3, 0..1);

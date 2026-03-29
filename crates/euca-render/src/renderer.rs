@@ -2186,8 +2186,7 @@ impl Renderer {
             let inv_projection = proj.inverse().to_cols_array_2d();
             let projection = proj.to_cols_array_2d();
             self.post_process_stack.execute(
-                &rhi.device,
-                &rhi.queue,
+                rhi,
                 encoder,
                 color_view,
                 &self.post_process_settings,
