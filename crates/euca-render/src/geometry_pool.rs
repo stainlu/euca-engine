@@ -278,6 +278,16 @@ impl<D: RenderDevice> GeometryPool<D> {
         self.index_cursor as u64 * INDEX_SIZE
     }
 
+    /// Total capacity in bytes of the vertex buffer (for binding the full range).
+    pub fn vertex_buffer_capacity_bytes(&self) -> u64 {
+        self.vertex_capacity as u64 * VERTEX_SIZE
+    }
+
+    /// Total capacity in bytes of the index buffer (for binding the full range).
+    pub fn index_buffer_capacity_bytes(&self) -> u64 {
+        self.index_capacity as u64 * INDEX_SIZE
+    }
+
     /// Look up a mesh allocation by handle index.
     pub fn get(&self, handle_index: u32) -> Option<&MeshAllocation> {
         self.allocations

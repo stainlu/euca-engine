@@ -79,51 +79,57 @@ pub struct DrawCommandGpu {
     pub lod_distance_sq: [f32; 4],
 }
 
+/// Parameters for constructing a [`DrawCommandGpu`] from renderer state.
+///
+/// Groups the inputs to [`DrawCommandGpu::from_components`] into a single
+/// struct to keep the public API ergonomic and clippy-clean.
+pub struct DrawCommandParams<'a> {
+    /// Column-major 4x4 model matrix.
+    pub model: &'a [[f32; 4]; 4],
+    /// Added to each index before vertex fetch (from `MeshAllocation`).
+    pub vertex_offset: i32,
+    /// First index in the global index buffer (from `MeshAllocation`).
+    pub first_index: u32,
+    /// Number of indices to draw (from `MeshAllocation`).
+    pub index_count: u32,
+    /// World-space AABB center `[x, y, z]`.
+    pub aabb_center: [f32; 3],
+    /// World-space AABB half-extents `[x, y, z]`.
+    pub aabb_half_extents: [f32; 3],
+    /// Mesh table index.
+    pub mesh_id: u32,
+    /// Material table index.
+    pub material_id: u32,
+}
+
 impl DrawCommandGpu {
-    /// Build a GPU draw command from raw geometry and material components.
+    /// Build a `DrawCommandGpu` from renderer state.
     ///
-    /// `model` is the 4x4 column-major model matrix.
-    /// `vertex_offset`, `first_index`, `index_count` describe the mesh region
-    /// in the global geometry pool.
-    /// `aabb_center` and `aabb_half_extents` are in world space.
-    /// `mesh_id` is the mesh handle index; `material_id` is the bindless
-    /// material index.
-    ///
-    /// A single LOD level is created from the provided geometry. Use the
-    /// struct fields directly to configure multi-LOD entries.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_components(
-        model: &[[f32; 4]; 4],
-        vertex_offset: i32,
-        first_index: u32,
-        index_count: u32,
-        aabb_center: [f32; 3],
-        aabb_half_extents: [f32; 3],
-        mesh_id: u32,
-        material_id: u32,
-    ) -> Self {
+    /// This is the primary constructor used by the renderer when building the
+    /// per-frame command buffer for GPU-driven rendering.
+    pub fn from_components(p: &DrawCommandParams<'_>) -> Self {
         Self {
-            model_col0: model[0],
-            model_col1: model[1],
-            model_col2: model[2],
-            model_col3: model[3],
-            aabb_center: [aabb_center[0], aabb_center[1], aabb_center[2], 0.0],
+            model_col0: p.model[0],
+            model_col1: p.model[1],
+            model_col2: p.model[2],
+            model_col3: p.model[3],
+            aabb_center: [p.aabb_center[0], p.aabb_center[1], p.aabb_center[2], 0.0],
             aabb_half_extents: [
-                aabb_half_extents[0],
-                aabb_half_extents[1],
-                aabb_half_extents[2],
+                p.aabb_half_extents[0],
+                p.aabb_half_extents[1],
+                p.aabb_half_extents[2],
                 0.0,
             ],
-            mesh_id,
-            material_id,
-            index_count,
-            first_index,
-            vertex_offset,
+            mesh_id: p.mesh_id,
+            material_id: p.material_id,
+            index_count: p.index_count,
+            first_index: p.first_index,
+            vertex_offset: p.vertex_offset,
             lod_count: 1,
-            lod_index_counts: [index_count, 0, 0, 0],
-            lod_first_indices: [first_index, 0, 0, 0],
-            lod_vertex_offsets: [vertex_offset, 0, 0, 0],
-            lod_distance_sq: [f32::MAX, f32::MAX, f32::MAX, f32::MAX],
+            lod_index_counts: [p.index_count, 0, 0, 0],
+            lod_first_indices: [p.first_index, 0, 0, 0],
+            lod_vertex_offsets: [p.vertex_offset, 0, 0, 0],
+            lod_distance_sq: [0.0; 4],
         }
     }
 }
@@ -626,16 +632,16 @@ mod tests {
             [0.0, 0.0, 1.0, 0.0],
             [10.0, 20.0, 30.0, 1.0],
         ];
-        let cmd = DrawCommandGpu::from_components(
-            &model,
-            100, // vertex_offset
-            200, // first_index
-            36,  // index_count
-            [5.0, 6.0, 7.0],
-            [1.0, 2.0, 3.0],
-            42, // mesh_id
-            7,  // material_id
-        );
+        let cmd = DrawCommandGpu::from_components(&DrawCommandParams {
+            model: &model,
+            vertex_offset: 100,
+            first_index: 200,
+            index_count: 36,
+            aabb_center: [5.0, 6.0, 7.0],
+            aabb_half_extents: [1.0, 2.0, 3.0],
+            mesh_id: 42,
+            material_id: 7,
+        });
 
         // Model matrix columns
         assert_eq!(cmd.model_col0, [1.0, 0.0, 0.0, 0.0]);
@@ -661,10 +667,7 @@ mod tests {
         assert_eq!(cmd.lod_index_counts, [36, 0, 0, 0]);
         assert_eq!(cmd.lod_first_indices, [200, 0, 0, 0]);
         assert_eq!(cmd.lod_vertex_offsets, [100, 0, 0, 0]);
-        assert_eq!(
-            cmd.lod_distance_sq,
-            [f32::MAX, f32::MAX, f32::MAX, f32::MAX]
-        );
+        assert_eq!(cmd.lod_distance_sq, [0.0, 0.0, 0.0, 0.0]);
 
         // Verify it's still 184 bytes and bytemuck-safe
         let bytes = bytemuck::bytes_of(&cmd);

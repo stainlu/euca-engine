@@ -118,8 +118,8 @@ pub use frame_graph::{CompiledGraph, FrameGraph, PassKind, PassNode, ResourceId}
 pub use geometry_pool::{GeometryPool, MeshAllocation};
 pub use gpu::GpuContext;
 pub use gpu_driven::{
-    DrawCommandGpu, DrawIndexedIndirectArgs, GpuCullParams, GpuDrivenPipeline, GpuFrustumData,
-    IndirectDrawBuffer,
+    DrawCommandGpu, DrawCommandParams, DrawIndexedIndirectArgs, GpuCullParams, GpuDrivenPipeline,
+    GpuFrustumData, IndirectDrawBuffer,
 };
 pub use gpu_particles::{GpuParticleConfig, GpuParticleSystem};
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};
