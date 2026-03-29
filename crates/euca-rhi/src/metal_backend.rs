@@ -343,6 +343,37 @@ impl MetalDevice {
         &self.device
     }
 
+    /// Blit a texture to the current surface drawable via a blit encoder.
+    ///
+    /// Use this to copy an offscreen render result (e.g., MetalFX output) to
+    /// the swapchain for presentation.
+    pub fn blit_to_surface(
+        &self,
+        encoder: &mut MetalCommandEncoder,
+        src: &MetalTexture,
+        surface: &MetalSurfaceTexture,
+    ) {
+        unsafe {
+            let blit = encoder
+                .command_buffer
+                .blitCommandEncoder()
+                .expect("Failed to create blit encoder");
+            let dst_texture = surface.drawable.texture();
+            let width = dst_texture.width().min(src.0.width());
+            let height = dst_texture.height().min(src.0.height());
+            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                &src.0,
+                0, 0,
+                MTLOrigin { x: 0, y: 0, z: 0 },
+                MTLSize { width, height, depth: 1 },
+                &dst_texture,
+                0, 0,
+                MTLOrigin { x: 0, y: 0, z: 0 },
+            );
+            blit.endEncoding();
+        }
+    }
+
     /// Enable or disable vsync (display sync).
     /// When disabled, frames render as fast as possible (uncapped FPS).
     pub fn set_display_sync_enabled(&self, enabled: bool) {
@@ -1497,5 +1528,336 @@ impl Drop for MetalRenderPass<'_> {
 impl Drop for MetalComputePass<'_> {
     fn drop(&mut self) {
         self.encoder.endEncoding();
+    }
+}
+
+// ===========================================================================
+// MetalFX Temporal Upscaling (C.5)
+// ===========================================================================
+
+/// MetalFX temporal upscaler — renders at lower resolution and reconstructs
+/// full resolution using temporal accumulation, motion vectors, and depth.
+///
+/// Similar in concept to NVIDIA DLSS / AMD FSR. Reduces fragment load by
+/// rendering at 50% resolution (4x fewer pixels) with high-quality upscaling.
+pub struct MetalFXUpscaler {
+    scaler: SendSync<Retained<ProtocolObject<dyn objc2_metal_fx::MTLFXTemporalScaler>>>,
+    input_width: u32,
+    input_height: u32,
+    output_width: u32,
+    output_height: u32,
+}
+
+impl MetalDevice {
+    /// Create a MetalFX temporal upscaler.
+    ///
+    /// - `input_width/height`: resolution to render at (e.g., 640x360)
+    /// - `output_width/height`: final display resolution (e.g., 1280x720)
+    /// - `color_format`: pixel format of the rendered color texture
+    /// - `depth_format`: pixel format of the depth texture
+    /// - `motion_format`: pixel format of the motion vector texture (typically RG16Float)
+    pub fn create_temporal_upscaler(
+        &self,
+        input_width: u32,
+        input_height: u32,
+        output_width: u32,
+        output_height: u32,
+        color_format: TextureFormat,
+        depth_format: TextureFormat,
+        motion_format: TextureFormat,
+    ) -> MetalFXUpscaler {
+        use objc2_metal_fx::MTLFXTemporalScalerDescriptor;
+
+        let desc = unsafe { MTLFXTemporalScalerDescriptor::new() };
+        unsafe {
+            desc.setInputWidth(input_width as usize);
+            desc.setInputHeight(input_height as usize);
+            desc.setOutputWidth(output_width as usize);
+            desc.setOutputHeight(output_height as usize);
+            desc.setColorTextureFormat(to_mtl_pixel_format(color_format));
+            desc.setDepthTextureFormat(to_mtl_pixel_format(depth_format));
+            desc.setMotionTextureFormat(to_mtl_pixel_format(motion_format));
+            desc.setOutputTextureFormat(to_mtl_pixel_format(color_format));
+            desc.setAutoExposureEnabled(true);
+        }
+
+        let scaler = unsafe {
+            desc.newTemporalScalerWithDevice(&self.device)
+                .expect("Failed to create MetalFX temporal scaler — requires Apple Silicon with Metal 3")
+        };
+
+        MetalFXUpscaler {
+            scaler: SendSync(scaler),
+            input_width,
+            input_height,
+            output_width,
+            output_height,
+        }
+    }
+}
+
+impl MetalFXUpscaler {
+    /// Encode the temporal upscale pass into the command buffer.
+    ///
+    /// Call this after rendering to the low-resolution color/depth/motion textures
+    /// and before presenting the output texture.
+    ///
+    /// - `encoder`: the command encoder (must not have an active render/compute pass)
+    /// - `color`: low-resolution rendered color texture
+    /// - `depth`: low-resolution depth texture
+    /// - `motion`: screen-space motion vectors (RG16Float, in pixels)
+    /// - `output`: full-resolution output texture
+    /// - `jitter_x/y`: sub-pixel jitter offset used during rendering (for TAA convergence)
+    /// - `reset`: true on first frame or after camera cut (resets temporal history)
+    pub fn encode(
+        &self,
+        encoder: &MetalCommandEncoder,
+        color: &MetalTexture,
+        depth: &MetalTexture,
+        motion: &MetalTexture,
+        output: &MetalTexture,
+        jitter_x: f32,
+        jitter_y: f32,
+        reset: bool,
+    ) {
+        use objc2_metal_fx::MTLFXTemporalScalerBase;
+
+        unsafe {
+            self.scaler.setColorTexture(Some(&color.0));
+            self.scaler.setDepthTexture(Some(&depth.0));
+            self.scaler.setMotionTexture(Some(&motion.0));
+            self.scaler.setOutputTexture(Some(&output.0));
+            self.scaler
+                .setInputContentWidth(self.input_width as usize);
+            self.scaler
+                .setInputContentHeight(self.input_height as usize);
+            self.scaler.setJitterOffsetX(jitter_x);
+            self.scaler.setJitterOffsetY(jitter_y);
+            self.scaler.setReset(reset);
+        }
+
+        use objc2_metal_fx::MTLFXTemporalScaler;
+        unsafe {
+            self.scaler
+                .encodeToCommandBuffer(&encoder.command_buffer);
+        }
+    }
+
+    pub fn input_size(&self) -> (u32, u32) {
+        (self.input_width, self.input_height)
+    }
+
+    pub fn output_size(&self) -> (u32, u32) {
+        (self.output_width, self.output_height)
+    }
+}
+
+// ===========================================================================
+// Indirect Command Buffers (C.3)
+// ===========================================================================
+
+/// GPU-side command buffer that allows the GPU to build its own draw list.
+///
+/// A compute shader writes draw commands into the ICB, then the render
+/// encoder executes them — eliminating CPU→GPU round trips for draw call
+/// submission. Essential for GPU-driven rendering pipelines.
+pub struct MetalIndirectCommandBuffer {
+    icb: SendSync<Retained<ProtocolObject<dyn MTLIndirectCommandBuffer>>>,
+    max_count: u32,
+}
+
+impl MetalDevice {
+    /// Create an indirect command buffer for GPU-driven rendering.
+    ///
+    /// - `max_count`: maximum number of draw commands the buffer can hold
+    /// - `inherit_pipeline`: if true, commands inherit the pipeline state from the encoder
+    /// - `max_vertex_buffers`: max vertex buffer bindings per command
+    /// - `max_fragment_buffers`: max fragment buffer bindings per command
+    pub fn create_indirect_command_buffer(
+        &self,
+        max_count: u32,
+        inherit_pipeline: bool,
+        max_vertex_buffers: u32,
+        max_fragment_buffers: u32,
+    ) -> MetalIndirectCommandBuffer {
+        unsafe {
+            let desc = MTLIndirectCommandBufferDescriptor::new();
+            desc.setCommandTypes(
+                MTLIndirectCommandType::Draw | MTLIndirectCommandType::DrawIndexed,
+            );
+            desc.setInheritPipelineState(inherit_pipeline);
+            desc.setInheritBuffers(false);
+            desc.setMaxVertexBufferBindCount(max_vertex_buffers as usize);
+            desc.setMaxFragmentBufferBindCount(max_fragment_buffers as usize);
+
+            let icb = self
+                .device
+                .newIndirectCommandBufferWithDescriptor_maxCommandCount_options(
+                    &desc,
+                    max_count as usize,
+                    MTLResourceOptions::StorageModeShared,
+                )
+                .expect("Failed to create Metal indirect command buffer");
+
+            MetalIndirectCommandBuffer {
+                icb: SendSync(icb),
+                max_count,
+            }
+        }
+    }
+}
+
+impl MetalIndirectCommandBuffer {
+    /// Get the raw ICB for passing to compute shaders via argument buffers.
+    pub fn raw(&self) -> &ProtocolObject<dyn MTLIndirectCommandBuffer> {
+        &self.icb
+    }
+
+    /// Maximum number of commands this buffer can hold.
+    pub fn max_count(&self) -> u32 {
+        self.max_count
+    }
+
+    /// Reset all commands in the buffer (call before re-encoding).
+    pub fn reset(&self) {
+        unsafe {
+            self.icb.resetWithRange(objc2_foundation::NSRange {
+                location: 0,
+                length: self.max_count as usize,
+            });
+        }
+    }
+}
+
+impl MetalRenderPass<'_> {
+    /// Execute commands from an indirect command buffer.
+    ///
+    /// Runs commands at indices `0..count` from the ICB. Commands with zero
+    /// instance count are skipped by the GPU.
+    pub fn execute_indirect_commands(
+        &self,
+        icb: &MetalIndirectCommandBuffer,
+        count: u32,
+    ) {
+        unsafe {
+            self.encoder
+                .executeCommandsInBuffer_withRange(
+                    &icb.icb,
+                    objc2_foundation::NSRange {
+                        location: 0,
+                        length: count as usize,
+                    },
+                );
+        }
+    }
+}
+
+// ===========================================================================
+// Tile Shading (C.2)
+// ===========================================================================
+
+/// Tile render pipeline for deferred lighting in Apple TBDR tile memory.
+///
+/// On Apple Silicon, tile memory is fast on-chip SRAM (~64KB per tile). A tile
+/// shader reads/writes tile memory directly, enabling single-pass deferred
+/// rendering: write G-buffer data in the fragment stage, then run a tile
+/// shader to compute lighting without round-tripping through system memory.
+pub struct MetalTileRenderPipeline {
+    state: SendSync<Retained<ProtocolObject<dyn MTLRenderPipelineState>>>,
+}
+
+impl MetalDevice {
+    /// Create a tile render pipeline for deferred lighting in tile memory.
+    ///
+    /// The tile function runs after the rasterization stage and has access to
+    /// the color attachments as imageblock data (tile memory).
+    ///
+    /// - `shader`: compiled MSL library containing the tile function
+    /// - `tile_entry`: name of the `[[kernel]]` function for tile shading
+    /// - `color_formats`: pixel formats of the color attachments
+    /// - `sample_count`: rasterization sample count (1 for no MSAA)
+    /// - `label`: optional debug label
+    pub fn create_tile_render_pipeline(
+        &self,
+        shader: &MetalShaderModule,
+        tile_entry: &str,
+        color_formats: &[TextureFormat],
+        sample_count: u32,
+        label: Option<&str>,
+    ) -> MetalTileRenderPipeline {
+        unsafe {
+            let desc = MTLTileRenderPipelineDescriptor::new();
+
+            if let Some(lbl) = label {
+                desc.setLabel(Some(&NSString::from_str(lbl)));
+            }
+
+            let tile_fn = shader
+                .0
+                .newFunctionWithName(&NSString::from_str(tile_entry))
+                .unwrap_or_else(|| {
+                    panic!("Tile function '{tile_entry}' not found in Metal library")
+                });
+            desc.setTileFunction(&tile_fn);
+            desc.setRasterSampleCount(sample_count as usize);
+            desc.setThreadgroupSizeMatchesTileSize(true);
+
+            let color_attachments = desc.colorAttachments();
+            for (i, format) in color_formats.iter().enumerate() {
+                let attachment = color_attachments.objectAtIndexedSubscript(i);
+                attachment.setPixelFormat(to_mtl_pixel_format(*format));
+            }
+
+            let pipeline = self
+                .device
+                .newRenderPipelineStateWithTileDescriptor_options_reflection_error(
+                    &desc,
+                    MTLPipelineOption::None,
+                    None,
+                )
+                .expect("Failed to create Metal tile render pipeline");
+
+            MetalTileRenderPipeline {
+                state: SendSync(pipeline),
+            }
+        }
+    }
+}
+
+impl MetalRenderPass<'_> {
+    /// Set the tile render pipeline for a tile dispatch.
+    pub fn set_tile_pipeline(&mut self, pipeline: &MetalTileRenderPipeline) {
+        self.encoder.setRenderPipelineState(&pipeline.state);
+    }
+
+    /// Bind a buffer to the tile shader at the given slot.
+    pub fn set_tile_buffer(&mut self, slot: u32, buffer: &MetalBuffer, offset: u64) {
+        unsafe {
+            self.encoder.setTileBuffer_offset_atIndex(
+                Some(&buffer.0),
+                offset as usize,
+                slot as usize,
+            );
+        }
+    }
+
+    /// Bind a texture to the tile shader at the given slot.
+    pub fn set_tile_texture(&mut self, slot: u32, texture: &MetalTextureView) {
+        unsafe {
+            self.encoder
+                .setTileTexture_atIndex(Some(&texture.0), slot as usize);
+        }
+    }
+
+    /// Dispatch tile shader threads per tile.
+    ///
+    /// The tile shader runs once per tile (typically 32x32 pixels). Each thread
+    /// in the dispatch can read/write the tile's imageblock data.
+    pub fn dispatch_threads_per_tile(&self, threads_per_tile: [u32; 2]) {
+        self.encoder.dispatchThreadsPerTile(MTLSize {
+            width: threads_per_tile[0] as usize,
+            height: threads_per_tile[1] as usize,
+            depth: 1,
+        });
     }
 }
