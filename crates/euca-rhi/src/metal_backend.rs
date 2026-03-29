@@ -482,6 +482,54 @@ impl MetalDevice {
 }
 
 // ===========================================================================
+// WGSL → MSL transpilation via naga
+// ===========================================================================
+
+/// Transpile a WGSL shader source to MSL using naga.
+///
+/// This enables all existing WGSL shaders to run on the Metal backend without
+/// maintaining separate MSL shader files. Naga translates the abstract shader
+/// IR to valid Metal Shading Language.
+fn wgsl_to_msl(wgsl_source: &str) -> String {
+    // Parse WGSL → naga IR
+    let module = naga::front::wgsl::parse_str(wgsl_source).unwrap_or_else(|e| {
+        panic!("Failed to parse WGSL shader: {e}");
+    });
+
+    // Validate
+    let info = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .unwrap_or_else(|e| {
+        panic!("WGSL shader validation failed: {e}");
+    });
+
+    // Translate naga IR → MSL
+    let options = naga::back::msl::Options {
+        lang_version: (3, 0), // Metal 3.0 (Apple Silicon)
+        per_entry_point_map: Default::default(),
+        inline_samplers: Default::default(),
+        spirv_cross_compatibility: false,
+        fake_missing_bindings: true,
+        bounds_check_policies: Default::default(),
+        zero_initialize_workgroup_memory: true,
+        force_loop_bounding: false,
+    };
+
+    let pipeline_options = naga::back::msl::PipelineOptions::default();
+
+    let (msl, _) =
+        naga::back::msl::write_string(&module, &info, &options, &pipeline_options)
+            .unwrap_or_else(|e| {
+                panic!("Failed to transpile WGSL → MSL: {e}");
+            });
+
+    msl
+}
+
+// ===========================================================================
 // Type conversion helpers
 // ===========================================================================
 
@@ -810,21 +858,29 @@ impl RenderDevice for MetalDevice {
     }
 
     fn create_shader(&self, desc: &ShaderDesc) -> MetalShaderModule {
-        let source = match &desc.source {
-            ShaderSource::Msl(src) => src.as_ref(),
-            ShaderSource::Wgsl(_) => {
-                panic!("WGSL shaders not supported by Metal backend — use MSL or SPIR-V")
+        let msl_source = match &desc.source {
+            ShaderSource::Msl(src) => src.to_string(),
+            ShaderSource::Wgsl(wgsl) => {
+                // Transpile WGSL → MSL via naga. This unlocks all existing WGSL
+                // shaders for the Metal backend without maintaining separate MSL files.
+                wgsl_to_msl(wgsl)
             }
             ShaderSource::SpirV(_) => {
-                panic!("SPIR-V shaders not directly supported by Metal backend — use MSL")
+                panic!("SPIR-V shaders not directly supported by Metal backend — use MSL or WGSL")
             }
         };
-        let ns_source = NSString::from_str(source);
+        let ns_source = NSString::from_str(&msl_source);
         let options = MTLCompileOptions::new();
         let library = self
             .device
             .newLibraryWithSource_options_error(&ns_source, Some(&options))
-            .expect("Failed to compile Metal shader");
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to compile Metal shader '{}': {}",
+                    desc.label.unwrap_or("unnamed"),
+                    e
+                )
+            });
         MetalShaderModule(SendSync(library))
     }
 

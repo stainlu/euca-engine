@@ -350,3 +350,34 @@ fn metal_compute_dispatch() {
 
     println!("Compute dispatch completed successfully on Metal!");
 }
+
+#[test]
+fn metal_wgsl_to_msl_transpilation() {
+    let dev = device();
+
+    // Test with a simple WGSL shader — naga transpiles it to MSL automatically
+    let wgsl = r#"
+        struct VertexOutput {
+            @builtin(position) position: vec4<f32>,
+            @location(0) uv: vec2<f32>,
+        };
+        @vertex
+        fn vs_main(@builtin(vertex_index) id: u32) -> VertexOutput {
+            let x = f32(i32(id) / 2) * 4.0 - 1.0;
+            let y = f32(i32(id) % 2) * 4.0 - 1.0;
+            var out: VertexOutput;
+            out.position = vec4<f32>(x, y, 0.0, 1.0);
+            out.uv = vec2<f32>(x * 0.5 + 0.5, -y * 0.5 + 0.5);
+            return out;
+        }
+    "#;
+
+    let shader = dev.create_shader(&ShaderDesc {
+        label: Some("WGSL fullscreen VS"),
+        source: ShaderSource::Wgsl(wgsl.into()),
+    });
+
+    // If we got here, transpilation and Metal compilation both succeeded
+    println!("WGSL → MSL transpilation + Metal compilation succeeded!");
+    let _ = shader;
+}
