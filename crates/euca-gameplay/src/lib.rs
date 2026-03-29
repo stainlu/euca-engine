@@ -30,7 +30,7 @@ pub mod combat_math;
 pub mod crowd_control;
 /// Tabular game data loaded from config files.
 pub mod data_table;
-/// Gold currency, bounties, and kill rewards.
+/// Dota 2 economy — reliable/unreliable gold, bounties, buyback, respawn.
 pub mod economy;
 /// Match lifecycle: lobby, countdown, playing, post-match.
 pub mod game_state;
@@ -111,7 +111,13 @@ pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use crowd_control::{
     CcState, CcType, CrowdControl, DisableFlags, DispelType, SpellImmunity, StatusResistance,
 };
-pub use economy::{Gold, GoldBounty, gold_on_kill_system};
+pub use economy::{
+    BuybackState, CreepType, EconomyError, Gold, GoldBounty, GoldWallet, HeroEconomy,
+    apply_death_penalty, assist_gold, attempt_buyback, award_kill, buyback_cost, creep_bounty,
+    gold_loss_on_death, gold_on_kill_system, hero_kill_bounty, respawn_time,
+    tick_buyback_cooldown, tick_passive_income, tower_bounty,
+    BUYBACK_COOLDOWN, PASSIVE_GOLD_PER_SECOND, STARTING_GOLD,
+};
 pub use hero::{AbilityDef, HeroDef, HeroName, HeroRegistry, StatGrowth, spawn_hero};
 pub use inventory::{
     Equipment, Inventory, ItemDef, ItemRegistry, ItemStack, StatModifiers, add_item, equip,
