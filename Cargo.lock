@@ -1397,6 +1397,7 @@ dependencies = [
 name = "euca-gameplay"
 version = "1.1.0"
 dependencies = [
+ "bincode",
  "euca-core",
  "euca-ecs",
  "euca-input",

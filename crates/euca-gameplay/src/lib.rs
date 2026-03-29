@@ -42,6 +42,8 @@ pub mod neutral_camp;
 pub mod player;
 /// Mouse/keyboard input translation to player commands.
 pub mod player_input;
+/// Game replay recording and playback.
+pub mod replay;
 /// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
 /// Shop system — buy/sell items with gold, recipe combining.

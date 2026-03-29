@@ -280,7 +280,7 @@ impl ActionMap {
 /// Timestamped input snapshot for networking.
 ///
 /// The server receives these from clients and replays them at the correct tick.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InputSnapshot {
     /// The tick this input was generated at.
     pub tick: u64,
