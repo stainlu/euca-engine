@@ -8,6 +8,16 @@
 use std::ptr::NonNull;
 
 use objc2::rc::Retained;
+
+// Grand Central Dispatch semaphore for frame pipelining
+unsafe extern "C" {
+    fn dispatch_semaphore_create(value: isize) -> *mut std::ffi::c_void;
+    fn dispatch_semaphore_wait(dsema: *mut std::ffi::c_void, timeout: u64) -> isize;
+    fn dispatch_semaphore_signal(dsema: *mut std::ffi::c_void) -> isize;
+    fn dispatch_release(object: *mut std::ffi::c_void);
+}
+const DISPATCH_TIME_FOREVER: u64 = !0;
+const MAX_FRAMES_IN_FLIGHT: usize = 3;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::*;
@@ -125,6 +135,10 @@ pub struct MetalDevice {
     surface_height: u32,
     surface_format: TextureFormat,
     capabilities: Capabilities,
+    /// GCD semaphore for triple-buffered frame pipelining.
+    /// Limits in-flight frames to MAX_FRAMES_IN_FLIGHT so CPU and GPU
+    /// work overlaps without exhausting the drawable pool.
+    frame_semaphore: SendSync<*mut std::ffi::c_void>,
 }
 
 impl MetalDevice {
@@ -173,6 +187,8 @@ impl MetalDevice {
         });
 
         let capabilities = Self::query_capabilities(&device);
+        let frame_semaphore =
+            SendSync(unsafe { dispatch_semaphore_create(MAX_FRAMES_IN_FLIGHT as isize) });
 
         Self {
             device: SendSync(device),
@@ -182,6 +198,7 @@ impl MetalDevice {
             surface_height: height,
             surface_format: TextureFormat::Bgra8UnormSrgb,
             capabilities,
+            frame_semaphore,
         }
     }
 
@@ -196,9 +213,9 @@ impl MetalDevice {
             .newCommandQueue()
             .expect("Failed to create Metal command queue");
         let capabilities = Self::query_capabilities(&device);
+        let frame_semaphore =
+            SendSync(unsafe { dispatch_semaphore_create(MAX_FRAMES_IN_FLIGHT as isize) });
 
-        // Create a detached CAMetalLayer (not connected to any view).
-        // Surface operations will fail gracefully.
         let layer = CAMetalLayer::new();
 
         Self {
@@ -209,6 +226,7 @@ impl MetalDevice {
             surface_height: 0,
             surface_format: TextureFormat::Bgra8UnormSrgb,
             capabilities,
+            frame_semaphore,
         }
     }
 
@@ -370,6 +388,29 @@ fn to_mtl_primitive_type(topology: PrimitiveTopology) -> MTLPrimitiveType {
         PrimitiveTopology::LineStrip => MTLPrimitiveType::LineStrip,
         PrimitiveTopology::TriangleList => MTLPrimitiveType::Triangle,
         PrimitiveTopology::TriangleStrip => MTLPrimitiveType::TriangleStrip,
+    }
+}
+
+fn to_mtl_vertex_format(format: VertexFormat) -> MTLVertexFormat {
+    match format {
+        VertexFormat::Float32 => MTLVertexFormat::Float,
+        VertexFormat::Float32x2 => MTLVertexFormat::Float2,
+        VertexFormat::Float32x3 => MTLVertexFormat::Float3,
+        VertexFormat::Float32x4 => MTLVertexFormat::Float4,
+        VertexFormat::Uint32 => MTLVertexFormat::UInt,
+        VertexFormat::Uint32x2 => MTLVertexFormat::UInt2,
+        VertexFormat::Uint32x3 => MTLVertexFormat::UInt3,
+        VertexFormat::Uint32x4 => MTLVertexFormat::UInt4,
+        VertexFormat::Sint32 => MTLVertexFormat::Int,
+        VertexFormat::Sint32x2 => MTLVertexFormat::Int2,
+        VertexFormat::Sint32x3 => MTLVertexFormat::Int3,
+        VertexFormat::Sint32x4 => MTLVertexFormat::Int4,
+        VertexFormat::Uint8x2 => MTLVertexFormat::UChar2,
+        VertexFormat::Uint8x4 => MTLVertexFormat::UChar4,
+        VertexFormat::Unorm8x2 => MTLVertexFormat::UChar2Normalized,
+        VertexFormat::Unorm8x4 => MTLVertexFormat::UChar4Normalized,
+        VertexFormat::Float16x2 => MTLVertexFormat::Half2,
+        VertexFormat::Float16x4 => MTLVertexFormat::Half4,
     }
 }
 
@@ -686,6 +727,34 @@ impl RenderDevice for MetalDevice {
                 }
             }
 
+            // Vertex descriptor — enables hardware vertex fetch + post-transform cache
+            if !desc.vertex.buffers.is_empty() {
+                let vertex_desc = MTLVertexDescriptor::new();
+                let attrs = vertex_desc.attributes();
+                let layouts = vertex_desc.layouts();
+
+                for (buf_idx, buf_layout) in desc.vertex.buffers.iter().enumerate() {
+                    // Set buffer layout
+                    let layout = layouts.objectAtIndexedSubscript(buf_idx);
+                    layout.setStride(buf_layout.array_stride as usize);
+                    layout.setStepFunction(match buf_layout.step_mode {
+                        VertexStepMode::Vertex => MTLVertexStepFunction::PerVertex,
+                        VertexStepMode::Instance => MTLVertexStepFunction::PerInstance,
+                    });
+
+                    // Set attributes
+                    for attr in buf_layout.attributes {
+                        let mtl_attr =
+                            attrs.objectAtIndexedSubscript(attr.shader_location as usize);
+                        mtl_attr.setFormat(to_mtl_vertex_format(attr.format));
+                        mtl_attr.setOffset(attr.offset as usize);
+                        mtl_attr.setBufferIndex(buf_idx);
+                    }
+                }
+
+                pipeline_desc.setVertexDescriptor(Some(&vertex_desc));
+            }
+
             // Depth attachment
             if let Some(ref ds) = desc.depth_stencil {
                 pipeline_desc.setDepthAttachmentPixelFormat(to_mtl_pixel_format(ds.format));
@@ -898,10 +967,30 @@ impl RenderDevice for MetalDevice {
                 ProtocolObject::from_ref(&**drawable);
             encoder.command_buffer.presentDrawable(mtl_drawable);
         }
+
+        // Signal the frame semaphore when the GPU finishes this command buffer.
+        // This allows the next frame to acquire a drawable without blocking.
+        let sem = self.frame_semaphore.0;
+        unsafe {
+            let block =
+                block2::RcBlock::new(move |_buf: NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
+                    dispatch_semaphore_signal(sem);
+                });
+            let handler: *mut block2::DynBlock<
+                dyn Fn(NonNull<ProtocolObject<dyn MTLCommandBuffer>>),
+            > = (&*block as *const block2::DynBlock<_>).cast_mut();
+            encoder.command_buffer.addCompletedHandler(handler);
+        }
+
         encoder.command_buffer.commit();
     }
 
     fn get_current_texture(&self) -> Result<MetalSurfaceTexture, SurfaceError> {
+        // Wait for a frame slot — blocks if MAX_FRAMES_IN_FLIGHT are already
+        // in-flight, allowing CPU/GPU overlap without exhausting drawables.
+        unsafe {
+            dispatch_semaphore_wait(self.frame_semaphore.0, DISPATCH_TIME_FOREVER);
+        }
         let drawable = self.layer.nextDrawable().ok_or(SurfaceError::Timeout)?;
         Ok(MetalSurfaceTexture { drawable })
     }
@@ -1224,6 +1313,14 @@ impl<'a> ComputePassOps<MetalDevice> for MetalComputePass<'a> {
 // ===========================================================================
 // Drop impls — end encoding when passes are dropped
 // ===========================================================================
+
+impl Drop for MetalDevice {
+    fn drop(&mut self) {
+        unsafe {
+            dispatch_release(self.frame_semaphore.0);
+        }
+    }
+}
 
 impl Drop for MetalRenderPass<'_> {
     fn drop(&mut self) {
