@@ -1,10 +1,10 @@
 /// Capsule-based kinematic character controller with ground detection and coyote time.
 pub mod character;
+mod collision;
+mod components;
 /// GPU-accelerated AABB broadphase via compute shaders (requires `gpu-broadphase` feature).
 #[cfg(feature = "gpu-broadphase")]
 pub mod gpu_broadphase;
-mod collision;
-mod components;
 /// Joint constraints (distance, ball-and-socket, revolute) connecting physics bodies.
 pub mod joints;
 mod raycast;

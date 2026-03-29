@@ -101,12 +101,7 @@ impl MetalRenderPass<'_> {
     }
 
     /// Bind a buffer to the object shader at the given slot index.
-    pub fn set_object_buffer(
-        &mut self,
-        slot: u32,
-        buffer: &MetalBuffer,
-        offset: u64,
-    ) {
+    pub fn set_object_buffer(&mut self, slot: u32, buffer: &MetalBuffer, offset: u64) {
         unsafe {
             self.encoder.setObjectBuffer_offset_atIndex(
                 Some(&buffer.0),
@@ -120,12 +115,7 @@ impl MetalRenderPass<'_> {
     ///
     /// Mesh shaders use separate buffer slots from vertex shaders — you must
     /// use this method (not `set_vertex_buffer`) when using a mesh pipeline.
-    pub fn set_mesh_buffer(
-        &mut self,
-        slot: u32,
-        buffer: &MetalBuffer,
-        offset: u64,
-    ) {
+    pub fn set_mesh_buffer(&mut self, slot: u32, buffer: &MetalBuffer, offset: u64) {
         unsafe {
             self.encoder.setMeshBuffer_offset_atIndex(
                 Some(&buffer.0),
@@ -413,7 +403,9 @@ impl MetalDevice {
             let mesh_fn = shader
                 .0
                 .newFunctionWithName(&NSString::from_str(mesh_entry))
-                .unwrap_or_else(|| panic!("Mesh function '{mesh_entry}' not found in Metal library"));
+                .unwrap_or_else(|| {
+                    panic!("Mesh function '{mesh_entry}' not found in Metal library")
+                });
             desc.setMeshFunction(Some(&mesh_fn));
 
             // Fragment function
@@ -444,11 +436,9 @@ impl MetalDevice {
 
                 if let Some(Some(blend)) = color_blends.get(i) {
                     attachment.setBlendingEnabled(true);
+                    attachment.setSourceRGBBlendFactor(to_mtl_blend_factor(blend.color.src_factor));
                     attachment
-                        .setSourceRGBBlendFactor(to_mtl_blend_factor(blend.color.src_factor));
-                    attachment.setDestinationRGBBlendFactor(to_mtl_blend_factor(
-                        blend.color.dst_factor,
-                    ));
+                        .setDestinationRGBBlendFactor(to_mtl_blend_factor(blend.color.dst_factor));
                     attachment.setRgbBlendOperation(to_mtl_blend_op(blend.color.operation));
                     attachment
                         .setSourceAlphaBlendFactor(to_mtl_blend_factor(blend.alpha.src_factor));
@@ -520,11 +510,10 @@ fn wgsl_to_msl(wgsl_source: &str) -> String {
 
     let pipeline_options = naga::back::msl::PipelineOptions::default();
 
-    let (msl, _) =
-        naga::back::msl::write_string(&module, &info, &options, &pipeline_options)
-            .unwrap_or_else(|e| {
-                panic!("Failed to transpile WGSL → MSL: {e}");
-            });
+    let (msl, _) = naga::back::msl::write_string(&module, &info, &options, &pipeline_options)
+        .unwrap_or_else(|e| {
+            panic!("Failed to transpile WGSL → MSL: {e}");
+        });
 
     msl
 }
@@ -1638,8 +1627,9 @@ impl MetalDevice {
         }
 
         let scaler = unsafe {
-            desc.newTemporalScalerWithDevice(&self.device)
-                .expect("Failed to create MetalFX temporal scaler — requires Apple Silicon with Metal 3")
+            desc.newTemporalScalerWithDevice(&self.device).expect(
+                "Failed to create MetalFX temporal scaler — requires Apple Silicon with Metal 3",
+            )
         };
 
         MetalFXUpscaler {
@@ -1683,8 +1673,7 @@ impl MetalFXUpscaler {
             self.scaler.setDepthTexture(Some(&depth.0));
             self.scaler.setMotionTexture(Some(&motion.0));
             self.scaler.setOutputTexture(Some(&output.0));
-            self.scaler
-                .setInputContentWidth(self.input_width as usize);
+            self.scaler.setInputContentWidth(self.input_width as usize);
             self.scaler
                 .setInputContentHeight(self.input_height as usize);
             self.scaler.setJitterOffsetX(jitter_x);
@@ -1694,8 +1683,7 @@ impl MetalFXUpscaler {
 
         use objc2_metal_fx::MTLFXTemporalScaler;
         unsafe {
-            self.scaler
-                .encodeToCommandBuffer(&encoder.command_buffer);
+            self.scaler.encodeToCommandBuffer(&encoder.command_buffer);
         }
     }
 
@@ -1790,20 +1778,15 @@ impl MetalRenderPass<'_> {
     ///
     /// Runs commands at indices `0..count` from the ICB. Commands with zero
     /// instance count are skipped by the GPU.
-    pub fn execute_indirect_commands(
-        &self,
-        icb: &MetalIndirectCommandBuffer,
-        count: u32,
-    ) {
+    pub fn execute_indirect_commands(&self, icb: &MetalIndirectCommandBuffer, count: u32) {
         unsafe {
-            self.encoder
-                .executeCommandsInBuffer_withRange(
-                    &icb.icb,
-                    objc2_foundation::NSRange {
-                        location: 0,
-                        length: count as usize,
-                    },
-                );
+            self.encoder.executeCommandsInBuffer_withRange(
+                &icb.icb,
+                objc2_foundation::NSRange {
+                    location: 0,
+                    length: count as usize,
+                },
+            );
         }
     }
 }

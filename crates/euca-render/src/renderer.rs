@@ -163,8 +163,10 @@ impl RenderQuality {
 
 struct GpuMesh<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     vertex_buffer: D::Buffer,
+    #[allow(dead_code)] // Used when impl Renderer becomes generic over D
     vertex_buffer_size: u64,
     index_buffer: D::Buffer,
+    #[allow(dead_code)] // Used when impl Renderer becomes generic over D
     index_buffer_size: u64,
     index_count: u32,
 }
@@ -951,12 +953,7 @@ impl Renderer {
 
         let (msaa_hdr_texture, msaa_hdr_view) =
             Self::create_msaa_hdr_texture(rhi, surface_w, surface_h);
-        let post_process_stack = PostProcessStack::new(
-            rhi,
-            surface_w,
-            surface_h,
-            surface_fmt,
-        );
+        let post_process_stack = PostProcessStack::new(rhi, surface_w, surface_h, surface_fmt);
 
         let decal_renderer = DecalRenderer::new(rhi);
         decal_renderer.upload(rhi);
@@ -1029,11 +1026,7 @@ impl Renderer {
             occlusion_culler: None,
             prev_depth_buffer: Vec::new(),
             prev_depth_dims: (0, 0),
-            taa_pass: crate::taa::TaaPass::new(
-                rhi,
-                surface_w,
-                surface_h,
-            ),
+            taa_pass: crate::taa::TaaPass::new(rhi, surface_w, surface_h),
             frame_count: 0,
             probe_sh: [[0.0; 4]; 9],
             probe_enabled: false,
@@ -1043,11 +1036,7 @@ impl Renderer {
             decal_bind_group,
             pending_decals: Vec::new(),
             gpu_particle_systems: Vec::new(),
-            velocity_textures: crate::velocity::VelocityTextures::new(
-                rhi,
-                surface_w,
-                surface_h,
-            ),
+            velocity_textures: crate::velocity::VelocityTextures::new(rhi, surface_w, surface_h),
             ibl_dummy_cube_view,
             ibl_dummy_brdf_view,
             ibl_sampler,
@@ -1115,19 +1104,18 @@ impl Renderer {
             self.unified_memory,
             "Shadow Instance SSBO",
         );
-        self.shadow_instance_bind_group =
-            rhi.create_bind_group(&euca_rhi::BindGroupDesc {
-                label: Some("Shadow Instance BG"),
-                layout: &self.instance_bgl,
-                entries: &[euca_rhi::BindGroupEntry {
-                    binding: 0,
-                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
-                        buffer: self.shadow_instance_buffer.raw(),
-                        offset: 0,
-                        size: None,
-                    }),
-                }],
-            });
+        self.shadow_instance_bind_group = rhi.create_bind_group(&euca_rhi::BindGroupDesc {
+            label: Some("Shadow Instance BG"),
+            layout: &self.instance_bgl,
+            entries: &[euca_rhi::BindGroupEntry {
+                binding: 0,
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: self.shadow_instance_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
         true
     }
 
@@ -1386,10 +1374,8 @@ impl Renderer {
             let (fw, fh) = rhi.surface_size();
             fog_pass.resize(&**gpu, fw, fh);
         }
-        self.taa_pass
-            .resize(rhi, w, h);
-        self.velocity_textures
-            .resize(rhi, w, h);
+        self.taa_pass.resize(rhi, w, h);
+        self.velocity_textures.resize(rhi, w, h);
     }
 
     /// Set interpolated SH probe coefficients for indirect lighting.

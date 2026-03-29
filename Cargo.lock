@@ -1474,6 +1474,7 @@ dependencies = [
 name = "euca-physics"
 version = "1.1.0"
 dependencies = [
+ "bytemuck",
  "criterion",
  "env_logger",
  "euca-core",
@@ -1481,6 +1482,7 @@ dependencies = [
  "euca-math",
  "euca-reflect",
  "euca-render",
+ "euca-rhi",
  "euca-scene",
  "log",
  "rayon",
