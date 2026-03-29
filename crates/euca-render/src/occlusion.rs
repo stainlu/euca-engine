@@ -594,10 +594,11 @@ pub fn create_hzb_bind_group<D: RenderDevice>(
 /// Dispatch one mip-transition of the HZB downsample shader.
 ///
 /// Does nothing if the HZB pipeline has not been set up.
-pub fn dispatch_hzb_downsample(
-    encoder: &mut wgpu::CommandEncoder,
-    manager: &ComputeManager,
-    bind_group: &wgpu::BindGroup,
+pub fn dispatch_hzb_downsample<D: euca_rhi::RenderDevice>(
+    device: &D,
+    encoder: &mut D::CommandEncoder,
+    manager: &ComputeManager<D>,
+    bind_group: &D::BindGroup,
     dst_width: u32,
     dst_height: u32,
 ) {
@@ -611,7 +612,7 @@ pub fn dispatch_hzb_downsample(
 
     let wg_x = dst_width.div_ceil(8);
     let wg_y = dst_height.div_ceil(8);
-    crate::compute::dispatch_compute(encoder, pipeline, &[bind_group], [wg_x, wg_y, 1], None);
+    crate::compute::dispatch_compute_generic(device, encoder, pipeline, &[bind_group], [wg_x, wg_y, 1], None);
 }
 
 // ---------------------------------------------------------------------------

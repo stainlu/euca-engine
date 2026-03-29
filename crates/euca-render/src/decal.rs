@@ -289,6 +289,16 @@ impl<D: euca_rhi::RenderDevice> DecalRenderer<D> {
         self.index_count
     }
 
+    /// Size of the vertex buffer in bytes.
+    pub fn vertex_buffer_size(&self) -> u64 {
+        (std::mem::size_of::<DecalVertex>() * CUBE_VERTEX_COUNT) as u64
+    }
+
+    /// Size of the index buffer in bytes.
+    pub fn index_buffer_size(&self) -> u64 {
+        (std::mem::size_of::<u16>() * CUBE_INDEX_COUNT) as u64
+    }
+
     /// The vertex buffer layout for `DecalVertex`.
     pub fn vertex_layout() -> euca_rhi::VertexBufferLayout<'static> {
         euca_rhi::VertexBufferLayout {

@@ -290,7 +290,7 @@ const INITIAL_INSTANCE_CAPACITY: usize = 16384;
 
 /// State for the bindless rendering path.
 struct BindlessState<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
-    system: crate::bindless::BindlessMaterialSystem,
+    system: crate::bindless::BindlessMaterialSystem<D>,
     pipeline: D::RenderPipeline,
 }
 const SHADOW_MAP_SIZE: u32 = 2048;
@@ -328,7 +328,7 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     material_bgl: D::BindGroupLayout,
     sampler: D::Sampler,
     materials: Vec<GpuMaterial<D>>,
-    textures: TextureStore,
+    textures: TextureStore<D>,
     sky_pipeline: D::RenderPipeline,
     shadow_pipeline: D::RenderPipeline,
     shadow_map: D::Texture,
@@ -346,11 +346,11 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     depth_format: euca_rhi::TextureFormat,
     surface_format: euca_rhi::TextureFormat,
     /// Advanced post-process stack (SSAO, FXAA, color grading, bloom).
-    post_process_stack: PostProcessStack,
+    post_process_stack: PostProcessStack<D>,
     /// Settings controlling the advanced post-process stack.
     post_process_settings: PostProcessSettings,
     /// Optional volumetric fog pass. Created lazily via `enable_volumetric_fog`.
-    volumetric_fog_pass: Option<VolumetricFogPass>,
+    volumetric_fog_pass: Option<VolumetricFogPass<D>>,
     /// Settings for volumetric fog (density, scattering, etc.).
     volumetric_fog_settings: VolumetricFogSettings,
     /// Optional HZB occlusion culler. Uses previous frame's depth.
@@ -360,7 +360,7 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     /// Dimensions of the previous depth buffer.
     prev_depth_dims: (u32, u32),
     /// TAA resolve pass (temporal anti-aliasing).
-    taa_pass: crate::taa::TaaPass,
+    taa_pass: crate::taa::TaaPass<D>,
     /// Frame counter for TAA jitter sequence.
     frame_count: u32,
     /// Interpolated SH probe coefficients for indirect lighting (set by caller).
@@ -368,7 +368,7 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     /// Whether probe data is valid.
     probe_enabled: bool,
     /// GPU resources for decal projection volumes.
-    decal_renderer: DecalRenderer,
+    decal_renderer: DecalRenderer<D>,
     /// Per-decal uniform buffer (model_matrix + opacity), written before each draw.
     decal_uniform_buffer: SmartBuffer<D>,
     /// Bind group layout for the per-decal uniform buffer.
@@ -378,9 +378,9 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     /// Decal draw commands staged by the caller for the current frame.
     pending_decals: Vec<DecalDrawCommand>,
     /// GPU compute particle systems.
-    gpu_particle_systems: Vec<crate::gpu_particles::GpuParticleSystem>,
+    gpu_particle_systems: Vec<crate::gpu_particles::GpuParticleSystem<D>>,
     /// Velocity buffer textures for TAA / motion blur / DoF.
-    velocity_textures: crate::velocity::VelocityTextures,
+    velocity_textures: crate::velocity::VelocityTextures<D>,
     /// Fallback 1x1 black cubemap view (used when no IBL resources are set).
     ibl_dummy_cube_view: D::TextureView,
     /// Fallback 1x1 black BRDF LUT view (used when no IBL resources are set).
@@ -397,7 +397,7 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     /// Whether the GPU uses unified memory (needed for buffer re-creation).
     unified_memory: bool,
     /// Active IBL resources (set via `set_ibl`, cleared via `clear_ibl`).
-    ibl_resources: Option<IblResources>,
+    ibl_resources: Option<IblResources<D>>,
     /// IBL intensity multiplier (default 1.0).
     ibl_intensity: f32,
     // Keep fallback textures alive so their views remain valid.
@@ -407,16 +407,16 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
 
-impl Renderer {
+impl<D: RenderDevice> Renderer<D> {
     /// Create a new renderer, allocating all GPU pipelines and buffers.
     ///
     /// The renderer is bound to the surface format and initial size reported
     /// by `gpu`. Call [`resize`](Self::resize) when the window size changes.
-    pub fn new(gpu: &GpuContext) -> Self {
+    pub fn new(gpu: &GpuContext<D>) -> Self {
         let instance_buf_size =
             (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64;
         let unified = gpu.unified_memory();
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
         let (surface_w, surface_h) = rhi.surface_size();
         let surface_fmt = rhi.surface_format();
         let instance_buffer = SmartBuffer::new(
@@ -1056,7 +1056,7 @@ impl Renderer {
     /// exceeds the current capacity. Returns `true` if the buffer was grown.
     fn ensure_instance_capacity(
         &mut self,
-        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
+        rhi: &D,
         count: usize,
     ) -> bool {
         if count <= self.instance_capacity {
@@ -1090,7 +1090,7 @@ impl Renderer {
     /// exceeds the current capacity.
     fn ensure_shadow_instance_capacity(
         &mut self,
-        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
+        rhi: &D,
         count: usize,
     ) -> bool {
         if count <= self.shadow_instance_capacity {
@@ -1125,8 +1125,8 @@ impl Renderer {
     /// switching). Requires `TEXTURE_BINDING_ARRAY` GPU feature.
     ///
     /// Call this once after creating the renderer, before uploading materials.
-    pub fn enable_bindless(&mut self, gpu: &GpuContext) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+    pub fn enable_bindless(&mut self, gpu: &GpuContext<D>) {
+        let rhi: &D = &**gpu;
         let system = crate::bindless::BindlessMaterialSystem::new(rhi, gpu.unified_memory());
         if !system.is_enabled() {
             log::warn!("Bindless materials requested but GPU lacks required features");
@@ -1191,9 +1191,9 @@ impl Renderer {
 
     /// Upload CPU-side mesh data to the GPU and return a handle for use in
     /// [`DrawCommand`]s.
-    pub fn upload_mesh(&mut self, gpu: &GpuContext, mesh: &Mesh) -> MeshHandle {
+    pub fn upload_mesh(&mut self, gpu: &GpuContext<D>, mesh: &Mesh) -> MeshHandle {
         use euca_rhi::{BufferDesc, BufferUsages, RenderDevice};
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
 
         let vdata = bytemuck::cast_slice::<_, u8>(&mesh.vertices);
         let vb = rhi.create_buffer(&BufferDesc {
@@ -1226,40 +1226,40 @@ impl Renderer {
     /// Upload raw RGBA8 pixel data as a GPU texture with auto-generated mipmaps.
     pub fn upload_texture(
         &mut self,
-        gpu: &GpuContext,
+        gpu: &GpuContext<D>,
         width: u32,
         height: u32,
         rgba: &[u8],
     ) -> TextureHandle {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
         self.textures.upload_rgba(rhi, width, height, rgba)
     }
 
     /// Decode an image file (PNG, JPEG, etc.) from memory and upload it as a texture.
-    pub fn upload_texture_image(&mut self, gpu: &GpuContext, data: &[u8]) -> TextureHandle {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+    pub fn upload_texture_image(&mut self, gpu: &GpuContext<D>, data: &[u8]) -> TextureHandle {
+        let rhi: &D = &**gpu;
         self.textures.upload_image(rhi, data)
     }
 
     /// Generate and upload a checkerboard test pattern texture.
     pub fn checkerboard_texture(
         &mut self,
-        gpu: &GpuContext,
+        gpu: &GpuContext<D>,
         size: u32,
         tile: u32,
     ) -> TextureHandle {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
         self.textures.checkerboard(rhi, size, tile)
     }
 
     /// Upload a PBR material (uniforms + texture bindings) to the GPU and
     /// return a handle for use in [`DrawCommand`]s.
-    pub fn upload_material(&mut self, gpu: &GpuContext, mat: &Material) -> MaterialHandle {
+    pub fn upload_material(&mut self, gpu: &GpuContext<D>, mat: &Material) -> MaterialHandle {
         use euca_rhi::{
             BindGroupDesc, BindGroupEntry, BindingResource, BufferBinding, BufferDesc,
             BufferUsages, RenderDevice,
         };
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
 
         let handle = MaterialHandle(self.materials.len() as u32);
         let uniforms = MaterialUniforms {
@@ -1362,8 +1362,8 @@ impl Renderer {
 
     /// Recreate size-dependent GPU resources (depth buffer, MSAA target, etc.)
     /// after the window has been resized.
-    pub fn resize(&mut self, gpu: &GpuContext) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+    pub fn resize(&mut self, gpu: &GpuContext<D>) {
+        let rhi: &D = &**gpu;
         let (w, h) = rhi.surface_size();
         self.depth_texture =
             Self::create_depth_texture(rhi, w, h, euca_rhi::TextureFormat::Depth32Float);
@@ -1399,14 +1399,14 @@ impl Renderer {
     /// The `IblResources` should be generated via [`IblResources::generate`] or
     /// [`IblResources::from_uniform_color`]. Once set, the PBR shader will
     /// sample the irradiance and specular cubemaps for indirect lighting.
-    pub fn set_ibl(&mut self, gpu: &GpuContext, resources: IblResources, intensity: f32) {
+    pub fn set_ibl(&mut self, gpu: &GpuContext<D>, resources: IblResources<D>, intensity: f32) {
         self.ibl_resources = Some(resources);
         self.ibl_intensity = intensity;
         self.rebuild_scene_bind_group(gpu);
     }
 
     /// Disable IBL (fall back to SH probes or flat ambient color).
-    pub fn clear_ibl(&mut self, gpu: &GpuContext) {
+    pub fn clear_ibl(&mut self, gpu: &GpuContext<D>) {
         self.ibl_resources = None;
         self.ibl_intensity = 1.0;
         self.rebuild_scene_bind_group(gpu);
@@ -1424,7 +1424,7 @@ impl Renderer {
 
     /// Rebuild the scene bind group, picking real IBL texture views when
     /// `ibl_resources` is `Some`, or dummy (black) views otherwise.
-    fn rebuild_scene_bind_group(&mut self, device: &euca_rhi::wgpu_backend::WgpuDevice) {
+    fn rebuild_scene_bind_group(&mut self, device: &D) {
         let (irradiance_view, specular_view, brdf_view, sampler) =
             if let Some(ref ibl) = self.ibl_resources {
                 (
@@ -1495,17 +1495,17 @@ impl Renderer {
     }
 
     /// Read-only access to the decal renderer (unit-cube GPU resources).
-    pub fn decal_renderer(&self) -> &DecalRenderer {
+    pub fn decal_renderer(&self) -> &DecalRenderer<D> {
         &self.decal_renderer
     }
 
     /// Add a GPU compute particle system. Returns its index.
     pub fn add_gpu_particle_system(
         &mut self,
-        gpu: &GpuContext,
+        gpu: &GpuContext<D>,
         config: crate::gpu_particles::GpuParticleConfig,
     ) -> usize {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
         let format = rhi.surface_format();
         let system = crate::gpu_particles::GpuParticleSystem::new(&**gpu, config, format);
         self.gpu_particle_systems.push(system);
@@ -1516,7 +1516,7 @@ impl Renderer {
     pub fn gpu_particle_system_mut(
         &mut self,
         index: usize,
-    ) -> Option<&mut crate::gpu_particles::GpuParticleSystem> {
+    ) -> Option<&mut crate::gpu_particles::GpuParticleSystem<D>> {
         self.gpu_particle_systems.get_mut(index)
     }
 
@@ -1560,8 +1560,8 @@ impl Renderer {
     /// Once enabled, `render_to_view_with_lights` will execute the fog compute
     /// shader and composite the result over the HDR buffer after the PBR pass
     /// and before post-processing.
-    pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+    pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext<D>) {
+        let rhi: &D = &**gpu;
         let (sw, sh) = rhi.surface_size();
         let sf = rhi.surface_format();
         self.volumetric_fog_pass = Some(VolumetricFogPass::new(&**gpu, sw, sh, sf));
@@ -1716,7 +1716,7 @@ impl Renderer {
     /// [`render_to_view_with_lights`](Self::render_to_view_with_lights).
     pub fn draw(
         &mut self,
-        gpu: &GpuContext,
+        gpu: &GpuContext<D>,
         camera: &Camera,
         light: &DirectionalLight,
         ambient: &AmbientLight,
@@ -1732,7 +1732,7 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub fn draw_with_lights(
         &mut self,
-        gpu: &GpuContext,
+        gpu: &GpuContext<D>,
         camera: &Camera,
         light: &DirectionalLight,
         ambient: &AmbientLight,
@@ -1741,7 +1741,7 @@ impl Renderer {
         spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
     ) {
         use euca_rhi::RenderDevice;
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
 
         let output = match rhi.get_current_texture() {
             Ok(t) => t,
@@ -1773,13 +1773,13 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view(
         &mut self,
-        gpu: &GpuContext,
+        gpu: &GpuContext<D>,
         camera: &Camera,
         light: &DirectionalLight,
         ambient: &AmbientLight,
         commands: &[DrawCommand],
-        color_view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
+        color_view: &D::TextureView,
+        encoder: &mut D::CommandEncoder,
     ) {
         self.render_to_view_with_lights(
             gpu,
@@ -1802,17 +1802,17 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub fn render_to_view_with_lights(
         &mut self,
-        gpu: &GpuContext,
+        gpu: &GpuContext<D>,
         camera: &Camera,
         light: &DirectionalLight,
         ambient: &AmbientLight,
         commands: &[DrawCommand],
         point_lights: &[(euca_math::Vec3, &crate::light::PointLight)],
         spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
-        color_view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
+        color_view: &D::TextureView,
+        encoder: &mut D::CommandEncoder,
     ) {
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let rhi: &D = &**gpu;
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
@@ -1871,8 +1871,8 @@ impl Renderer {
             pass.set_bind_group(0, &self.shadow_instance_bind_group, &[]);
             for batch in &opaque_batches {
                 let mesh = &self.meshes[batch.mesh.0 as usize];
-                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
+                pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
                 pass.draw_indexed(
                     0..mesh.index_count,
                     0,
@@ -2006,8 +2006,8 @@ impl Renderer {
                 pass.set_bind_group(2, &bl.system.bind_group, &[]);
                 for batch in &opaque_batches {
                     let mesh = &self.meshes[batch.mesh.0 as usize];
-                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
+                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2021,8 +2021,8 @@ impl Renderer {
                     let gpu_mat = &self.materials[batch.material.0 as usize];
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
                     let mesh = &self.meshes[batch.mesh.0 as usize];
-                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
+                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2037,10 +2037,12 @@ impl Renderer {
             // decal texture. For now we bind the decal vertex/index buffers and
             // issue one draw per command so the integration path is exercised.
             if !self.pending_decals.is_empty() {
-                pass.set_vertex_buffer(0, self.decal_renderer.vertex_buffer().slice(..));
+                pass.set_vertex_buffer(0, self.decal_renderer.vertex_buffer(), 0, self.decal_renderer.vertex_buffer_size());
                 pass.set_index_buffer(
-                    self.decal_renderer.index_buffer().slice(..),
-                    wgpu::IndexFormat::Uint16,
+                    self.decal_renderer.index_buffer(),
+                    euca_rhi::IndexFormat::Uint16,
+                    0,
+                    self.decal_renderer.index_buffer_size(),
                 );
                 pass.set_bind_group(0, &self.decal_bind_group, &[]);
                 for decal_cmd in &self.pending_decals {
@@ -2066,8 +2068,8 @@ impl Renderer {
                     let gpu_mat = &self.materials[batch.material.0 as usize];
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
                     let mesh = &self.meshes[batch.mesh.0 as usize];
-                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
+                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2247,11 +2249,11 @@ impl Renderer {
     }
 
     fn create_depth_texture(
-        device: &euca_rhi::wgpu_backend::WgpuDevice,
+        device: &D,
         width: u32,
         height: u32,
         format: euca_rhi::TextureFormat,
-    ) -> wgpu::TextureView {
+    ) -> D::TextureView {
         let texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("Depth Texture (MSAA)"),
             size: euca_rhi::Extent3d {
@@ -2269,10 +2271,10 @@ impl Renderer {
         device.create_texture_view(&texture, &euca_rhi::TextureViewDesc::default())
     }
     fn create_msaa_hdr_texture(
-        device: &euca_rhi::wgpu_backend::WgpuDevice,
+        device: &D,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
+    ) -> (D::Texture, D::TextureView) {
         let texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("MSAA HDR Texture"),
             size: euca_rhi::Extent3d {
