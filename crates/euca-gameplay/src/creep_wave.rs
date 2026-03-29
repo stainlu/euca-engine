@@ -4,19 +4,17 @@
 //! siege, and super creeps across three lanes, with configurable aggro
 //! priority, denial rules, and gold bounty scaling.
 //!
-//! Reuses [`crate::economy::CreepType`] for creep variants and
-//! [`crate::building::Lane`] for lane identity. Adds stats, composition,
-//! aggro, denial, and wave spawning on top.
+//! Reuses [`crate::economy::CreepType`] for creep variants. Adds stats,
+//! composition, aggro, denial, and wave spawning on top.
 //!
-//! Types: `WaveConfig`, `LaneWaypoints`, `CreepAggro`, `WaveSpawner`,
-//! `SpawnWaveEvent`, `CreepStats`.
+//! Types: `Lane`, `WaveConfig`, `LaneWaypoints`, `CreepAggro`,
+//! `WaveSpawner`, `SpawnWaveEvent`, `CreepStats`.
 //!
 //! Pure functions: `creep_stats`, `wave_composition`, `can_deny`,
 //! `denial_xp`, `last_hit_gold`.
 
 use euca_math::Vec3;
 
-use crate::building::Lane;
 use crate::economy::CreepType;
 
 // ── Creep stats ──
@@ -66,6 +64,14 @@ fn base_bounty(creep_type: CreepType) -> u32 {
 }
 
 // ── Lane routing ──
+
+/// The three standard MOBA lanes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Lane {
+    Top,
+    Mid,
+    Bot,
+}
 
 /// Ordered waypoints that creeps follow along a lane.
 #[derive(Clone, Debug)]
