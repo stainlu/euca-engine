@@ -1523,6 +1523,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "euca-poker-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "euca-reflect"
 version = "1.1.0"
 dependencies = [

@@ -29,6 +29,7 @@ members = [
     "tools/euca-cli",
     "games/poker",
     "services/matchmaking",
+    "services/poker-server",
 ]
 
 [workspace.package]

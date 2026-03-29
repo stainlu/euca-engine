@@ -1,0 +1,24 @@
+[package]
+name = "euca-poker-server"
+version = "0.1.0"
+edition.workspace = true
+description = "Authoritative poker game server with WebSocket rooms"
+
+[[bin]]
+name = "euca-poker-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+futures-util = "0.3"
+tower-http = { version = "0.6", features = ["cors"] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
