@@ -1363,11 +1363,7 @@ impl Renderer {
             gpu.surface_config.height,
         );
         if let Some(ref mut fog_pass) = self.volumetric_fog_pass {
-            fog_pass.resize(
-                &gpu.device,
-                gpu.surface_config.width,
-                gpu.surface_config.height,
-            );
+            fog_pass.resize(&**gpu, gpu.surface_config.width, gpu.surface_config.height);
         }
         self.taa_pass.resize(
             &gpu.device,
@@ -1507,8 +1503,8 @@ impl Renderer {
         gpu: &GpuContext,
         config: crate::gpu_particles::GpuParticleConfig,
     ) -> usize {
-        let format = gpu.surface_config.format;
-        let system = crate::gpu_particles::GpuParticleSystem::new(gpu, config, format);
+        let format = gpu.surface_config.format.into();
+        let system = crate::gpu_particles::GpuParticleSystem::new(&**gpu, config, format);
         self.gpu_particle_systems.push(system);
         self.gpu_particle_systems.len() - 1
     }
@@ -1563,10 +1559,10 @@ impl Renderer {
     /// and before post-processing.
     pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext) {
         self.volumetric_fog_pass = Some(VolumetricFogPass::new(
-            &gpu.device,
+            &**gpu,
             gpu.surface_config.width,
             gpu.surface_config.height,
-            gpu.surface_config.format,
+            gpu.surface_config.format.into(),
         ));
     }
 
@@ -2083,7 +2079,7 @@ impl Renderer {
         if !self.gpu_particle_systems.is_empty() {
             let dt = 1.0 / 60.0; // Fixed timestep for particle update
             for system in &mut self.gpu_particle_systems {
-                system.update(encoder, &gpu.queue, dt);
+                system.update(&**gpu, encoder, dt);
             }
 
             // Draw particles in a separate render pass (after opaque, blended on top)
@@ -2130,7 +2126,7 @@ impl Renderer {
                 light_color: [light.color[0], light.color[1], light.color[2]],
                 settings: &self.volumetric_fog_settings,
             };
-            fog_pass.execute(&gpu.device, encoder, resolve_target, &gpu.queue, &frame);
+            fog_pass.execute(&**gpu, encoder, resolve_target, &frame);
         }
 
         // TAA resolve: blend current frame with history for temporal anti-aliasing.

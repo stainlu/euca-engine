@@ -19,11 +19,15 @@
 //!
 //! ```ignore
 //! // With an environment cubemap:
-//! let ibl = IblResources::generate(&device, &queue, &env_cubemap_view);
+//! let ibl = IblResources::generate(&device, &env_cubemap_view);
 //!
 //! // Without an environment cubemap (uniform color fallback):
-//! let ibl = IblResources::from_uniform_color(&device, &queue, [0.2, 0.2, 0.3]);
+//! let ibl = IblResources::from_uniform_color(&device, [0.2, 0.2, 0.3]);
 //! ```
+
+use euca_rhi::RenderDevice;
+use euca_rhi::pass::ComputePassOps;
+use euca_rhi::wgpu_backend::WgpuDevice;
 
 /// BRDF LUT resolution (square).
 pub const BRDF_LUT_SIZE: u32 = 512;
@@ -67,7 +71,7 @@ struct SpecularParams {
 // ---------------------------------------------------------------------------
 
 /// Pre-computed IBL textures ready for binding in the PBR shader.
-pub struct IblResources<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+pub struct IblResources<D: RenderDevice = WgpuDevice> {
     /// BRDF integration LUT (Rg16Float, 512x512).
     pub brdf_lut: D::Texture,
     /// View into the BRDF LUT for shader binding.
@@ -84,19 +88,16 @@ pub struct IblResources<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::Wgpu
     pub cubemap_sampler: D::Sampler,
 }
 
-impl IblResources {
+impl<D: RenderDevice> IblResources<D> {
     /// Generate IBL resources from a source environment cubemap.
     ///
     /// Dispatches three compute shaders to produce the BRDF LUT, irradiance
     /// cubemap, and pre-filtered specular cubemap. All work is recorded into
     /// a single command buffer and submitted synchronously.
-    pub fn generate(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        source_cubemap_view: &wgpu::TextureView,
-    ) -> Self {
+    pub fn generate(device: &D, source_cubemap_view: &D::TextureView) -> Self {
         let brdf_lut = Self::create_brdf_lut_texture(device);
-        let brdf_lut_view = brdf_lut.create_view(&wgpu::TextureViewDescriptor::default());
+        let brdf_lut_view =
+            device.create_texture_view(&brdf_lut, &euca_rhi::TextureViewDesc::default());
 
         let (irradiance_cubemap, irradiance_view) =
             Self::create_cubemap_texture(device, "ibl_irradiance", IRRADIANCE_SIZE, 1);
@@ -106,9 +107,7 @@ impl IblResources {
         let cubemap_sampler = Self::create_cubemap_sampler(device);
         let source_sampler = Self::create_source_sampler(device);
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("ibl_generate"),
-        });
+        let mut encoder = device.create_command_encoder(Some("ibl_generate"));
 
         // --- 1. BRDF LUT ---
         Self::dispatch_brdf_lut(device, &mut encoder, &brdf_lut);
@@ -116,7 +115,6 @@ impl IblResources {
         // --- 2. Irradiance convolution ---
         Self::dispatch_irradiance(
             device,
-            queue,
             &mut encoder,
             source_cubemap_view,
             &source_sampler,
@@ -126,14 +124,13 @@ impl IblResources {
         // --- 3. Specular pre-filter ---
         Self::dispatch_specular(
             device,
-            queue,
             &mut encoder,
             source_cubemap_view,
             &source_sampler,
             &specular_cubemap,
         );
 
-        queue.submit(std::iter::once(encoder.finish()));
+        device.submit(encoder);
 
         Self {
             brdf_lut,
@@ -151,121 +148,114 @@ impl IblResources {
     /// Creates a tiny solid-color cubemap as the source environment, then runs
     /// the full generation pipeline. Use this when no HDR environment map is
     /// available (e.g. during initial engine bring-up).
-    pub fn from_uniform_color(device: &wgpu::Device, queue: &wgpu::Queue, color: [f32; 3]) -> Self {
-        let (source_cubemap, source_view) = Self::create_solid_color_cubemap(device, queue, color);
+    pub fn from_uniform_color(device: &D, color: [f32; 3]) -> Self {
+        let (source_cubemap, source_view) = Self::create_solid_color_cubemap(device, color);
         let _ = source_cubemap; // keep alive until generate() submits
-        Self::generate(device, queue, &source_view)
+        Self::generate(device, &source_view)
     }
 
     // -----------------------------------------------------------------------
     // Texture creation helpers
     // -----------------------------------------------------------------------
 
-    fn create_brdf_lut_texture(device: &wgpu::Device) -> wgpu::Texture {
-        device.create_texture(&wgpu::TextureDescriptor {
+    fn create_brdf_lut_texture(device: &D) -> D::Texture {
+        device.create_texture(&euca_rhi::TextureDesc {
             label: Some("ibl_brdf_lut"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: BRDF_LUT_SIZE,
                 height: BRDF_LUT_SIZE,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // The compute shader writes rg32float for precision; we store in
-            // Rg16Float for the final binding. We use rg32float as the storage
-            // format since compute writes require exact format match, then the
-            // view will interpret as Rg16Float for sampling.
-            //
-            // Actually, wgpu requires storage texture format to match the
-            // texture format exactly. We use Rgba16Float because Rg32Float is
-            // NOT filterable on Apple Silicon (Metal) — binding it with a
-            // filtering sampler panics. Rgba16Float is filterable and a valid
-            // compute storage format. We store (scale, bias) in .rg channels.
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: euca_rhi::TextureDimension::D2,
+            // Rgba16Float: filterable on all platforms, valid for compute storage,
+            // and we store (scale, bias) in .rg channels.
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::STORAGE_BINDING
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         })
     }
 
     fn create_cubemap_texture(
-        device: &wgpu::Device,
+        device: &D,
         label: &str,
         face_size: u32,
         mip_levels: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+    ) -> (D::Texture, D::TextureView) {
+        let texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some(label),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: face_size,
                 height: face_size,
                 depth_or_array_layers: CUBEMAP_FACES,
             },
             mip_level_count: mip_levels,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::STORAGE_BINDING
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some(label),
-            dimension: Some(wgpu::TextureViewDimension::Cube),
-            ..Default::default()
-        });
+        let view = device.create_texture_view(
+            &texture,
+            &euca_rhi::TextureViewDesc {
+                label: Some(label),
+                dimension: Some(euca_rhi::TextureViewDimension::Cube),
+                ..Default::default()
+            },
+        );
         (texture, view)
     }
 
-    fn create_cubemap_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-        device.create_sampler(&wgpu::SamplerDescriptor {
+    fn create_cubemap_sampler(device: &D) -> D::Sampler {
+        device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("ibl_cubemap_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
+            mipmap_filter: euca_rhi::FilterMode::Linear,
+            address_mode_u: euca_rhi::AddressMode::ClampToEdge,
+            address_mode_v: euca_rhi::AddressMode::ClampToEdge,
+            address_mode_w: euca_rhi::AddressMode::ClampToEdge,
             ..Default::default()
         })
     }
 
-    fn create_source_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-        device.create_sampler(&wgpu::SamplerDescriptor {
+    fn create_source_sampler(device: &D) -> D::Sampler {
+        device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("ibl_source_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
+            mipmap_filter: euca_rhi::FilterMode::Linear,
+            address_mode_u: euca_rhi::AddressMode::ClampToEdge,
+            address_mode_v: euca_rhi::AddressMode::ClampToEdge,
+            address_mode_w: euca_rhi::AddressMode::ClampToEdge,
             ..Default::default()
         })
     }
 
     /// Create a tiny solid-color cubemap to use as the source environment.
-    fn create_solid_color_cubemap(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        color: [f32; 3],
-    ) -> (wgpu::Texture, wgpu::TextureView) {
+    fn create_solid_color_cubemap(device: &D, color: [f32; 3]) -> (D::Texture, D::TextureView) {
         // 1x1 per face is sufficient for a uniform environment.
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&euca_rhi::TextureDesc {
             label: Some("ibl_solid_color_source"),
-            size: wgpu::Extent3d {
+            size: euca_rhi::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: CUBEMAP_FACES,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::TEXTURE_BINDING | euca_rhi::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
-        // Encode color as f16 (using half crate would be cleaner, but we can
-        // use f32-to-f16 bit conversion inline to avoid an extra dependency).
+        // Encode color as f16 (using inline f32-to-f16 bit conversion to avoid
+        // an extra half-float crate dependency).
         let pixel = [
             f32_to_f16(color[0]),
             f32_to_f16(color[1]),
@@ -275,24 +265,24 @@ impl IblResources {
         let pixel_bytes = bytemuck::cast_slice(&pixel);
 
         for face in 0..CUBEMAP_FACES {
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
+            device.write_texture(
+                &euca_rhi::TexelCopyTextureInfo {
                     texture: &texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d {
+                    origin: euca_rhi::Origin3d {
                         x: 0,
                         y: 0,
                         z: face,
                     },
-                    aspect: wgpu::TextureAspect::All,
+                    aspect: euca_rhi::TextureAspect::All,
                 },
                 pixel_bytes,
-                wgpu::TexelCopyBufferLayout {
+                &euca_rhi::TextureDataLayout {
                     offset: 0,
                     bytes_per_row: Some(8), // 4 x f16 = 8 bytes
                     rows_per_image: Some(1),
                 },
-                wgpu::Extent3d {
+                euca_rhi::Extent3d {
                     width: 1,
                     height: 1,
                     depth_or_array_layers: 1,
@@ -300,11 +290,14 @@ impl IblResources {
             );
         }
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("ibl_solid_color_source"),
-            dimension: Some(wgpu::TextureViewDimension::Cube),
-            ..Default::default()
-        });
+        let view = device.create_texture_view(
+            &texture,
+            &euca_rhi::TextureViewDesc {
+                label: Some("ibl_solid_color_source"),
+                dimension: Some(euca_rhi::TextureViewDimension::Cube),
+                ..Default::default()
+            },
+        );
 
         (texture, view)
     }
@@ -313,76 +306,187 @@ impl IblResources {
     // Compute dispatch helpers
     // -----------------------------------------------------------------------
 
-    fn dispatch_brdf_lut(
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        brdf_lut: &wgpu::Texture,
-    ) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    /// Bind group layout shared by the irradiance and specular convolution
+    /// pipelines: uniform params, source cubemap, sampler, output 2D-array.
+    fn create_cubemap_convolution_bgl(device: &D, label: &str) -> D::BindGroupLayout {
+        device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some(label),
+            entries: &[
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Texture {
+                        sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                        view_dimension: euca_rhi::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::StorageTexture {
+                        access: euca_rhi::StorageTextureAccess::WriteOnly,
+                        format: euca_rhi::TextureFormat::Rgba16Float,
+                        view_dimension: euca_rhi::TextureViewDimension::D2Array,
+                    },
+                    count: None,
+                },
+            ],
+        })
+    }
+
+    /// Build a bind group for one cubemap convolution dispatch.
+    fn create_convolution_bind_group<'a>(
+        device: &D,
+        layout: &D::BindGroupLayout,
+        label: &str,
+        uniform_buffer: &'a D::Buffer,
+        source_cubemap_view: &'a D::TextureView,
+        source_sampler: &'a D::Sampler,
+        output_view: &'a D::TextureView,
+    ) -> D::BindGroup {
+        device.create_bind_group(&euca_rhi::BindGroupDesc {
+            label: Some(label),
+            layout,
+            entries: &[
+                euca_rhi::BindGroupEntry {
+                    binding: 0,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 1,
+                    resource: euca_rhi::BindingResource::TextureView(source_cubemap_view),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 2,
+                    resource: euca_rhi::BindingResource::Sampler(source_sampler),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 3,
+                    resource: euca_rhi::BindingResource::TextureView(output_view),
+                },
+            ],
+        })
+    }
+
+    fn dispatch_brdf_lut(device: &D, encoder: &mut D::CommandEncoder, brdf_lut: &D::Texture) {
+        let shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("brdf_lut_shader"),
-            source: wgpu::ShaderSource::Wgsl(BRDF_LUT_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(BRDF_LUT_SHADER.into()),
         });
 
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("brdf_lut_pipeline"),
-            layout: None, // auto layout
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-
-        let bgl = pipeline.get_bind_group_layout(0);
-        let output_view = brdf_lut.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("brdf_lut_bg"),
-            layout: &bgl,
-            entries: &[wgpu::BindGroupEntry {
+        let bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("brdf_lut_bgl"),
+            entries: &[euca_rhi::BindGroupLayoutEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&output_view),
+                visibility: euca_rhi::ShaderStages::COMPUTE,
+                ty: euca_rhi::BindingType::StorageTexture {
+                    access: euca_rhi::StorageTextureAccess::WriteOnly,
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    view_dimension: euca_rhi::TextureViewDimension::D2,
+                },
+                count: None,
             }],
         });
 
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("brdf_lut_compute"),
-            timestamp_writes: None,
+        let pipeline = device.create_compute_pipeline(&euca_rhi::ComputePipelineDesc {
+            label: Some("brdf_lut_pipeline"),
+            layout: &[&bgl],
+            module: &shader,
+            entry_point: "main",
         });
+
+        let output_view =
+            device.create_texture_view(brdf_lut, &euca_rhi::TextureViewDesc::default());
+
+        let bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
+            label: Some("brdf_lut_bg"),
+            layout: &bgl,
+            entries: &[euca_rhi::BindGroupEntry {
+                binding: 0,
+                resource: euca_rhi::BindingResource::TextureView(&output_view),
+            }],
+        });
+
+        let mut pass = device.begin_compute_pass(encoder, Some("brdf_lut_compute"));
         pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, Some(&bind_group), &[]);
+        pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(BRDF_LUT_SIZE.div_ceil(8), BRDF_LUT_SIZE.div_ceil(8), 1);
     }
 
     fn dispatch_irradiance(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        source_cubemap_view: &wgpu::TextureView,
-        source_sampler: &wgpu::Sampler,
-        irradiance_cubemap: &wgpu::Texture,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        source_cubemap_view: &D::TextureView,
+        source_sampler: &D::Sampler,
+        irradiance_cubemap: &D::Texture,
     ) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("ibl_irradiance_shader"),
-            source: wgpu::ShaderSource::Wgsl(IRRADIANCE_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(IRRADIANCE_SHADER.into()),
         });
 
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let bgl = Self::create_cubemap_convolution_bgl(device, "ibl_irradiance_bgl");
+
+        let pipeline = device.create_compute_pipeline(&euca_rhi::ComputePipelineDesc {
             label: Some("ibl_irradiance_pipeline"),
-            layout: None,
+            layout: &[&bgl],
             module: &shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
+            entry_point: "main",
         });
 
-        let bgl = pipeline.get_bind_group_layout(0);
-
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("ibl_irradiance_params"),
             size: std::mem::size_of::<IrradianceParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        // The output view covers all 6 layers at mip 0 and does not vary
+        // per face, so create it once outside the loop.
+        let output_view = device.create_texture_view(
+            irradiance_cubemap,
+            &euca_rhi::TextureViewDesc {
+                label: Some("ibl_irradiance_face_view"),
+                dimension: Some(euca_rhi::TextureViewDimension::D2Array),
+                base_array_layer: 0,
+                array_layer_count: Some(CUBEMAP_FACES),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                ..Default::default()
+            },
+        );
+
+        let bind_group = Self::create_convolution_bind_group(
+            device,
+            &bgl,
+            "ibl_irradiance_bg",
+            &uniform_buffer,
+            source_cubemap_view,
+            source_sampler,
+            &output_view,
+        );
 
         for face in 0..CUBEMAP_FACES {
             let params = IrradianceParams {
@@ -391,84 +495,70 @@ impl IblResources {
                 _pad0: 0,
                 _pad1: 0,
             };
-            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&params));
+            device.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&params));
 
-            let output_view = irradiance_cubemap.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("ibl_irradiance_face_view"),
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                base_array_layer: 0,
-                array_layer_count: Some(CUBEMAP_FACES),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                ..Default::default()
-            });
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ibl_irradiance_bg"),
-                layout: &bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(source_cubemap_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(source_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&output_view),
-                    },
-                ],
-            });
-
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("ibl_irradiance_compute"),
-                timestamp_writes: None,
-            });
+            let mut pass = device.begin_compute_pass(encoder, Some("ibl_irradiance_compute"));
             pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, Some(&bind_group), &[]);
+            pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(IRRADIANCE_SIZE.div_ceil(8), IRRADIANCE_SIZE.div_ceil(8), 1);
         }
     }
 
     fn dispatch_specular(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        source_cubemap_view: &wgpu::TextureView,
-        source_sampler: &wgpu::Sampler,
-        specular_cubemap: &wgpu::Texture,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        source_cubemap_view: &D::TextureView,
+        source_sampler: &D::Sampler,
+        specular_cubemap: &D::Texture,
     ) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("ibl_specular_shader"),
-            source: wgpu::ShaderSource::Wgsl(SPECULAR_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(SPECULAR_SHADER.into()),
         });
 
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let bgl = Self::create_cubemap_convolution_bgl(device, "ibl_specular_bgl");
+
+        let pipeline = device.create_compute_pipeline(&euca_rhi::ComputePipelineDesc {
             label: Some("ibl_specular_pipeline"),
-            layout: None,
+            layout: &[&bgl],
             module: &shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
+            entry_point: "main",
         });
 
-        let bgl = pipeline.get_bind_group_layout(0);
-
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("ibl_specular_params"),
             size: std::mem::size_of::<SpecularParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         for mip in 0..SPECULAR_MIP_COUNT {
             let mip_size = SPECULAR_SIZE >> mip;
+
+            // The output view and bind group are the same for all 6 faces
+            // within a single mip level -- hoist outside the face loop.
+            let output_view = device.create_texture_view(
+                specular_cubemap,
+                &euca_rhi::TextureViewDesc {
+                    label: Some("ibl_specular_mip_view"),
+                    dimension: Some(euca_rhi::TextureViewDimension::D2Array),
+                    base_array_layer: 0,
+                    array_layer_count: Some(CUBEMAP_FACES),
+                    base_mip_level: mip,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                },
+            );
+
+            let bind_group = Self::create_convolution_bind_group(
+                device,
+                &bgl,
+                "ibl_specular_bg",
+                &uniform_buffer,
+                source_cubemap_view,
+                source_sampler,
+                &output_view,
+            );
 
             for face in 0..CUBEMAP_FACES {
                 let params = SpecularParams {
@@ -477,47 +567,11 @@ impl IblResources {
                     mip_count: SPECULAR_MIP_COUNT,
                     size: mip_size,
                 };
-                queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&params));
+                device.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&params));
 
-                let output_view = specular_cubemap.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("ibl_specular_mip_view"),
-                    dimension: Some(wgpu::TextureViewDimension::D2Array),
-                    base_array_layer: 0,
-                    array_layer_count: Some(CUBEMAP_FACES),
-                    base_mip_level: mip,
-                    mip_level_count: Some(1),
-                    ..Default::default()
-                });
-
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("ibl_specular_bg"),
-                    layout: &bgl,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(source_cubemap_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(source_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(&output_view),
-                        },
-                    ],
-                });
-
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("ibl_specular_compute"),
-                    timestamp_writes: None,
-                });
+                let mut pass = device.begin_compute_pass(encoder, Some("ibl_specular_compute"));
                 pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, Some(&bind_group), &[]);
+                pass.set_bind_group(0, &bind_group, &[]);
                 pass.dispatch_workgroups(mip_size.div_ceil(8), mip_size.div_ceil(8), 1);
             }
         }

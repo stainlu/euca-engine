@@ -2,8 +2,9 @@
 //!
 //! Uses two compute passes (emit + update) and an instanced draw for billboard rendering.
 
-use crate::compute::{ComputePipeline, ComputePipelineDesc, GpuBuffer, dispatch_compute};
-use crate::gpu::GpuContext;
+use euca_rhi::RenderDevice;
+use euca_rhi::pass::{ComputePassOps, RenderPassOps};
+use euca_rhi::wgpu_backend::WgpuDevice;
 
 /// GPU-side particle struct layout (must match WGSL `Particle`).
 #[repr(C)]
@@ -89,21 +90,21 @@ impl Default for GpuParticleConfig {
 
 /// A GPU-driven particle system.
 #[allow(dead_code)]
-pub struct GpuParticleSystem<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+pub struct GpuParticleSystem<D: RenderDevice = WgpuDevice> {
     config: GpuParticleConfig,
     position: [f32; 3],
 
     // Compute resources
-    emit_pipeline: ComputePipeline,
-    update_pipeline: ComputePipeline,
-    particle_buffer: GpuBuffer,
-    counter_buffer: GpuBuffer,
-    params_buffer: GpuBuffer,
+    emit_pipeline: D::ComputePipeline,
+    update_pipeline: D::ComputePipeline,
+    particle_buffer: D::Buffer,
+    counter_buffer: D::Buffer,
+    params_buffer: D::Buffer,
     compute_bind_group: D::BindGroup,
 
     // Render resources
     render_pipeline: D::RenderPipeline,
-    camera_buffer: GpuBuffer,
+    camera_buffer: D::Buffer,
     render_bind_group: D::BindGroup,
 
     // Emission accumulator
@@ -111,43 +112,96 @@ pub struct GpuParticleSystem<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend:
     elapsed: f32,
 }
 
-impl GpuParticleSystem {
+impl<D: RenderDevice> GpuParticleSystem<D> {
     /// Create a new GPU particle system.
     pub fn new(
-        gpu: &GpuContext,
+        device: &D,
         config: GpuParticleConfig,
-        surface_format: wgpu::TextureFormat,
+        surface_format: euca_rhi::TextureFormat,
     ) -> Self {
-        let device = &gpu.device;
+        // ── Compute shader ──
+        let compute_shader = device.create_shader(&euca_rhi::ShaderDesc {
+            label: Some("particle_compute"),
+            source: euca_rhi::ShaderSource::Wgsl(
+                include_str!("../shaders/particle_compute.wgsl").into(),
+            ),
+        });
+
+        // ── Compute bind group layout ──
+        let compute_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
+            label: Some("particle_compute_bgl"),
+            entries: &[
+                // particles storage (read_write)
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // counters storage (read_write)
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // params uniform
+                euca_rhi::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: euca_rhi::ShaderStages::COMPUTE,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         // ── Compute pipelines ──
-        let emit_pipeline = ComputePipeline::new(
-            device,
-            &ComputePipelineDesc {
-                label: "particle_emit",
-                shader_source: include_str!("../shaders/particle_compute.wgsl"),
-                entry_point: "emit",
-            },
-        );
-        let update_pipeline = ComputePipeline::new(
-            device,
-            &ComputePipelineDesc {
-                label: "particle_update",
-                shader_source: include_str!("../shaders/particle_compute.wgsl"),
-                entry_point: "update",
-            },
-        );
+        let emit_pipeline = device.create_compute_pipeline(&euca_rhi::ComputePipelineDesc {
+            label: Some("particle_emit"),
+            layout: &[&compute_bgl],
+            module: &compute_shader,
+            entry_point: "emit",
+        });
+        let update_pipeline = device.create_compute_pipeline(&euca_rhi::ComputePipelineDesc {
+            label: Some("particle_update"),
+            layout: &[&compute_bgl],
+            module: &compute_shader,
+            entry_point: "update",
+        });
 
         // ── Buffers ──
         let particle_size = std::mem::size_of::<GpuParticle>() as u64;
-        let particle_buffer = GpuBuffer::new_storage(
-            device,
-            particle_size * config.max_particles as u64,
-            "particles",
-        );
+        let particle_buffer = device.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("particles"),
+            size: particle_size * config.max_particles as u64,
+            usage: euca_rhi::BufferUsages::STORAGE
+                | euca_rhi::BufferUsages::COPY_DST
+                | euca_rhi::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
 
         // Counter buffer: one atomic u32 for alive_count
-        let counter_buffer = GpuBuffer::new_storage_with_data(device, &[0u32], "counters");
+        let counter_buffer = device.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("counters"),
+            size: std::mem::size_of::<u32>() as u64,
+            usage: euca_rhi::BufferUsages::STORAGE
+                | euca_rhi::BufferUsages::COPY_DST
+                | euca_rhi::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        device.write_buffer(&counter_buffer, 0, bytemuck::bytes_of(&0u32));
 
         let initial_params = EmitParamsGpu {
             emitter_position: [0.0; 3],
@@ -169,82 +223,102 @@ impl GpuParticleSystem {
             emit_direction: config.emit_direction,
             cone_half_angle: config.cone_half_angle,
         };
-        let params_buffer =
-            GpuBuffer::new_uniform_with_data(device, &initial_params, "emit_params");
+        let params_buffer = device.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("emit_params"),
+            size: std::mem::size_of::<EmitParamsGpu>() as u64,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        device.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&initial_params));
 
         // Compute bind group (shared between emit and update — same layout)
-        let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let compute_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("particle_compute_bg"),
-            layout: emit_pipeline.bind_group_layout(),
+            layout: &compute_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: particle_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &particle_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: counter_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &counter_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: params_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &params_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
             ],
         });
 
         // ── Render pipeline ──
-        let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let render_shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("particle_render"),
-            source: wgpu::ShaderSource::Wgsl(
+            source: euca_rhi::ShaderSource::Wgsl(
                 include_str!("../shaders/particle_render.wgsl").into(),
             ),
         });
 
-        let camera_buffer = GpuBuffer::new_uniform_with_data(
-            device,
-            &ParticleCameraGpu {
-                view: [[0.0; 4]; 4],
-                proj: [[0.0; 4]; 4],
-                view_proj: [[0.0; 4]; 4],
-                camera_right: [1.0, 0.0, 0.0],
-                _pad0: 0.0,
-                camera_up: [0.0, 1.0, 0.0],
-                _pad1: 0.0,
-            },
-            "particle_camera",
-        );
+        let initial_cam = ParticleCameraGpu {
+            view: [[0.0; 4]; 4],
+            proj: [[0.0; 4]; 4],
+            view_proj: [[0.0; 4]; 4],
+            camera_right: [1.0, 0.0, 0.0],
+            _pad0: 0.0,
+            camera_up: [0.0, 1.0, 0.0],
+            _pad1: 0.0,
+        };
+        let camera_buffer = device.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("particle_camera"),
+            size: std::mem::size_of::<ParticleCameraGpu>() as u64,
+            usage: euca_rhi::BufferUsages::UNIFORM | euca_rhi::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        device.write_buffer(&camera_buffer, 0, bytemuck::bytes_of(&initial_cam));
 
-        let render_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let render_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("particle_render_bgl"),
             entries: &[
                 // particles storage (read-only)
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: euca_rhi::ShaderStages::VERTEX,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // counters storage (read-only)
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: euca_rhi::ShaderStages::VERTEX,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // camera uniform
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: euca_rhi::ShaderStages::VERTEX,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -253,76 +327,63 @@ impl GpuParticleSystem {
             ],
         });
 
-        let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let render_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("particle_render_bg"),
             layout: &render_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: particle_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &particle_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: counter_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &counter_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: camera_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: &camera_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
                 },
             ],
         });
 
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("particle_render_layout"),
-                bind_group_layouts: &[&render_bgl],
-                push_constant_ranges: &[],
-            });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let render_pipeline = device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("particle_render"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
+            layout: &[&render_bgl],
+            vertex: euca_rhi::VertexState {
                 module: &render_shader,
-                entry_point: Some("vs_main"),
+                entry_point: "vs_main",
                 buffers: &[], // No vertex buffers — all data from storage
-                compilation_options: Default::default(),
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(euca_rhi::FragmentState {
                 module: &render_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
                     format: surface_format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(euca_rhi::BlendState::ALPHA_BLENDING),
+                    write_mask: euca_rhi::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
+            primitive: euca_rhi::PrimitiveState::default(),
+            depth_stencil: Some(euca_rhi::DepthStencilState {
+                format: euca_rhi::TextureFormat::Depth32Float,
                 depth_write_enabled: false, // Particles don't write depth
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: euca_rhi::CompareFunction::Less,
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: Default::default(),
-            multiview: None,
-            cache: None,
         });
 
         Self {
@@ -348,7 +409,7 @@ impl GpuParticleSystem {
     }
 
     /// Run the compute emit + update passes.
-    pub fn update(&mut self, encoder: &mut wgpu::CommandEncoder, queue: &wgpu::Queue, dt: f32) {
+    pub fn update(&mut self, device: &D, encoder: &mut D::CommandEncoder, dt: f32) {
         self.elapsed += dt;
         self.emit_accumulator += self.config.emit_rate * dt;
         let emit_count = self.emit_accumulator as u32;
@@ -375,35 +436,31 @@ impl GpuParticleSystem {
             emit_direction: self.config.emit_direction,
             cone_half_angle: self.config.cone_half_angle,
         };
-        queue.write_buffer(self.params_buffer.raw(), 0, bytemuck::bytes_of(&params));
+        device.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
         // Emit pass
         if emit_count > 0 {
             let workgroups = emit_count.div_ceil(64);
-            dispatch_compute(
-                encoder,
-                &self.emit_pipeline,
-                &[&self.compute_bind_group],
-                [workgroups, 1, 1],
-                None,
-            );
+            let mut pass = device.begin_compute_pass(encoder, Some("particle_emit"));
+            pass.set_pipeline(&self.emit_pipeline);
+            pass.set_bind_group(0, &self.compute_bind_group, &[]);
+            pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
         // Update pass
         let max_workgroups = self.config.max_particles.div_ceil(64);
-        dispatch_compute(
-            encoder,
-            &self.update_pipeline,
-            &[&self.compute_bind_group],
-            [max_workgroups, 1, 1],
-            None,
-        );
+        {
+            let mut pass = device.begin_compute_pass(encoder, Some("particle_update"));
+            pass.set_pipeline(&self.update_pipeline);
+            pass.set_bind_group(0, &self.compute_bind_group, &[]);
+            pass.dispatch_workgroups(max_workgroups, 1, 1);
+        }
     }
 
     /// Update camera uniforms for billboard rendering.
     pub fn set_camera(
         &self,
-        queue: &wgpu::Queue,
+        device: &D,
         view: [[f32; 4]; 4],
         proj: [[f32; 4]; 4],
         view_proj: [[f32; 4]; 4],
@@ -419,11 +476,11 @@ impl GpuParticleSystem {
             camera_up,
             _pad1: 0.0,
         };
-        queue.write_buffer(self.camera_buffer.raw(), 0, bytemuck::bytes_of(&cam));
+        device.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
     }
 
     /// Record the particle render pass into a render pass.
-    pub fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    pub fn draw(&self, render_pass: &mut impl RenderPassOps<D>) {
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_bind_group(0, &self.render_bind_group, &[]);
         // 6 vertices per quad, max_particles instances
