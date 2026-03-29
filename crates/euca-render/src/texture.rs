@@ -17,7 +17,31 @@ struct GpuTexture<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice
     pub texture: D::Texture,
 }
 
+// ---------------------------------------------------------------------------
+// Generic implementation (works for ANY backend)
+// ---------------------------------------------------------------------------
+
+impl<D: euca_rhi::RenderDevice> TextureStore<D> {
+    /// Get the texture view for a previously uploaded texture.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `handle` does not correspond to a valid uploaded texture.
+    pub fn view(&self, handle: TextureHandle) -> &D::TextureView {
+        &self.textures[handle.0 as usize].view
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wgpu-specific backward-compatibility methods
+// ---------------------------------------------------------------------------
+
 impl TextureStore {
+    /// The default white texture handle (always index 0).
+    pub fn default_white() -> TextureHandle {
+        TextureHandle(0)
+    }
+
     /// Create a new store with a default 1×1 white texture at index 0.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let mut store = Self {
@@ -204,20 +228,6 @@ impl TextureStore {
             .expect("Failed to decode image")
             .to_rgba8();
         self.upload_rgba(device, queue, img.width(), img.height(), &img)
-    }
-
-    /// Get the `wgpu::TextureView` for a previously uploaded texture.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `handle` does not correspond to a valid uploaded texture.
-    pub fn view(&self, handle: TextureHandle) -> &wgpu::TextureView {
-        &self.textures[handle.0 as usize].view
-    }
-
-    /// The default white texture handle (always index 0).
-    pub fn default_white() -> TextureHandle {
-        TextureHandle(0)
     }
 
     /// Generate a checkerboard texture for testing.

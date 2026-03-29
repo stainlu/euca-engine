@@ -71,7 +71,8 @@ impl GpuContext {
         }
 
         // Bindless materials: texture binding arrays + non-uniform indexing.
-        let bindless_features = crate::bindless::BINDLESS_FEATURES;
+        let bindless_features = wgpu::Features::TEXTURE_BINDING_ARRAY
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
         if supported.contains(bindless_features) {
             required_features |= bindless_features;
             log::info!("GPU supports TEXTURE_BINDING_ARRAY — bindless materials enabled");

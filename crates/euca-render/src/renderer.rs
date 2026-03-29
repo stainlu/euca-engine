@@ -949,8 +949,8 @@ impl Renderer {
         let post_process_stack =
             PostProcessStack::new(&gpu.device, &gpu.queue, &gpu.surface_config);
 
-        let decal_renderer = DecalRenderer::new(&gpu.device);
-        decal_renderer.upload(&gpu.queue);
+        let decal_renderer = DecalRenderer::new(rhi);
+        decal_renderer.upload(rhi);
 
         let decal_uniform_buffer = SmartBuffer::new(
             rhi,
@@ -1111,12 +1111,8 @@ impl Renderer {
     ///
     /// Call this once after creating the renderer, before uploading materials.
     pub fn enable_bindless(&mut self, gpu: &GpuContext) {
-        let features = gpu.device.features();
-        let system = crate::bindless::BindlessMaterialSystem::new(
-            &gpu.device,
-            features,
-            gpu.unified_memory(),
-        );
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let system = crate::bindless::BindlessMaterialSystem::new(rhi, gpu.unified_memory());
         if !system.is_enabled() {
             log::warn!("Bindless materials requested but GPU lacks required features");
             return;
@@ -1124,7 +1120,6 @@ impl Renderer {
 
         // Create the bindless render pipeline with the same vertex layout but
         // different group 2 bind group layout and shader.
-        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
         let shader = rhi.create_shader(&euca_rhi::ShaderDesc {
             label: Some("PBR Bindless Shader"),
             source: euca_rhi::ShaderSource::Wgsl(PBR_BINDLESS_SHADER.into()),
@@ -1961,7 +1956,7 @@ impl Renderer {
 
         // Flush bindless material data to GPU before rendering.
         if let Some(ref mut bl) = self.bindless {
-            bl.system.flush(&gpu.device, &gpu.queue, &self.textures);
+            bl.system.flush(&**gpu, &self.textures);
         }
 
         // Resolve MSAA into the post-process stack's ping buffer.

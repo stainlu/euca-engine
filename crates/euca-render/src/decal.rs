@@ -198,6 +198,11 @@ struct DecalVertex {
     position: [f32; 3],
 }
 
+/// Number of vertices in a unit cube (8 corners).
+const CUBE_VERTEX_COUNT: usize = 8;
+/// Number of indices in a unit cube (6 faces * 2 triangles * 3 vertices).
+const CUBE_INDEX_COUNT: usize = 36;
+
 /// Manages GPU resources for decal rendering: the unit-cube vertex and index
 /// buffers used as the decal projection volume.
 ///
@@ -209,9 +214,32 @@ pub struct DecalRenderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::Wgp
     index_count: u32,
 }
 
-impl DecalRenderer {
+impl<D: euca_rhi::RenderDevice> DecalRenderer<D> {
     /// Create the GPU resources for decal rendering.
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &D) -> Self {
+        let vertex_buffer = device.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("Decal Vertex Buffer"),
+            size: (std::mem::size_of::<DecalVertex>() * CUBE_VERTEX_COUNT) as u64,
+            usage: euca_rhi::BufferUsages::VERTEX | euca_rhi::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let index_buffer = device.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("Decal Index Buffer"),
+            size: (std::mem::size_of::<u16>() * CUBE_INDEX_COUNT) as u64,
+            usage: euca_rhi::BufferUsages::INDEX | euca_rhi::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            vertex_buffer,
+            index_buffer,
+            index_count: CUBE_INDEX_COUNT as u32,
+        }
+    }
+
+    /// Upload the unit-cube geometry to the GPU. Call once after creation.
+    pub fn upload(&self, device: &D) {
         // Unit cube from -0.5 to +0.5 on each axis.
         #[rustfmt::skip]
         let vertices: [DecalVertex; 8] = [
@@ -242,62 +270,17 @@ impl DecalRenderer {
             2, 3, 7,  2, 7, 6,
         ];
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Decal Vertex Buffer"),
-            size: std::mem::size_of_val(&vertices) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Decal Index Buffer"),
-            size: std::mem::size_of_val(&indices) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        Self {
-            vertex_buffer,
-            index_buffer,
-            index_count: indices.len() as u32,
-        }
-    }
-
-    /// Upload the unit-cube geometry to the GPU. Call once after creation.
-    pub fn upload(&self, queue: &wgpu::Queue) {
-        #[rustfmt::skip]
-        let vertices: [DecalVertex; 8] = [
-            DecalVertex { position: [-0.5, -0.5, -0.5] },
-            DecalVertex { position: [ 0.5, -0.5, -0.5] },
-            DecalVertex { position: [ 0.5,  0.5, -0.5] },
-            DecalVertex { position: [-0.5,  0.5, -0.5] },
-            DecalVertex { position: [-0.5, -0.5,  0.5] },
-            DecalVertex { position: [ 0.5, -0.5,  0.5] },
-            DecalVertex { position: [ 0.5,  0.5,  0.5] },
-            DecalVertex { position: [-0.5,  0.5,  0.5] },
-        ];
-
-        #[rustfmt::skip]
-        let indices: [u16; 36] = [
-            0, 2, 1,  0, 3, 2,
-            4, 5, 6,  4, 6, 7,
-            0, 4, 7,  0, 7, 3,
-            1, 2, 6,  1, 6, 5,
-            0, 1, 5,  0, 5, 4,
-            2, 3, 7,  2, 7, 6,
-        ];
-
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
-        queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
+        device.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+        device.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
     }
 
     /// The vertex buffer for the decal unit cube.
-    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+    pub fn vertex_buffer(&self) -> &D::Buffer {
         &self.vertex_buffer
     }
 
     /// The index buffer for the decal unit cube.
-    pub fn index_buffer(&self) -> &wgpu::Buffer {
+    pub fn index_buffer(&self) -> &D::Buffer {
         &self.index_buffer
     }
 
@@ -307,12 +290,12 @@ impl DecalRenderer {
     }
 
     /// The vertex buffer layout for `DecalVertex`.
-    pub fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
+    pub fn vertex_layout() -> euca_rhi::VertexBufferLayout<'static> {
+        euca_rhi::VertexBufferLayout {
             array_stride: std::mem::size_of::<DecalVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
+            step_mode: euca_rhi::VertexStepMode::Vertex,
+            attributes: &[euca_rhi::VertexAttribute {
+                format: euca_rhi::VertexFormat::Float32x3,
                 offset: 0,
                 shader_location: 0,
             }],
@@ -589,6 +572,7 @@ mod tests {
     fn decal_renderer_geometry_counts() {
         // Verify the correct number of indices for a unit cube
         // (6 faces * 2 triangles * 3 vertices = 36).
-        assert_eq!(36u32, 6 * 2 * 3);
+        assert_eq!(CUBE_INDEX_COUNT, 6 * 2 * 3);
+        assert_eq!(CUBE_VERTEX_COUNT, 8);
     }
 }
