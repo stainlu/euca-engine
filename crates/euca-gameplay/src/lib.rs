@@ -24,10 +24,14 @@ pub mod camera;
 pub mod cleanup;
 /// Projectiles and auto-PvP melee combat.
 pub mod combat;
+/// Dota 2-style creep wave spawning, lane routing, aggro, denial, and last-hit.
+pub mod creep_wave;
 /// Tabular game data loaded from config files.
 pub mod data_table;
-/// Gold currency, bounties, and kill rewards.
+/// Dota 2 economy — reliable/unreliable gold, bounties, buyback, respawn.
 pub mod economy;
+/// Fog of war, day/night cycle, and ward system.
+pub mod fog_of_war;
 /// Match lifecycle: lobby, countdown, playing, post-match.
 pub mod game_state;
 /// Hit points, damage events, death detection, and healing.
@@ -46,6 +50,8 @@ pub mod player;
 pub mod player_input;
 /// Game replay recording and playback.
 pub mod replay;
+/// Roshan — the main boss objective, drops Aegis/Cheese/Refresher Shard.
+pub mod roshan;
 /// Data-driven game rules: "when X happens, do Y" without code.
 pub mod rules;
 /// Shop system — buy/sell items with gold, recipe combining.
@@ -102,7 +108,13 @@ pub use abilities::{
     UseAbilityEvent, ability_tick_system, use_ability_system,
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
-pub use economy::{Gold, GoldBounty, gold_on_kill_system};
+pub use economy::{
+    BUYBACK_COOLDOWN, BuybackState, CreepType, EconomyError, Gold, GoldBounty, GoldWallet,
+    HeroEconomy, PASSIVE_GOLD_PER_SECOND, STARTING_GOLD, apply_death_penalty, assist_gold,
+    attempt_buyback, award_kill, buyback_cost, creep_bounty, gold_loss_on_death,
+    gold_on_kill_system, hero_kill_bounty, respawn_time, tick_buyback_cooldown,
+    tick_passive_income, tower_bounty,
+};
 pub use hero::{AbilityDef, HeroDef, HeroName, HeroRegistry, StatGrowth, spawn_hero};
 pub use inventory::{
     Equipment, Inventory, ItemDef, ItemRegistry, ItemStack, StatModifiers, add_item, equip,
@@ -133,4 +145,16 @@ pub use building::{
     activate_fortification, backdoor_damage_modifier, barracks_destroyed_effect, building_stats,
     is_building_invulnerable, tick_fortification, tower_bounty, update_backdoor_protection,
     update_tower_aggro,
+};
+
+pub use fog_of_war::{
+    CellVisibility, DayNightCycle, VisionMap, VisionSource, Ward, WardStock, WardType,
+    hero_vision_radius, is_unit_visible, place_ward, tick_ward_stock, tick_wards, update_vision,
+};
+
+pub use roshan::{
+    Aegis, AegisResurrection, Cheese, RefresherShard, Roshan, RoshanDrops, RoshanSlam,
+    aegis_trigger, new_aegis, new_cheese, new_refresher_shard, new_roshan_slam, pick_up_aegis,
+    respawn_roshan, roshan_dies, roshan_respawn_time, roshan_slam_tick, roshan_takes_damage,
+    spawn_roshan, tick_aegis, tick_roshan, use_cheese,
 };
