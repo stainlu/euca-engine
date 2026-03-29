@@ -612,7 +612,14 @@ pub fn dispatch_hzb_downsample<D: euca_rhi::RenderDevice>(
 
     let wg_x = dst_width.div_ceil(8);
     let wg_y = dst_height.div_ceil(8);
-    crate::compute::dispatch_compute_generic(device, encoder, pipeline, &[bind_group], [wg_x, wg_y, 1], None);
+    crate::compute::dispatch_compute_generic(
+        device,
+        encoder,
+        pipeline,
+        &[bind_group],
+        [wg_x, wg_y, 1],
+        None,
+    );
 }
 
 // ---------------------------------------------------------------------------
