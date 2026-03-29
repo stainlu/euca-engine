@@ -204,6 +204,14 @@ impl Collider {
     }
 }
 
+/// Pre-cached collider shape, updated only when `Collider` changes.
+///
+/// This component eliminates per-frame shape cloning in the physics solver.
+/// The `sync_cached_shapes` system detects `Changed<Collider>` and writes
+/// the shape here once; the solver then reads this cached copy every tick.
+#[derive(Clone, Debug)]
+pub struct CachedColliderShape(pub ColliderShape);
+
 /// Returns true if two colliders should interact based on their layer/mask.
 pub fn layers_interact(layer_a: u32, mask_a: u32, layer_b: u32, mask_b: u32) -> bool {
     (layer_a & mask_b) != 0 && (layer_b & mask_a) != 0
