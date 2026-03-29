@@ -1,7 +1,15 @@
 //! Async asset loading and handle management.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// Lock a mutex, recovering its contents if a previous holder panicked.
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| {
+        log::warn!("recovered from poisoned asset lock");
+        e.into_inner()
+    })
+}
 
 /// Load state of an asset.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,19 +103,19 @@ impl<T: Send + 'static> AssetStore<T> {
 
         // Set to loading
         {
-            let mut h = handle.lock().expect("asset handle lock poisoned");
+            let mut h = lock_or_recover(&handle);
             h.state = LoadState::Loading;
         }
 
         // Spawn background thread for loading
         std::thread::spawn(move || match loader() {
             Ok(data) => {
-                let mut h = handle.lock().expect("asset handle lock poisoned");
+                let mut h = lock_or_recover(&handle);
                 h.data = Some(data);
                 h.state = LoadState::Ready;
             }
             Err(e) => {
-                let mut h = handle.lock().expect("asset handle lock poisoned");
+                let mut h = lock_or_recover(&handle);
                 h.state = LoadState::Failed(e);
             }
         });
@@ -119,7 +127,7 @@ impl<T: Send + 'static> AssetStore<T> {
     pub fn state(&self, id: u32) -> Option<LoadState> {
         self.assets
             .get(&id)
-            .map(|h| h.lock().expect("asset handle lock poisoned").state.clone())
+            .map(|h| lock_or_recover(h).state.clone())
     }
 
     /// Get a reference to the asset data (only if Ready).
