@@ -98,6 +98,14 @@ pub trait RenderDevice: Send + Sync + 'static {
         label: Option<&str>,
     ) -> Self::ComputePass<'a>;
 
+    fn clear_buffer(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        buffer: &Self::Buffer,
+        offset: u64,
+        size: Option<u64>,
+    );
+
     fn copy_texture_to_texture(
         &self,
         encoder: &mut Self::CommandEncoder,

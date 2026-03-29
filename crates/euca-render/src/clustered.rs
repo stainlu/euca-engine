@@ -5,6 +5,7 @@
 //! per-cluster light lists to shade only relevant lights, enabling 256+ lights.
 
 use crate::compute::{ComputePipeline, ComputePipelineDesc, GpuBuffer};
+use euca_rhi::pass::ComputePassOps;
 
 /// Number of horizontal tiles in the cluster grid.
 pub const TILES_X: u32 = 16;
@@ -137,41 +138,88 @@ pub struct UpdateParams<'a> {
     pub far_z: f32,
 }
 
+/// Bind-group layout entries for the light assignment compute shader (group 0).
+///
+/// - binding 0: uniform (ClusterConfig)
+/// - binding 1: storage read (lights)
+/// - binding 2: storage read_write (light_indices)
+/// - binding 3: storage read_write (cluster_light_counts)
+pub const LIGHT_ASSIGN_BINDINGS: &[euca_rhi::BindGroupLayoutEntry] = &[
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 3,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
+
 /// Manages the GPU resources for clustered light culling.
-pub struct ClusteredLightGrid {
-    pipeline: ComputePipeline,
-    config_buffer: GpuBuffer,
-    lights_buffer: GpuBuffer,
-    light_indices_buffer: GpuBuffer,
-    cluster_counts_buffer: GpuBuffer,
+pub struct ClusteredLightGrid<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
+    pipeline: ComputePipeline<D>,
+    config_buffer: GpuBuffer<D>,
+    lights_buffer: GpuBuffer<D>,
+    light_indices_buffer: GpuBuffer<D>,
+    cluster_counts_buffer: GpuBuffer<D>,
 }
 
-impl ClusteredLightGrid {
+impl<D: euca_rhi::RenderDevice> ClusteredLightGrid<D> {
     /// Create the clustered light grid with all GPU resources.
-    pub fn new(device: &wgpu::Device) -> Self {
-        let pipeline = ComputePipeline::from_wgpu(
+    pub fn new(device: &D) -> Self {
+        let pipeline = ComputePipeline::new(
             device,
             &ComputePipelineDesc {
                 label: "light_assign_pipeline",
                 shader_source: LIGHT_ASSIGN_SHADER,
                 entry_point: "main",
             },
+            LIGHT_ASSIGN_BINDINGS,
         );
-        let config_buffer = GpuBuffer::new_uniform_with_data_wgpu(
-            device,
-            &ClusterConfig::default(),
-            "cluster_config",
-        );
+        let config_buffer =
+            GpuBuffer::new_uniform_with_data(device, &ClusterConfig::default(), "cluster_config");
         let lights_size = (MAX_LIGHTS as u64) * std::mem::size_of::<GpuLightData>() as u64;
-        let lights_buffer = GpuBuffer::new_storage_wgpu(device, lights_size, "cluster_lights");
+        let lights_buffer = GpuBuffer::new_storage(device, lights_size, "cluster_lights");
         let indices_size = (CLUSTER_COUNT as u64)
             * (MAX_LIGHTS_PER_CLUSTER as u64)
             * std::mem::size_of::<u32>() as u64;
         let light_indices_buffer =
-            GpuBuffer::new_storage_wgpu(device, indices_size, "cluster_light_indices");
+            GpuBuffer::new_storage(device, indices_size, "cluster_light_indices");
         let counts_size = (CLUSTER_COUNT as u64) * std::mem::size_of::<u32>() as u64;
         let cluster_counts_buffer =
-            GpuBuffer::new_storage_wgpu(device, counts_size, "cluster_light_counts");
+            GpuBuffer::new_storage(device, counts_size, "cluster_light_counts");
         Self {
             pipeline,
             config_buffer,
@@ -182,13 +230,7 @@ impl ClusteredLightGrid {
     }
 
     /// Upload lights and cluster config, then dispatch the light assignment compute shader.
-    pub fn update(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        params: &UpdateParams,
-    ) {
+    pub fn update(&self, device: &D, encoder: &mut D::CommandEncoder, params: &UpdateParams) {
         let num_lights = params.lights.len().min(MAX_LIGHTS as usize) as u32;
         let config = ClusterConfig {
             view: params.view,
@@ -201,79 +243,78 @@ impl ClusteredLightGrid {
             _pad1: 0,
             _pad2: 0,
         };
-        queue.write_buffer(self.config_buffer.raw(), 0, bytemuck::bytes_of(&config));
+        device.write_buffer(self.config_buffer.raw(), 0, bytemuck::bytes_of(&config));
         if num_lights > 0 {
             let byte_count = num_lights as usize * std::mem::size_of::<GpuLightData>();
-            queue.write_buffer(
+            device.write_buffer(
                 self.lights_buffer.raw(),
                 0,
                 &bytemuck::cast_slice(params.lights)[..byte_count],
             );
         }
-        encoder.clear_buffer(self.cluster_counts_buffer.raw(), 0, None);
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("light_assign_bind_group"),
-            layout: self.pipeline.bind_group_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.config_buffer.raw().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.lights_buffer.raw().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.light_indices_buffer.raw().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.cluster_counts_buffer.raw().as_entire_binding(),
-                },
-            ],
-        });
+        device.clear_buffer(encoder, self.cluster_counts_buffer.raw(), 0, None);
+
+        let bind_group = self.create_bind_group(device, "light_assign_bind_group");
+
         let wg_x = TILES_X.div_ceil(4);
         let wg_y = TILES_Y.div_ceil(4);
         let wg_z = DEPTH_SLICES.div_ceil(4);
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("light_assign_pass"),
-            timestamp_writes: None,
-        });
+        let mut pass = device.begin_compute_pass(encoder, Some("light_assign_pass"));
         pass.set_pipeline(self.pipeline.raw());
-        pass.set_bind_group(0, Some(&bind_group), &[]);
+        pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(wg_x, wg_y, wg_z);
     }
 
     /// Create a bind group that the PBR shader can read to access cluster data.
-    pub fn bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("clustered_light_read_bind_group"),
-            layout: self.pipeline.bind_group_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.config_buffer.raw().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.lights_buffer.raw().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.light_indices_buffer.raw().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.cluster_counts_buffer.raw().as_entire_binding(),
-                },
-            ],
-        })
+    pub fn bind_group(&self, device: &D) -> D::BindGroup {
+        self.create_bind_group(device, "clustered_light_read_bind_group")
     }
 
     /// The compute pipeline's bind group layout.
-    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+    pub fn bind_group_layout(&self) -> &D::BindGroupLayout {
         self.pipeline.bind_group_layout()
+    }
+
+    /// Helper: create a bind group referencing all four cluster buffers.
+    fn create_bind_group(&self, device: &D, label: &str) -> D::BindGroup {
+        device.create_bind_group(&euca_rhi::BindGroupDesc {
+            label: Some(label),
+            layout: self.pipeline.bind_group_layout(),
+            entries: &[
+                euca_rhi::BindGroupEntry {
+                    binding: 0,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.config_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 1,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.lights_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 2,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.light_indices_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                euca_rhi::BindGroupEntry {
+                    binding: 3,
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.cluster_counts_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        })
     }
 }
 

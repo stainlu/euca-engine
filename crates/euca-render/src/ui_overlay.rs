@@ -12,7 +12,7 @@
 //! ui.render(&device, &queue, encoder, color_view, &quads, viewport_width, viewport_height);
 //! ```
 
-use wgpu;
+use euca_rhi::pass::RenderPassOps;
 
 /// A single screen-space colored rectangle.
 #[derive(Clone, Debug)]
@@ -48,70 +48,60 @@ pub struct UiOverlayRenderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend:
 
 const INITIAL_CAPACITY: usize = 256;
 
-impl UiOverlayRenderer {
+impl<D: euca_rhi::RenderDevice> UiOverlayRenderer<D> {
     /// Create a new UI overlay renderer.
-    pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    pub fn new(device: &D, surface_format: euca_rhi::TextureFormat) -> Self {
+        let shader = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("ui_quad.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ui_quad.wgsl").into()),
+            source: euca_rhi::ShaderSource::Wgsl(include_str!("../shaders/ui_quad.wgsl").into()),
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ui_quad_layout"),
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("ui_quad_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            layout: &[], // no bind groups
+            vertex: euca_rhi::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
+                entry_point: "vs_main",
+                buffers: &[euca_rhi::VertexBufferLayout {
                     array_stride: std::mem::size_of::<GpuUiQuad>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
+                    step_mode: euca_rhi::VertexStepMode::Instance,
                     attributes: &[
                         // pos_size: vec4<f32> at location 0
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
+                        euca_rhi::VertexAttribute {
+                            format: euca_rhi::VertexFormat::Float32x4,
                             offset: 0,
                             shader_location: 0,
                         },
                         // color: vec4<f32> at location 1
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
+                        euca_rhi::VertexAttribute {
+                            format: euca_rhi::VertexFormat::Float32x4,
                             offset: 16,
                             shader_location: 1,
                         },
                     ],
                 }],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(euca_rhi::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
                     format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(euca_rhi::BlendState::ALPHA_BLENDING),
+                    write_mask: euca_rhi::ColorWrites::ALL,
                 })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
+            multisample: Default::default(),
         });
 
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let instance_buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("ui_quad_instances"),
             size: (INITIAL_CAPACITY * std::mem::size_of::<GpuUiQuad>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::VERTEX | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -125,14 +115,12 @@ impl UiOverlayRenderer {
     /// Render UI quads onto the given color view.
     ///
     /// Call this AFTER the main 3D render and post-processing, on the same
-    /// encoder before `encoder.finish()`.
-    #[allow(clippy::too_many_arguments)]
+    /// encoder before submitting.
     pub fn render(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        color_view: &wgpu::TextureView,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        color_view: &D::TextureView,
         quads: &[UiQuad],
         viewport_width: f32,
         viewport_height: f32,
@@ -160,37 +148,38 @@ impl UiOverlayRenderer {
         // Grow buffer if needed.
         if instances.len() > self.instance_capacity {
             self.instance_capacity = instances.len().next_power_of_two();
-            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            self.instance_buffer = device.create_buffer(&euca_rhi::BufferDesc {
                 label: Some("ui_quad_instances"),
                 size: (self.instance_capacity * std::mem::size_of::<GpuUiQuad>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: euca_rhi::BufferUsages::VERTEX | euca_rhi::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
 
-        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        device.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let instance_count = instances.len() as u32;
+        let buf_size = (instance_count as u64) * std::mem::size_of::<GpuUiQuad>() as u64;
+        let mut pass = device.begin_render_pass(
+            encoder,
+            &euca_rhi::RenderPassDesc {
                 label: Some("ui_overlay"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
                     view: color_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // preserve 3D scene
-                        store: wgpu::StoreOp::Store,
+                    ops: euca_rhi::Operations {
+                        load: euca_rhi::LoadOp::Load, // preserve 3D scene
+                        store: euca_rhi::StoreOp::Store,
                     },
-                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None, // no depth testing for UI
-                ..Default::default()
-            });
+            },
+        );
 
-            pass.set_pipeline(&self.pipeline);
-            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            // 6 vertices per quad (2 triangles), N instances
-            pass.draw(0..6, 0..instances.len() as u32);
-        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_vertex_buffer(0, &self.instance_buffer, 0, buf_size);
+        // 6 vertices per quad (2 triangles), N instances
+        pass.draw(0..6, 0..instance_count);
     }
 }
 

@@ -809,15 +809,7 @@ impl DotaClientApp {
             ui_quads.extend(build_hud_quads(&self.world, vw, vh));
             ui_quads.extend(build_minimap_quads(&self.world, vw, vh));
             if let Some(ui) = self.ui_overlay.as_mut() {
-                ui.render(
-                    &gpu.device,
-                    &gpu.queue,
-                    &mut encoder,
-                    &view,
-                    &ui_quads,
-                    vw,
-                    vh,
-                );
+                ui.render(&*gpu, &mut encoder, &view, &ui_quads, vw, vh);
             }
         }
 
@@ -1296,7 +1288,7 @@ impl ApplicationHandler for DotaClientApp {
             .expect("Failed to create window");
         let gpu = GpuContext::new(window, &survey, &wgpu_instance);
         let renderer = Renderer::new(&gpu);
-        let ui_overlay = UiOverlayRenderer::new(&gpu.device, gpu.surface_config.format);
+        let ui_overlay = UiOverlayRenderer::new(&*gpu, gpu.surface_format());
         self.gpu = Some(gpu);
         self.renderer = Some(renderer);
         self.ui_overlay = Some(ui_overlay);

@@ -945,6 +945,16 @@ impl RenderDevice for WgpuDevice {
         })
     }
 
+    fn clear_buffer(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        size: Option<u64>,
+    ) {
+        encoder.clear_buffer(buffer, offset, size);
+    }
+
     fn copy_texture_to_texture(
         &self,
         encoder: &mut wgpu::CommandEncoder,

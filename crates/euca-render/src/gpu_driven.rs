@@ -16,6 +16,7 @@
 
 use crate::camera::Frustum;
 use crate::compute::{ComputePipeline, ComputePipelineDesc, GpuBuffer};
+use euca_rhi::pass::RenderPassOps;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -75,7 +76,7 @@ pub struct DrawCommandGpu {
     pub lod_distance_sq: [f32; 4],
 }
 
-/// Mirrors `wgpu::DrawIndexedIndirect` layout -- the output of the compute shader.
+/// Mirrors the `DrawIndexedIndirect` GPU layout -- the output of the compute shader.
 ///
 /// Each visible entity gets one of these with valid draw parameters.
 /// Culled entities get all-zero fields (producing zero triangles).
@@ -130,16 +131,16 @@ pub struct IndirectDrawBuffer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend
     capacity: u32,
 }
 
-impl IndirectDrawBuffer {
+impl<D: euca_rhi::RenderDevice> IndirectDrawBuffer<D> {
     /// Create an indirect draw buffer that can hold up to `max_draws` entries.
-    pub fn new(device: &wgpu::Device, max_draws: u32) -> Self {
+    pub fn new(device: &D, max_draws: u32) -> Self {
         let size = (max_draws as u64) * DRAW_INDEXED_INDIRECT_SIZE;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer(&euca_rhi::BufferDesc {
             label: Some("indirect_draw_buffer"),
             size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_DST,
+            usage: euca_rhi::BufferUsages::STORAGE
+                | euca_rhi::BufferUsages::INDIRECT
+                | euca_rhi::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         Self {
@@ -148,8 +149,8 @@ impl IndirectDrawBuffer {
         }
     }
 
-    /// The underlying wgpu buffer.
-    pub fn raw(&self) -> &wgpu::Buffer {
+    /// The underlying buffer handle.
+    pub fn raw(&self) -> &D::Buffer {
         &self.buffer
     }
 
@@ -168,35 +169,95 @@ impl IndirectDrawBuffer {
 // GpuDrivenPipeline
 // ---------------------------------------------------------------------------
 
+/// Bind-group layout entries for the GPU cull compute shader (group 0).
+///
+/// - binding 0: storage read (draw commands)
+/// - binding 1: uniform (frustum data)
+/// - binding 2: storage read_write (indirect args output)
+/// - binding 3: storage read_write (draw count atomic)
+/// - binding 4: uniform (cull params)
+pub const GPU_CULL_BINDINGS: &[euca_rhi::BindGroupLayoutEntry] = &[
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 3,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    euca_rhi::BindGroupLayoutEntry {
+        binding: 4,
+        visibility: euca_rhi::ShaderStages::COMPUTE,
+        ty: euca_rhi::BindingType::Buffer {
+            ty: euca_rhi::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
+
 /// Manages the complete GPU-driven rendering pipeline: command upload,
 /// compute-based culling, and indirect draw dispatch.
 pub struct GpuDrivenPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
-    cull_pipeline: ComputePipeline,
-    command_buffer: GpuBuffer,
-    frustum_buffer: GpuBuffer,
-    params_buffer: GpuBuffer,
-    draw_count_buffer: GpuBuffer,
+    cull_pipeline: ComputePipeline<D>,
+    command_buffer: GpuBuffer<D>,
+    frustum_buffer: GpuBuffer<D>,
+    params_buffer: GpuBuffer<D>,
+    draw_count_buffer: GpuBuffer<D>,
     indirect_buffer: IndirectDrawBuffer<D>,
     max_entities: u32,
 }
 
-impl GpuDrivenPipeline {
+impl<D: euca_rhi::RenderDevice> GpuDrivenPipeline<D> {
     /// Create a new GPU-driven pipeline sized for up to `max_entities`.
-    pub fn new(device: &wgpu::Device, max_entities: u32) -> Self {
-        let cull_pipeline = ComputePipeline::from_wgpu(
+    pub fn new(device: &D, max_entities: u32) -> Self {
+        let cull_pipeline = ComputePipeline::new(
             device,
             &ComputePipelineDesc {
                 label: "gpu_cull_pipeline",
                 shader_source: GPU_CULL_SHADER,
                 entry_point: "main",
             },
+            GPU_CULL_BINDINGS,
         );
 
         let command_buf_size = (max_entities as u64) * std::mem::size_of::<DrawCommandGpu>() as u64;
-        let command_buffer =
-            GpuBuffer::new_storage_wgpu(device, command_buf_size, "gpu_draw_commands");
+        let command_buffer = GpuBuffer::new_storage(device, command_buf_size, "gpu_draw_commands");
 
-        let frustum_buffer = GpuBuffer::new_uniform_with_data_wgpu(
+        let frustum_buffer = GpuBuffer::new_uniform_with_data(
             device,
             &GpuFrustumData {
                 planes: [[0.0; 4]; 6],
@@ -205,7 +266,7 @@ impl GpuDrivenPipeline {
             "gpu_cull_frustum",
         );
 
-        let params_buffer = GpuBuffer::new_uniform_with_data_wgpu(
+        let params_buffer = GpuBuffer::new_uniform_with_data(
             device,
             &GpuCullParams {
                 entity_count: 0,
@@ -214,7 +275,7 @@ impl GpuDrivenPipeline {
             "gpu_cull_params",
         );
 
-        let draw_count_buffer = GpuBuffer::new_storage_wgpu(device, 4, "gpu_draw_count");
+        let draw_count_buffer = GpuBuffer::new_storage(device, 4, "gpu_draw_count");
         let indirect_buffer = IndirectDrawBuffer::new(device, max_entities);
 
         Self {
@@ -229,79 +290,95 @@ impl GpuDrivenPipeline {
     }
 
     /// Upload draw commands for this frame.
-    pub fn upload_commands(&self, queue: &wgpu::Queue, commands: &[DrawCommandGpu]) {
+    pub fn upload_commands(&self, device: &D, commands: &[DrawCommandGpu]) {
         assert!(
             commands.len() <= self.max_entities as usize,
             "Too many draw commands ({}) for pipeline capacity ({})",
             commands.len(),
             self.max_entities
         );
-        self.command_buffer.write_wgpu(queue, commands);
+        self.command_buffer.write(device, commands);
     }
 
     /// Upload frustum data for this frame.
-    pub fn upload_frustum(&self, queue: &wgpu::Queue, frustum_data: &GpuFrustumData) {
+    pub fn upload_frustum(&self, device: &D, frustum_data: &GpuFrustumData) {
         self.frustum_buffer
-            .write_wgpu(queue, std::slice::from_ref(frustum_data));
+            .write(device, std::slice::from_ref(frustum_data));
     }
 
     /// Upload the entity count parameter. Call before `cull_and_prepare`.
-    pub fn upload_params(&self, queue: &wgpu::Queue, entity_count: u32) {
+    pub fn upload_params(&self, device: &D, entity_count: u32) {
         let params = GpuCullParams {
             entity_count,
             _pad: [0; 3],
         };
         self.params_buffer
-            .write_wgpu(queue, std::slice::from_ref(&params));
+            .write(device, std::slice::from_ref(&params));
     }
 
     /// Dispatch the GPU cull compute shader.
     ///
     /// The caller must have called `upload_commands`, `upload_frustum`, and
-    /// `upload_params` via the queue before beginning the command encoder.
-    pub fn cull_and_prepare(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        entity_count: u32,
-    ) {
+    /// `upload_params` before beginning the command encoder.
+    pub fn cull_and_prepare(&self, device: &D, encoder: &mut D::CommandEncoder, entity_count: u32) {
         assert!(
             entity_count <= self.max_entities,
             "entity_count ({entity_count}) exceeds pipeline capacity ({})",
             self.max_entities
         );
 
-        encoder.clear_buffer(self.draw_count_buffer.raw(), 0, None);
+        device.clear_buffer(encoder, self.draw_count_buffer.raw(), 0, None);
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("gpu_cull_bind_group"),
             layout: self.cull_pipeline.bind_group_layout(),
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: self.command_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.command_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: self.frustum_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.frustum_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: self.indirect_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.indirect_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: self.draw_count_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.draw_count_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: self.params_buffer.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: self.params_buffer.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
             ],
         });
 
         let workgroup_count = entity_count.div_ceil(WORKGROUP_SIZE);
-        crate::compute::dispatch_compute(
+        crate::compute::dispatch_compute_generic(
+            device,
             encoder,
             &self.cull_pipeline,
             &[&bind_group],
@@ -313,7 +390,7 @@ impl GpuDrivenPipeline {
     /// Issue indirect draw calls from the indirect buffer.
     ///
     /// Call inside a render pass after `cull_and_prepare` has been submitted.
-    pub fn draw_indirect<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, entity_count: u32) {
+    pub fn draw_indirect<'a>(&'a self, render_pass: &mut D::RenderPass<'a>, entity_count: u32) {
         for i in 0..entity_count {
             let offset = (i as u64) * DRAW_INDEXED_INDIRECT_SIZE;
             render_pass.draw_indexed_indirect(self.indirect_buffer.raw(), offset);
@@ -321,12 +398,12 @@ impl GpuDrivenPipeline {
     }
 
     /// Access the indirect draw buffer.
-    pub fn indirect_buffer(&self) -> &IndirectDrawBuffer {
+    pub fn indirect_buffer(&self) -> &IndirectDrawBuffer<D> {
         &self.indirect_buffer
     }
 
     /// Access the draw count buffer.
-    pub fn draw_count_buffer(&self) -> &GpuBuffer {
+    pub fn draw_count_buffer(&self) -> &GpuBuffer<D> {
         &self.draw_count_buffer
     }
 

@@ -1163,6 +1163,28 @@ impl RenderDevice for MetalDevice {
         }
     }
 
+    fn clear_buffer(
+        &self,
+        encoder: &mut MetalCommandEncoder,
+        buffer: &MetalBuffer,
+        offset: u64,
+        size: Option<u64>,
+    ) {
+        unsafe {
+            let blit = encoder
+                .command_buffer
+                .blitCommandEncoder()
+                .expect("Failed to create Metal blit encoder");
+            let len = size.unwrap_or(buffer.0.0.length() as u64 - offset);
+            let range = objc2_foundation::NSRange {
+                location: offset as usize,
+                length: len as usize,
+            };
+            blit.fillBuffer_range_value(&buffer.0.0, range, 0);
+            blit.endEncoding();
+        }
+    }
+
     fn copy_texture_to_texture(
         &self,
         encoder: &mut MetalCommandEncoder,
