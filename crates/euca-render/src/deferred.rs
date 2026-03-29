@@ -17,6 +17,7 @@
 
 use crate::buffer::{BufferKind, SmartBuffer};
 use crate::vertex::Vertex;
+use euca_rhi::{RenderDevice, pass::RenderPassOps};
 
 /// Which rendering path the engine uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,11 +36,11 @@ impl Default for RenderPath {
 /// G-buffer texture format definitions.
 pub struct GBufferFormats;
 impl GBufferFormats {
-    pub const ALBEDO: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-    pub const NORMAL_ROUGHNESS: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-    pub const MATERIAL: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-    pub const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-    pub const ALL_COLOR: [wgpu::TextureFormat; 3] =
+    pub const ALBEDO: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Rgba8Unorm;
+    pub const NORMAL_ROUGHNESS: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Rgba16Float;
+    pub const MATERIAL: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Rgba8Unorm;
+    pub const DEPTH: euca_rhi::TextureFormat = euca_rhi::TextureFormat::Depth32Float;
+    pub const ALL_COLOR: [euca_rhi::TextureFormat; 3] =
         [Self::ALBEDO, Self::NORMAL_ROUGHNESS, Self::MATERIAL];
 }
 
@@ -59,27 +60,27 @@ pub struct GBuffer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevic
     pub width: u32,
     pub height: u32,
 }
-impl GBuffer {
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+impl<D: RenderDevice> GBuffer<D> {
+    pub fn new(device: &D, width: u32, height: u32) -> Self {
         let w = width.max(1);
         let h = height.max(1);
-        let mk = |label: &str, format: wgpu::TextureFormat| {
-            let t = device.create_texture(&wgpu::TextureDescriptor {
+        let mk = |label: &str, format: euca_rhi::TextureFormat| {
+            let t = device.create_texture(&euca_rhi::TextureDesc {
                 label: Some(label),
-                size: wgpu::Extent3d {
+                size: euca_rhi::Extent3d {
                     width: w,
                     height: h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+                dimension: euca_rhi::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                    | euca_rhi::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let v = t.create_view(&wgpu::TextureViewDescriptor::default());
+            let v = device.create_texture_view(&t, &euca_rhi::TextureViewDesc::default());
             (t, v)
         };
         let (at, av) = mk("G-Buffer RT0 Albedo", GBufferFormats::ALBEDO);
@@ -102,7 +103,7 @@ impl GBuffer {
             height: h,
         }
     }
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         *self = Self::new(device, width, height);
     }
 }
@@ -163,7 +164,7 @@ pub struct DeferredPipeline<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::
     lighting_buffer: SmartBuffer<D>,
     gbuffer_sampler: D::Sampler,
     material_sampler: D::Sampler,
-    hdr_format: wgpu::TextureFormat,
+    hdr_format: euca_rhi::TextureFormat,
     /// Current capacity (in instances) of the deferred instance buffer.
     instance_capacity: usize,
     /// Whether the GPU uses unified memory (needed for buffer re-creation).
@@ -177,17 +178,17 @@ struct GBufferSceneUniforms {
 /// Initial deferred instance buffer capacity. Grows dynamically when exceeded.
 const INITIAL_DEFERRED_INSTANCE_CAPACITY: usize = 16384;
 
-impl DeferredPipeline {
-    pub fn new(device: &wgpu::Device, width: u32, height: u32, unified_memory: bool) -> Self {
+impl<D: RenderDevice> DeferredPipeline<D> {
+    pub fn new(device: &D, width: u32, height: u32, unified_memory: bool) -> Self {
         let gbuffer = GBuffer::new(device, width, height);
-        let hdr_format = wgpu::TextureFormat::Rgba16Float;
-        let instance_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let hdr_format = euca_rhi::TextureFormat::Rgba16Float;
+        let instance_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("Deferred Instance BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[euca_rhi::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                visibility: euca_rhi::ShaderStages::VERTEX,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -196,79 +197,85 @@ impl DeferredPipeline {
         });
         let ibsz =
             (INITIAL_DEFERRED_INSTANCE_CAPACITY * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        let instance_buffer = SmartBuffer::from_wgpu(
+        let instance_buffer = SmartBuffer::new(
             device,
             ibsz,
             BufferKind::Storage,
             unified_memory,
             "Deferred Instance SSBO",
         );
-        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let instance_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Deferred Instance BG"),
             layout: &instance_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: instance_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: instance_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
-        let gbuffer_scene_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let gbuffer_scene_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("GBuffer Scene BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[euca_rhi::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                visibility: euca_rhi::ShaderStages::VERTEX,
+                ty: euca_rhi::BindingType::Buffer {
+                    ty: euca_rhi::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(
-                        std::mem::size_of::<GBufferSceneUniforms>() as u64,
-                    ),
+                    min_binding_size: Some(std::mem::size_of::<GBufferSceneUniforms>() as u64),
                 },
                 count: None,
             }],
         });
-        let gbuffer_scene_buffer = SmartBuffer::from_wgpu(
+        let gbuffer_scene_buffer = SmartBuffer::new(
             device,
             std::mem::size_of::<GBufferSceneUniforms>() as u64,
             BufferKind::Uniform,
             unified_memory,
             "GBuffer Scene UBO",
         );
-        let gbuffer_scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let gbuffer_scene_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("GBuffer Scene BG"),
             layout: &gbuffer_scene_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: gbuffer_scene_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: gbuffer_scene_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
-        let te = |b: u32| wgpu::BindGroupLayoutEntry {
+        let te = |b: u32| euca_rhi::BindGroupLayoutEntry {
             binding: b,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
+            visibility: euca_rhi::ShaderStages::FRAGMENT,
+            ty: euca_rhi::BindingType::Texture {
+                sample_type: euca_rhi::TextureSampleType::Float { filterable: true },
+                view_dimension: euca_rhi::TextureViewDimension::D2,
                 multisampled: false,
             },
             count: None,
         };
-        let material_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let material_bgl = device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("Deferred Material BGL"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 te(1),
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
                     count: None,
                 },
                 te(3),
@@ -277,81 +284,72 @@ impl DeferredPipeline {
                 te(6),
             ],
         });
-        let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let material_sampler = device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("Deferred Material Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: euca_rhi::AddressMode::Repeat,
+            address_mode_v: euca_rhi::AddressMode::Repeat,
+            address_mode_w: euca_rhi::AddressMode::Repeat,
+            mag_filter: euca_rhi::FilterMode::Linear,
+            min_filter: euca_rhi::FilterMode::Linear,
+            mipmap_filter: euca_rhi::FilterMode::Linear,
             ..Default::default()
         });
-        let gs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let gs = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("GBuffer Shader"),
-            source: wgpu::ShaderSource::Wgsl(GBUFFER_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(GBUFFER_SHADER.into()),
         });
-        let gpl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("GBuffer Pipeline Layout"),
-            bind_group_layouts: &[&instance_bgl, &gbuffer_scene_bgl, &material_bgl],
-            push_constant_ranges: &[],
-        });
-        let gbuffer_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let gbuffer_pipeline = device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("GBuffer Pipeline"),
-            layout: Some(&gpl),
-            vertex: wgpu::VertexState {
+            layout: &[&instance_bgl, &gbuffer_scene_bgl, &material_bgl],
+            vertex: euca_rhi::VertexState {
                 module: &gs,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::LAYOUT],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &[Vertex::RHI_LAYOUT],
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(euca_rhi::FragmentState {
                 module: &gs,
-                entry_point: Some("fs_main"),
+                entry_point: "fs_main",
                 targets: &[
-                    Some(wgpu::ColorTargetState {
+                    Some(euca_rhi::ColorTargetState {
                         format: GBufferFormats::ALBEDO,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(euca_rhi::BlendState::REPLACE),
+                        write_mask: euca_rhi::ColorWrites::ALL,
                     }),
-                    Some(wgpu::ColorTargetState {
+                    Some(euca_rhi::ColorTargetState {
                         format: GBufferFormats::NORMAL_ROUGHNESS,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(euca_rhi::BlendState::REPLACE),
+                        write_mask: euca_rhi::ColorWrites::ALL,
                     }),
-                    Some(wgpu::ColorTargetState {
+                    Some(euca_rhi::ColorTargetState {
                         format: GBufferFormats::MATERIAL,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(euca_rhi::BlendState::REPLACE),
+                        write_mask: euca_rhi::ColorWrites::ALL,
                     }),
                 ],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
+            depth_stencil: Some(euca_rhi::DepthStencilState {
                 format: GBufferFormats::DEPTH,
                 depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: euca_rhi::CompareFunction::Less,
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: Default::default(),
-            multiview: None,
-            cache: None,
         });
-        let gbuffer_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let gbuffer_sampler = device.create_sampler(&euca_rhi::SamplerDesc {
             label: Some("GBuffer Read Sampler"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: euca_rhi::FilterMode::Nearest,
+            min_filter: euca_rhi::FilterMode::Nearest,
             ..Default::default()
         });
         let lighting_bgl = Self::create_lighting_bgl(device);
-        let lighting_buffer = SmartBuffer::from_wgpu(
+        let lighting_buffer = SmartBuffer::new(
             device,
             std::mem::size_of::<DeferredLightingUniforms>() as u64,
             BufferKind::Uniform,
@@ -365,42 +363,33 @@ impl DeferredPipeline {
             &gbuffer_sampler,
             &lighting_buffer,
         );
-        let ls = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let ls = device.create_shader(&euca_rhi::ShaderDesc {
             label: Some("Deferred Lighting Shader"),
-            source: wgpu::ShaderSource::Wgsl(DEFERRED_LIGHTING_SHADER.into()),
+            source: euca_rhi::ShaderSource::Wgsl(DEFERRED_LIGHTING_SHADER.into()),
         });
-        let lpl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Deferred Lighting Pipeline Layout"),
-            bind_group_layouts: &[&lighting_bgl],
-            push_constant_ranges: &[],
-        });
-        let lighting_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let lighting_pipeline = device.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("Deferred Lighting Pipeline"),
-            layout: Some(&lpl),
-            vertex: wgpu::VertexState {
+            layout: &[&lighting_bgl],
+            vertex: euca_rhi::VertexState {
                 module: &ls,
-                entry_point: Some("vs_main"),
+                entry_point: "vs_main",
                 buffers: &[],
-                compilation_options: Default::default(),
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(euca_rhi::FragmentState {
                 module: &ls,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
                     format: hdr_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(euca_rhi::BlendState::REPLACE),
+                    write_mask: euca_rhi::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
-            cache: None,
         });
         Self {
             gbuffer,
@@ -423,7 +412,7 @@ impl DeferredPipeline {
             unified_memory,
         }
     }
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         self.gbuffer.resize(device, width, height);
         self.lighting_bind_group = Self::create_lighting_bind_group(
             device,
@@ -433,103 +422,106 @@ impl DeferredPipeline {
             &self.lighting_buffer,
         );
     }
-    pub fn material_bgl(&self) -> &wgpu::BindGroupLayout {
+    pub fn material_bgl(&self) -> &D::BindGroupLayout {
         &self.material_bgl
     }
-    pub fn material_sampler(&self) -> &wgpu::Sampler {
+    pub fn material_sampler(&self) -> &D::Sampler {
         &self.material_sampler
     }
-    pub fn instance_bgl(&self) -> &wgpu::BindGroupLayout {
+    pub fn instance_bgl(&self) -> &D::BindGroupLayout {
         &self.instance_bgl
     }
-    pub fn hdr_format(&self) -> wgpu::TextureFormat {
+    pub fn hdr_format(&self) -> euca_rhi::TextureFormat {
         self.hdr_format
     }
     /// Grow the deferred instance buffer if `count` exceeds capacity.
-    pub fn ensure_instance_capacity(&mut self, device: &wgpu::Device, count: usize) {
+    pub fn ensure_instance_capacity(&mut self, device: &D, count: usize) {
         if count <= self.instance_capacity {
             return;
         }
         self.instance_capacity = count.next_power_of_two();
         let size = (self.instance_capacity * std::mem::size_of::<[[f32; 4]; 8]>()) as u64;
-        self.instance_buffer = SmartBuffer::from_wgpu(
+        self.instance_buffer = SmartBuffer::new(
             device,
             size,
             BufferKind::Storage,
             self.unified_memory,
             "Deferred Instance SSBO",
         );
-        self.instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.instance_bind_group = device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Deferred Instance BG"),
             layout: &self.instance_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[euca_rhi::BindGroupEntry {
                 binding: 0,
-                resource: self.instance_buffer.raw().as_entire_binding(),
+                resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                    buffer: self.instance_buffer.raw(),
+                    offset: 0,
+                    size: None,
+                }),
             }],
         });
     }
-    pub fn write_instances<T: bytemuck::Pod>(&self, queue: &wgpu::Queue, data: &[T]) {
-        self.instance_buffer.write_wgpu(queue, data);
+    pub fn write_instances<T: bytemuck::Pod>(&self, device: &D, data: &[T]) {
+        self.instance_buffer.write(device, data);
     }
-    pub fn write_gbuffer_scene(&self, queue: &wgpu::Queue, camera_vp: [[f32; 4]; 4]) {
-        self.gbuffer_scene_buffer.write_bytes_wgpu(
-            queue,
+    pub fn write_gbuffer_scene(&self, device: &D, camera_vp: [[f32; 4]; 4]) {
+        self.gbuffer_scene_buffer.write_bytes(
+            device,
             bytemuck::bytes_of(&GBufferSceneUniforms { camera_vp }),
         );
     }
-    pub fn write_lighting_uniforms(
-        &self,
-        queue: &wgpu::Queue,
-        uniforms: &DeferredLightingUniforms,
-    ) {
+    pub fn write_lighting_uniforms(&self, device: &D, uniforms: &DeferredLightingUniforms) {
         self.lighting_buffer
-            .write_bytes_wgpu(queue, bytemuck::bytes_of(uniforms));
+            .write_bytes(device, bytemuck::bytes_of(uniforms));
     }
-    pub fn encode_gbuffer_pass<'a, F>(&'a self, encoder: &'a mut wgpu::CommandEncoder, draw_fn: F)
-    where
-        F: FnOnce(&mut wgpu::RenderPass<'a>),
+    pub fn encode_gbuffer_pass<'a, F>(
+        &'a self,
+        device: &'a D,
+        encoder: &'a mut D::CommandEncoder,
+        draw_fn: F,
+    ) where
+        F: FnOnce(&mut D::RenderPass<'a>),
     {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Deferred G-Buffer Pass"),
-            color_attachments: &[
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &self.gbuffer.albedo_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
+        let mut pass = device.begin_render_pass(
+            encoder,
+            &euca_rhi::RenderPassDesc {
+                label: Some("Deferred G-Buffer Pass"),
+                color_attachments: &[
+                    Some(euca_rhi::RenderPassColorAttachment {
+                        view: &self.gbuffer.albedo_view,
+                        resolve_target: None,
+                        ops: euca_rhi::Operations {
+                            load: euca_rhi::LoadOp::Clear(euca_rhi::Color::BLACK),
+                            store: euca_rhi::StoreOp::Store,
+                        },
+                    }),
+                    Some(euca_rhi::RenderPassColorAttachment {
+                        view: &self.gbuffer.normal_roughness_view,
+                        resolve_target: None,
+                        ops: euca_rhi::Operations {
+                            load: euca_rhi::LoadOp::Clear(euca_rhi::Color::BLACK),
+                            store: euca_rhi::StoreOp::Store,
+                        },
+                    }),
+                    Some(euca_rhi::RenderPassColorAttachment {
+                        view: &self.gbuffer.material_view,
+                        resolve_target: None,
+                        ops: euca_rhi::Operations {
+                            load: euca_rhi::LoadOp::Clear(euca_rhi::Color::BLACK),
+                            store: euca_rhi::StoreOp::Store,
+                        },
+                    }),
+                ],
+                depth_stencil_attachment: Some(euca_rhi::RenderPassDepthStencilAttachment {
+                    view: &self.gbuffer.depth_view,
+                    depth_ops: Some(euca_rhi::Operations {
+                        load: euca_rhi::LoadOp::Clear(1.0),
+                        store: euca_rhi::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
                 }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &self.gbuffer.normal_roughness_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &self.gbuffer.material_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                }),
-            ],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.gbuffer.depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            ..Default::default()
-        });
+            },
+        );
         pass.set_pipeline(&self.gbuffer_pipeline);
         pass.set_bind_group(0, &self.instance_bind_group, &[]);
         pass.set_bind_group(1, &self.gbuffer_scene_bind_group, &[]);
@@ -537,82 +529,64 @@ impl DeferredPipeline {
     }
     pub fn encode_lighting_pass(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
-        hdr_view: &wgpu::TextureView,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        hdr_view: &D::TextureView,
     ) {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Deferred Lighting Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: hdr_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
-        });
+        let mut pass = device.begin_render_pass(
+            encoder,
+            &euca_rhi::RenderPassDesc {
+                label: Some("Deferred Lighting Pass"),
+                color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
+                    view: hdr_view,
+                    resolve_target: None,
+                    ops: euca_rhi::Operations {
+                        load: euca_rhi::LoadOp::Clear(euca_rhi::Color::BLACK),
+                        store: euca_rhi::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+            },
+        );
         pass.set_pipeline(&self.lighting_pipeline);
         pass.set_bind_group(0, &self.lighting_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
-    fn create_lighting_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    fn create_lighting_bgl(device: &D) -> D::BindGroupLayout {
+        let tex = |binding, sample_type| euca_rhi::BindGroupLayoutEntry {
+            binding,
+            visibility: euca_rhi::ShaderStages::FRAGMENT,
+            ty: euca_rhi::BindingType::Texture {
+                sample_type,
+                view_dimension: euca_rhi::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let float_tex = |binding| {
+            tex(
+                binding,
+                euca_rhi::TextureSampleType::Float { filterable: true },
+            )
+        };
+        device.create_bind_group_layout(&euca_rhi::BindGroupLayoutDesc {
             label: Some("Deferred Lighting BGL"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
+                float_tex(0),
+                float_tex(1),
+                float_tex(2),
+                tex(3, euca_rhi::TextureSampleType::Depth),
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Sampler(euca_rhi::SamplerBindingType::Filtering),
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                euca_rhi::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: euca_rhi::ShaderStages::FRAGMENT,
+                    ty: euca_rhi::BindingType::Buffer {
+                        ty: euca_rhi::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -622,39 +596,45 @@ impl DeferredPipeline {
         })
     }
     fn create_lighting_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        gbuffer: &GBuffer,
-        sampler: &wgpu::Sampler,
-        lb: &SmartBuffer,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device: &D,
+        layout: &D::BindGroupLayout,
+        gbuffer: &GBuffer<D>,
+        sampler: &D::Sampler,
+        lb: &SmartBuffer<D>,
+    ) -> D::BindGroup {
+        device.create_bind_group(&euca_rhi::BindGroupDesc {
             label: Some("Deferred Lighting BG"),
             layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.albedo_view),
+                    resource: euca_rhi::BindingResource::TextureView(&gbuffer.albedo_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.normal_roughness_view),
+                    resource: euca_rhi::BindingResource::TextureView(
+                        &gbuffer.normal_roughness_view,
+                    ),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.material_view),
+                    resource: euca_rhi::BindingResource::TextureView(&gbuffer.material_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.depth_view),
+                    resource: euca_rhi::BindingResource::TextureView(&gbuffer.depth_view),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: euca_rhi::BindingResource::Sampler(sampler),
                 },
-                wgpu::BindGroupEntry {
+                euca_rhi::BindGroupEntry {
                     binding: 5,
-                    resource: lb.raw().as_entire_binding(),
+                    resource: euca_rhi::BindingResource::Buffer(euca_rhi::BufferBinding {
+                        buffer: lb.raw(),
+                        offset: 0,
+                        size: None,
+                    }),
                 },
             ],
         })
@@ -666,13 +646,16 @@ mod tests {
     use super::*;
     #[test]
     fn gbuffer_format_validation() {
-        assert_eq!(GBufferFormats::ALBEDO, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(GBufferFormats::ALBEDO, euca_rhi::TextureFormat::Rgba8Unorm);
         assert_eq!(
             GBufferFormats::NORMAL_ROUGHNESS,
-            wgpu::TextureFormat::Rgba16Float
+            euca_rhi::TextureFormat::Rgba16Float
         );
-        assert_eq!(GBufferFormats::MATERIAL, wgpu::TextureFormat::Rgba8Unorm);
-        assert_eq!(GBufferFormats::DEPTH, wgpu::TextureFormat::Depth32Float);
+        assert_eq!(
+            GBufferFormats::MATERIAL,
+            euca_rhi::TextureFormat::Rgba8Unorm
+        );
+        assert_eq!(GBufferFormats::DEPTH, euca_rhi::TextureFormat::Depth32Float);
         assert_eq!(GBufferFormats::ALL_COLOR.len(), 3);
     }
     #[test]
