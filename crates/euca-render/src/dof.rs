@@ -17,6 +17,13 @@
 //! Run after motion blur (if enabled) and before tonemapping. Reads the depth
 //! buffer and HDR color texture.
 
+use euca_rhi::{
+    BindGroupLayoutDesc, BindGroupLayoutEntry, BindingType, BufferBindingType, BufferDesc,
+    BufferUsages, ComputePipelineDesc, Extent3d, ShaderDesc, ShaderSource, ShaderStages,
+    StorageTextureAccess, TextureDesc, TextureDimension, TextureFormat, TextureSampleType,
+    TextureUsages, TextureViewDesc, TextureViewDimension,
+};
+
 const DOF_SHADER: &str = include_str!("../shaders/dof.wgsl");
 
 // ---------------------------------------------------------------------------
@@ -98,103 +105,93 @@ pub struct DofPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevic
     height: u32,
 }
 
-impl DofPass {
+impl<D: euca_rhi::RenderDevice> DofPass<D> {
     /// Create the DoF pass for the given screen dimensions.
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    pub fn new(device: &D, width: u32, height: u32) -> Self {
+        let shader_module = device.create_shader(&ShaderDesc {
             label: Some("dof"),
-            source: wgpu::ShaderSource::Wgsl(DOF_SHADER.into()),
+            source: ShaderSource::Wgsl(DOF_SHADER.into()),
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDesc {
             label: Some("dof_bgl"),
             entries: &[
                 // 0: uniform buffer
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // 1: color input texture
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: false },
+                        view_dimension: TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 2: depth texture
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Depth,
+                        view_dimension: TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 3: CoC texture (storage read_write, r16float)
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::ReadWrite,
-                        format: wgpu::TextureFormat::R16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::StorageTexture {
+                        access: StorageTextureAccess::ReadWrite,
+                        format: TextureFormat::R16Float,
+                        view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
                 },
                 // 4: output color (storage write, rgba16float)
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::StorageTexture {
+                        access: StorageTextureAccess::WriteOnly,
+                        format: TextureFormat::Rgba16Float,
+                        view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
                 },
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("dof_layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let coc_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let coc_pipeline = device.create_compute_pipeline(&ComputePipelineDesc {
             label: Some("dof_coc"),
-            layout: Some(&pipeline_layout),
+            layout: &[&bind_group_layout],
             module: &shader_module,
-            entry_point: Some("coc_pass"),
-            compilation_options: Default::default(),
-            cache: None,
+            entry_point: "coc_pass",
         });
 
-        let gather_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let gather_pipeline = device.create_compute_pipeline(&ComputePipelineDesc {
             label: Some("dof_gather"),
-            layout: Some(&pipeline_layout),
+            layout: &[&bind_group_layout],
             module: &shader_module,
-            entry_point: Some("gather_pass"),
-            compilation_options: Default::default(),
-            cache: None,
+            entry_point: "gather_pass",
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&BufferDesc {
             label: Some("dof_params"),
             size: std::mem::size_of::<DofParamsGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -216,7 +213,7 @@ impl DofPass {
     }
 
     /// Recreate textures after a window resize.
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         if self.width == width && self.height == height {
             return;
         }
@@ -232,14 +229,60 @@ impl DofPass {
         self.output_view = out_v;
     }
 
+    /// Returns a reference to the output texture.
+    pub fn output_texture(&self) -> &D::Texture {
+        &self.output_texture
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    fn create_coc_texture(device: &D, width: u32, height: u32) -> (D::Texture, D::TextureView) {
+        let tex = device.create_texture(&TextureDesc {
+            label: Some("dof_coc"),
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::R16Float,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = device.create_texture_view(&tex, &TextureViewDesc::default());
+        (tex, view)
+    }
+
+    fn create_output_texture(device: &D, width: u32, height: u32) -> (D::Texture, D::TextureView) {
+        let tex = device.create_texture(&TextureDesc {
+            label: Some("dof_output"),
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba16Float,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = device.create_texture_view(&tex, &TextureViewDesc::default());
+        (tex, view)
+    }
+}
+
+// Keep the wgpu-specific execute/accessor methods in a separate impl block
+// since the execute params and command encoding are not yet abstracted.
+impl DofPass {
     /// Returns the output texture view (DoF-blurred result).
     pub fn output_view(&self) -> &wgpu::TextureView {
         &self.output_view
-    }
-
-    /// Returns a reference to the output texture.
-    pub fn output_texture(&self) -> &wgpu::Texture {
-        &self.output_texture
     }
 
     /// Returns the CoC texture view (for debug visualization).
@@ -317,56 +360,6 @@ impl DofPass {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
-    fn create_coc_texture(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("dof_coc"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = tex.create_view(&Default::default());
-        (tex, view)
-    }
-
-    fn create_output_texture(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("dof_output"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = tex.create_view(&Default::default());
-        (tex, view)
     }
 }
 

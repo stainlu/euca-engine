@@ -947,7 +947,7 @@ impl Renderer {
         let (msaa_hdr_texture, msaa_hdr_view) =
             Self::create_msaa_hdr_texture(rhi, gpu.surface_config.width, gpu.surface_config.height);
         let post_process_stack =
-            PostProcessStack::new(&gpu.device, &gpu.queue, &gpu.surface_config);
+            PostProcessStack::new(gpu, &gpu.device, &gpu.queue, &gpu.surface_config);
 
         let decal_renderer = DecalRenderer::new(&gpu.device);
         decal_renderer.upload(&gpu.queue);
@@ -1358,6 +1358,7 @@ impl Renderer {
         self.msaa_hdr_texture = msaa_hdr_texture;
         self.msaa_hdr_view = msaa_hdr_view;
         self.post_process_stack.resize(
+            gpu,
             &gpu.device,
             gpu.surface_config.width,
             gpu.surface_config.height,

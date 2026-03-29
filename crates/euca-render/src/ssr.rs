@@ -16,6 +16,14 @@
 //! - Reflection overlay texture (Rgba16Float) with premultiplied alpha.
 //!   The caller composites this over the scene using alpha blending.
 
+use euca_rhi::{
+    BindGroupLayoutDesc, BindGroupLayoutEntry, BindingType, BlendState, BufferBindingType,
+    BufferDesc, BufferUsages, ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState,
+    PrimitiveState, RenderPipelineDesc, SamplerBindingType, SamplerDesc, ShaderDesc, ShaderSource,
+    ShaderStages, TextureDesc, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    TextureViewDesc, TextureViewDimension, VertexState,
+};
+
 /// Runtime settings for screen-space reflections.
 #[derive(Clone, Debug)]
 pub struct SsrSettings {
@@ -121,29 +129,29 @@ pub struct SsrPass<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevic
     height: u32,
 }
 
-const SSR_OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const SSR_OUTPUT_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
-impl SsrPass {
+impl<D: euca_rhi::RenderDevice> SsrPass<D> {
     /// Create a new SSR pass for the given surface dimensions.
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+    pub fn new(device: &D, width: u32, height: u32) -> Self {
         let width = width.max(1);
         let height = height.max(1);
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&SamplerDesc {
             label: Some("SSR Sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
             ..Default::default()
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&BufferDesc {
             label: Some("SSR Uniforms"),
             size: std::mem::size_of::<SsrUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDesc {
             label: Some("SSR BGL"),
             entries: &[
                 // binding 0: depth texture
@@ -153,22 +161,20 @@ impl SsrPass {
                 // binding 2: color texture
                 bgl_texture_entry(2),
                 // binding 3: sampler
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
                     count: None,
                 },
                 // binding 4: uniforms
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<SsrUniforms>() as u64
-                        ),
+                        min_binding_size: Some(std::mem::size_of::<SsrUniforms>() as u64),
                     },
                     count: None,
                 },
@@ -191,7 +197,7 @@ impl SsrPass {
     }
 
     /// Recreate resolution-dependent resources after a window resize.
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         let width = width.max(1);
         let height = height.max(1);
         self.width = width;
@@ -201,6 +207,20 @@ impl SsrPass {
         self.output_view = output_view;
     }
 
+    /// Current width in pixels.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Current height in pixels.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+}
+
+// Keep the wgpu-specific execute method in a separate impl block since the
+// execute params and command encoding are not yet abstracted through RHI.
+impl SsrPass {
     /// Execute the SSR pass: dispatch a fullscreen triangle that ray-marches
     /// reflections and writes the result into the internal overlay texture.
     pub fn execute(&self, params: SsrExecuteParams<'_>) {
@@ -272,98 +292,79 @@ impl SsrPass {
     pub fn output_view(&self) -> &wgpu::TextureView {
         &self.output_view
     }
-
-    /// Current width in pixels.
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-
-    /// Current height in pixels.
-    pub fn height(&self) -> u32 {
-        self.height
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ────────────────────────────────────────────────────────────────────────
 
-fn bgl_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_texture_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
             multisampled: false,
         },
         count: None,
     }
 }
 
-fn create_ssr_target(
-    device: &wgpu::Device,
+fn create_ssr_target<D: euca_rhi::RenderDevice>(
+    device: &D,
     width: u32,
     height: u32,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+) -> (D::Texture, D::TextureView) {
+    let texture = device.create_texture(&TextureDesc {
         label: Some("SSR Output"),
-        size: wgpu::Extent3d {
+        size: Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
+        dimension: TextureDimension::D2,
         format: SSR_OUTPUT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_DST,
+        usage: TextureUsages::RENDER_ATTACHMENT
+            | TextureUsages::TEXTURE_BINDING
+            | TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = device.create_texture_view(&texture, &TextureViewDesc::default());
     (texture, view)
 }
 
-fn create_ssr_pipeline(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout) -> wgpu::RenderPipeline {
+fn create_ssr_pipeline<D: euca_rhi::RenderDevice>(
+    device: &D,
+    bgl: &D::BindGroupLayout,
+) -> D::RenderPipeline {
     let shader_source = include_str!("../shaders/ssr.wgsl");
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let shader = device.create_shader(&ShaderDesc {
         label: Some("SSR Shader"),
-        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+        source: ShaderSource::Wgsl(shader_source.into()),
     });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("SSR Pipeline Layout"),
-        bind_group_layouts: &[bgl],
-        push_constant_ranges: &[],
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline(&RenderPipelineDesc {
         label: Some("SSR Pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
+        layout: &[bgl],
+        vertex: VertexState {
             module: &shader,
-            entry_point: Some("vs_main"),
+            entry_point: "vs_main",
             buffers: &[],
-            compilation_options: Default::default(),
         },
-        fragment: Some(wgpu::FragmentState {
+        fragment: Some(FragmentState {
             module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
+            entry_point: "fs_main",
+            targets: &[Some(ColorTargetState {
                 format: SSR_OUTPUT_FORMAT,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
+                blend: Some(BlendState::REPLACE),
+                write_mask: ColorWrites::ALL,
             })],
-            compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            ..Default::default()
-        },
+        primitive: PrimitiveState::default(),
         depth_stencil: None,
         multisample: Default::default(),
-        multiview: None,
-        cache: None,
     })
 }
 
