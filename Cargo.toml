@@ -25,6 +25,7 @@ members = [
     "crates/euca-ui",
     "crates/euca-terrain",
     "crates/euca-script",
+    "crates/euca-services",
     "tools/euca-cli",
 ]
 

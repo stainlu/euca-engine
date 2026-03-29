@@ -1569,6 +1569,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "euca-services"
+version = "1.1.0"
+dependencies = [
+ "js-sys",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "euca-terrain"
 version = "1.1.0"
 dependencies = [
