@@ -411,6 +411,8 @@ impl Renderer {
             (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64;
         let unified = gpu.unified_memory();
         let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let (surface_w, surface_h) = rhi.surface_size();
+        let surface_fmt = rhi.surface_format();
         let instance_buffer = SmartBuffer::new(
             rhi,
             instance_buf_size,
@@ -830,8 +832,8 @@ impl Renderer {
         });
         let depth_texture = Self::create_depth_texture(
             rhi,
-            gpu.surface_config.width,
-            gpu.surface_config.height,
+            surface_w,
+            surface_h,
             euca_rhi::TextureFormat::Depth32Float,
         );
 
@@ -945,12 +947,12 @@ impl Renderer {
         });
 
         let (msaa_hdr_texture, msaa_hdr_view) =
-            Self::create_msaa_hdr_texture(rhi, gpu.surface_config.width, gpu.surface_config.height);
+            Self::create_msaa_hdr_texture(rhi, surface_w, surface_h);
         let post_process_stack = PostProcessStack::new(
             rhi,
-            gpu.surface_config.width,
-            gpu.surface_config.height,
-            gpu.surface_config.format.into(),
+            surface_w,
+            surface_h,
+            surface_fmt,
         );
 
         let decal_renderer = DecalRenderer::new(rhi);
@@ -1016,7 +1018,7 @@ impl Renderer {
             meshes: Vec::new(),
             depth_texture,
             depth_format,
-            surface_format: gpu.surface_config.format.into(),
+            surface_format: surface_fmt,
             post_process_stack,
             post_process_settings: PostProcessSettings::default(),
             volumetric_fog_pass: None,
@@ -1026,8 +1028,8 @@ impl Renderer {
             prev_depth_dims: (0, 0),
             taa_pass: crate::taa::TaaPass::new(
                 rhi,
-                gpu.surface_config.width,
-                gpu.surface_config.height,
+                surface_w,
+                surface_h,
             ),
             frame_count: 0,
             probe_sh: [[0.0; 4]; 9],
@@ -1040,8 +1042,8 @@ impl Renderer {
             gpu_particle_systems: Vec::new(),
             velocity_textures: crate::velocity::VelocityTextures::new(
                 rhi,
-                gpu.surface_config.width,
-                gpu.surface_config.height,
+                surface_w,
+                surface_h,
             ),
             ibl_dummy_cube_view,
             ibl_dummy_brdf_view,
@@ -1364,7 +1366,7 @@ impl Renderer {
     /// after the window has been resized.
     pub fn resize(&mut self, gpu: &GpuContext) {
         let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
-        let (w, h) = (gpu.surface_config.width, gpu.surface_config.height);
+        let (w, h) = rhi.surface_size();
         self.depth_texture =
             Self::create_depth_texture(rhi, w, h, euca_rhi::TextureFormat::Depth32Float);
         let (msaa_hdr_texture, msaa_hdr_view) = Self::create_msaa_hdr_texture(rhi, w, h);
@@ -1372,12 +1374,13 @@ impl Renderer {
         self.msaa_hdr_view = msaa_hdr_view;
         self.post_process_stack.resize(rhi, w, h);
         if let Some(ref mut fog_pass) = self.volumetric_fog_pass {
-            fog_pass.resize(&**gpu, gpu.surface_config.width, gpu.surface_config.height);
+            let (fw, fh) = rhi.surface_size();
+            fog_pass.resize(&**gpu, fw, fh);
         }
         self.taa_pass
-            .resize(rhi, gpu.surface_config.width, gpu.surface_config.height);
+            .resize(rhi, w, h);
         self.velocity_textures
-            .resize(rhi, gpu.surface_config.width, gpu.surface_config.height);
+            .resize(rhi, w, h);
     }
 
     /// Set interpolated SH probe coefficients for indirect lighting.
@@ -1506,7 +1509,8 @@ impl Renderer {
         gpu: &GpuContext,
         config: crate::gpu_particles::GpuParticleConfig,
     ) -> usize {
-        let format = gpu.surface_config.format.into();
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let format = rhi.surface_format();
         let system = crate::gpu_particles::GpuParticleSystem::new(&**gpu, config, format);
         self.gpu_particle_systems.push(system);
         self.gpu_particle_systems.len() - 1
@@ -1561,12 +1565,10 @@ impl Renderer {
     /// shader and composite the result over the HDR buffer after the PBR pass
     /// and before post-processing.
     pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext) {
-        self.volumetric_fog_pass = Some(VolumetricFogPass::new(
-            &**gpu,
-            gpu.surface_config.width,
-            gpu.surface_config.height,
-            gpu.surface_config.format.into(),
-        ));
+        let rhi: &euca_rhi::wgpu_backend::WgpuDevice = gpu;
+        let (sw, sh) = rhi.surface_size();
+        let sf = rhi.surface_format();
+        self.volumetric_fog_pass = Some(VolumetricFogPass::new(&**gpu, sw, sh, sf));
     }
 
     /// Update the volumetric fog settings (density, scattering, etc.).
@@ -2155,25 +2157,28 @@ impl Renderer {
             );
             // Copy TAA output back to ping_view so post-processing reads the
             // temporally resolved image.
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: self.taa_pass.output_texture(),
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: self.post_process_stack.ping_texture(),
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: gpu.surface_config.width,
-                    height: gpu.surface_config.height,
-                    depth_or_array_layers: 1,
-                },
-            );
+            {
+                let (copy_w, copy_h) = rhi.surface_size();
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: self.taa_pass.output_texture(),
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: self.post_process_stack.ping_texture(),
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: copy_w,
+                        height: copy_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
 
         self.frame_count = self.frame_count.wrapping_add(1);
