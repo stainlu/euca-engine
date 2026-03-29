@@ -182,10 +182,18 @@ fn main() {
                 .with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
             let window = event_loop.create_window(attrs).unwrap();
             let device = MetalDevice::from_window(&window);
+
+            // Disable vsync for true FPS measurement
+            device.set_display_sync_enabled(false);
+
+            let (sw, sh) = device.surface_size();
             println!(
-                "Metal device: {} | {} entities",
+                "Metal device: {} | {} entities | drawable: {}x{} | scale: {}",
                 device.capabilities().device_name,
-                self.entity_count
+                self.entity_count,
+                sw,
+                sh,
+                window.scale_factor(),
             );
 
             let shader = device.create_shader(&ShaderDesc {
@@ -363,7 +371,8 @@ fn main() {
                         unsafe { std::slice::from_raw_parts(vp.as_ptr() as *const u8, 64) };
                     device.write_buffer(vp_buf, 0, vp_bytes);
 
-                    // Render
+                    // Render — time each phase
+                    let t_start = std::time::Instant::now();
                     let output = match device.get_current_texture() {
                         Ok(t) => t,
                         Err(_) => return,
@@ -412,12 +421,24 @@ fn main() {
                             0,
                             (self.instances.len() * std::mem::size_of::<InstanceData>()) as u64,
                         );
-                        // Draw all cubes in one instanced call
+                        // Single instanced draw call — all entities in one batch
                         pass.draw(0..36, 0..self.entity_count);
                     }
+                    let t_encode = std::time::Instant::now();
                     encoder.schedule_present(&output);
                     device.submit(encoder);
                     device.present(output);
+                    let t_submit = std::time::Instant::now();
+
+                    // Print frame timing every 300 frames
+                    if self.frame % 300 == 0 && self.frame > 0 {
+                        let drawable_ms = (t_encode - t_start).as_secs_f64() * 1000.0;
+                        let submit_ms = (t_submit - t_encode).as_secs_f64() * 1000.0;
+                        let total_ms = (t_submit - t_start).as_secs_f64() * 1000.0;
+                        println!(
+                            "  [timing] drawable+encode: {drawable_ms:.1}ms | submit: {submit_ms:.1}ms | total: {total_ms:.1}ms"
+                        );
+                    }
 
                     self.window.as_ref().unwrap().request_redraw();
                 }

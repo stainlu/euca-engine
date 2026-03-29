@@ -165,6 +165,8 @@ impl MetalDevice {
 
         layer.setDevice(Some(&device));
         layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm_sRGB);
+        // Use framebufferOnly for best performance (no readback needed)
+        layer.setFramebufferOnly(true);
         layer.setDrawableSize(objc2_foundation::NSSize {
             width: width as f64,
             height: height as f64,
@@ -252,6 +254,15 @@ impl MetalDevice {
     /// Access the raw MTL device (for advanced Metal-specific operations).
     pub fn mtl_device(&self) -> &ProtocolObject<dyn MTLDevice> {
         &self.device
+    }
+
+    /// Enable or disable vsync (display sync).
+    /// When disabled, frames render as fast as possible (uncapped FPS).
+    pub fn set_display_sync_enabled(&self, enabled: bool) {
+        unsafe {
+            // setDisplaySyncEnabled controls vsync
+            let _: () = objc2::msg_send![&*self.layer, setDisplaySyncEnabled: enabled];
+        }
     }
 }
 
