@@ -50,3 +50,8 @@ path = "../../examples/texture_demo.rs"
 name = "metal_cubes"
 path = "../../examples/metal_cubes.rs"
 required-features = ["euca-rhi/metal-backend"]
+
+[[example]]
+name = "metal_stress"
+path = "../../examples/metal_stress.rs"
+required-features = ["euca-rhi/metal-backend"]
