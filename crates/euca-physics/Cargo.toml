@@ -6,11 +6,17 @@ description = "Collision detection, raycasting, joints, and character/vehicle co
 keywords = ["gamedev", "game-engine", "physics", "collision", "raycasting"]
 categories = ["game-development", "simulation"]
 
+[features]
+default = []
+gpu-broadphase = ["dep:euca-rhi", "dep:bytemuck"]
+
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math", features = ["reflect"] }
 euca-reflect = { path = "../euca-reflect" }
 euca-scene = { path = "../euca-scene" }
+euca-rhi = { path = "../euca-rhi", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
 log = "0.4"
 rayon = "1"
 
