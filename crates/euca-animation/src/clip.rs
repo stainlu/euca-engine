@@ -57,6 +57,14 @@ impl AnimPose {
         Self { joints }
     }
 
+    /// Copy this pose's joints into `output` without allocation.
+    ///
+    /// Writes `min(self.joints.len(), output.len())` joints.
+    pub fn copy_into(&self, output: &mut [Transform]) {
+        let count = self.joints.len().min(output.len());
+        output[..count].copy_from_slice(&self.joints[..count]);
+    }
+
     /// Additive blend: applies `additive` pose on top of this pose.
     /// `additive` is assumed to be a delta from some reference pose.
     pub fn add(&self, additive: &Self, weight: f32) -> Self {
