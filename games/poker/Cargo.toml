@@ -1,0 +1,11 @@
+[package]
+name = "euca-poker"
+version.workspace = true
+edition.workspace = true
+description = "Texas Hold'em poker game logic for Euca engine"
+keywords = ["gamedev", "poker", "card-game", "texas-holdem"]
+categories = ["game-development"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+rand = "0.8"
