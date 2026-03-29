@@ -99,6 +99,75 @@ impl MetalRenderPass<'_> {
             .as_ref()
             .unwrap_or_else(|| panic!("{caller} called without a prior set_index_buffer"))
     }
+
+    /// Bind a buffer to the object shader at the given slot index.
+    pub fn set_object_buffer(
+        &mut self,
+        slot: u32,
+        buffer: &MetalBuffer,
+        offset: u64,
+    ) {
+        unsafe {
+            self.encoder.setObjectBuffer_offset_atIndex(
+                Some(&buffer.0),
+                offset as usize,
+                slot as usize,
+            );
+        }
+    }
+
+    /// Bind a buffer to the mesh shader at the given slot index.
+    ///
+    /// Mesh shaders use separate buffer slots from vertex shaders — you must
+    /// use this method (not `set_vertex_buffer`) when using a mesh pipeline.
+    pub fn set_mesh_buffer(
+        &mut self,
+        slot: u32,
+        buffer: &MetalBuffer,
+        offset: u64,
+    ) {
+        unsafe {
+            self.encoder.setMeshBuffer_offset_atIndex(
+                Some(&buffer.0),
+                offset as usize,
+                slot as usize,
+            );
+        }
+    }
+
+    /// Draw using a mesh shader pipeline.
+    ///
+    /// Dispatches `threadgroups_per_grid` mesh shader threadgroups. Each
+    /// threadgroup cooperatively outputs vertices and primitives directly to
+    /// the rasterizer, bypassing the traditional vertex processing pipeline.
+    ///
+    /// When no object shader is present, `threads_per_object_threadgroup` is
+    /// ignored (pass `[1, 1, 1]`).
+    pub fn draw_mesh_threadgroups(
+        &self,
+        threadgroups_per_grid: [u32; 3],
+        threads_per_object_threadgroup: [u32; 3],
+        threads_per_mesh_threadgroup: [u32; 3],
+    ) {
+        self.encoder
+            .drawMeshThreadgroups_threadsPerObjectThreadgroup_threadsPerMeshThreadgroup(
+                MTLSize {
+                    width: threadgroups_per_grid[0] as usize,
+                    height: threadgroups_per_grid[1] as usize,
+                    depth: threadgroups_per_grid[2] as usize,
+                },
+                MTLSize {
+                    width: threads_per_object_threadgroup[0] as usize,
+                    height: threads_per_object_threadgroup[1] as usize,
+                    depth: threads_per_object_threadgroup[2] as usize,
+                },
+                MTLSize {
+                    width: threads_per_mesh_threadgroup[0] as usize,
+                    height: threads_per_mesh_threadgroup[1] as usize,
+                    depth: threads_per_mesh_threadgroup[2] as usize,
+                },
+            );
+    }
 }
 
 pub struct MetalComputePass<'a> {
@@ -280,6 +349,103 @@ impl MetalDevice {
         unsafe {
             // setDisplaySyncEnabled controls vsync
             let _: () = objc2::msg_send![&*self.layer, setDisplaySyncEnabled: enabled];
+        }
+    }
+
+    /// Create a mesh render pipeline (mesh + fragment, optionally object shader).
+    ///
+    /// Metal mesh shaders bypass the traditional vertex pipeline entirely:
+    /// Object shader → Mesh shader → Rasterizer → Fragment shader.
+    /// This eliminates the TBDR binning-phase bottleneck that limits vertex
+    /// throughput on Apple Silicon.
+    ///
+    /// This is Metal-specific and not part of the `RenderDevice` trait.
+    pub fn create_mesh_render_pipeline(
+        &self,
+        shader: &MetalShaderModule,
+        mesh_entry: &str,
+        fragment_entry: &str,
+        object_entry: Option<&str>,
+        color_formats: &[TextureFormat],
+        color_blends: &[Option<BlendState>],
+        depth_format: Option<TextureFormat>,
+        label: Option<&str>,
+    ) -> MetalRenderPipeline {
+        unsafe {
+            let desc = MTLMeshRenderPipelineDescriptor::new();
+
+            if let Some(lbl) = label {
+                desc.setLabel(Some(&NSString::from_str(lbl)));
+            }
+
+            // Mesh function (required)
+            let mesh_fn = shader
+                .0
+                .newFunctionWithName(&NSString::from_str(mesh_entry))
+                .unwrap_or_else(|| panic!("Mesh function '{mesh_entry}' not found in Metal library"));
+            desc.setMeshFunction(Some(&mesh_fn));
+
+            // Fragment function
+            let frag_fn = shader
+                .0
+                .newFunctionWithName(&NSString::from_str(fragment_entry))
+                .unwrap_or_else(|| {
+                    panic!("Fragment function '{fragment_entry}' not found in Metal library")
+                });
+            desc.setFragmentFunction(Some(&frag_fn));
+
+            // Object function (optional — for GPU-driven culling)
+            if let Some(obj_entry) = object_entry {
+                let obj_fn = shader
+                    .0
+                    .newFunctionWithName(&NSString::from_str(obj_entry))
+                    .unwrap_or_else(|| {
+                        panic!("Object function '{obj_entry}' not found in Metal library")
+                    });
+                desc.setObjectFunction(Some(&obj_fn));
+            }
+
+            // Color attachments
+            let color_attachments = desc.colorAttachments();
+            for (i, format) in color_formats.iter().enumerate() {
+                let attachment = color_attachments.objectAtIndexedSubscript(i);
+                attachment.setPixelFormat(to_mtl_pixel_format(*format));
+
+                if let Some(Some(blend)) = color_blends.get(i) {
+                    attachment.setBlendingEnabled(true);
+                    attachment
+                        .setSourceRGBBlendFactor(to_mtl_blend_factor(blend.color.src_factor));
+                    attachment.setDestinationRGBBlendFactor(to_mtl_blend_factor(
+                        blend.color.dst_factor,
+                    ));
+                    attachment.setRgbBlendOperation(to_mtl_blend_op(blend.color.operation));
+                    attachment
+                        .setSourceAlphaBlendFactor(to_mtl_blend_factor(blend.alpha.src_factor));
+                    attachment.setDestinationAlphaBlendFactor(to_mtl_blend_factor(
+                        blend.alpha.dst_factor,
+                    ));
+                    attachment.setAlphaBlendOperation(to_mtl_blend_op(blend.alpha.operation));
+                }
+            }
+
+            // Depth format
+            if let Some(depth_fmt) = depth_format {
+                desc.setDepthAttachmentPixelFormat(to_mtl_pixel_format(depth_fmt));
+            }
+
+            let pipeline = self
+                .device
+                .newRenderPipelineStateWithMeshDescriptor_options_reflection_error(
+                    &desc,
+                    MTLPipelineOption::None,
+                    None,
+                )
+                .expect("Failed to create Metal mesh render pipeline");
+
+            MetalRenderPipeline {
+                state: SendSync(pipeline),
+                primitive_type: MTLPrimitiveType::Triangle,
+            }
         }
     }
 }

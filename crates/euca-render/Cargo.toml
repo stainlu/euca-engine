@@ -55,3 +55,8 @@ required-features = ["euca-rhi/metal-backend"]
 name = "metal_stress"
 path = "../../examples/metal_stress.rs"
 required-features = ["euca-rhi/metal-backend"]
+
+[[example]]
+name = "metal_mesh_stress"
+path = "../../examples/metal_mesh_stress.rs"
+required-features = ["euca-rhi/metal-backend"]
