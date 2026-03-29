@@ -1,0 +1,22 @@
+[package]
+name = "euca-matchmaking"
+version.workspace = true
+edition.workspace = true
+description = "Standalone matchmaking service for Euca engine games"
+
+[[bin]]
+name = "euca-matchmaking"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
