@@ -171,6 +171,8 @@ struct GpuMesh<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     #[allow(dead_code)] // Used when impl Renderer becomes generic over D
     index_buffer_size: u64,
     index_count: u32,
+    /// Allocation in the global geometry pool (present when GPU-driven is active).
+    pool_alloc: Option<crate::geometry_pool::MeshAllocation>,
 }
 
 #[repr(C)]
@@ -390,6 +392,12 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     /// Optional bindless material system + render pipeline.
     /// When active, the opaque pass uses a single bind group for all materials.
     bindless: Option<BindlessState<D>>,
+    /// GPU-driven rendering pipeline (compute cull + indirect multi-draw).
+    /// Active when the GPU supports `multi_draw_indexed_indirect`.
+    gpu_driven: Option<crate::gpu_driven::GpuDrivenPipeline<D>>,
+    /// Global geometry pool (single vertex + index buffer for all meshes).
+    /// Active when gpu_driven is active.
+    geometry_pool: Option<crate::geometry_pool::GeometryPool<D>>,
     /// Current capacity (in instances) of the main instance buffer.
     instance_capacity: usize,
     /// Current capacity (in instances) of the shadow instance buffer.
@@ -992,6 +1000,17 @@ impl<D: RenderDevice> Renderer<D> {
             }],
         });
 
+        // GPU-driven rendering: create pipeline + geometry pool when the GPU
+        // supports multi_draw_indexed_indirect.
+        let (gpu_driven, geometry_pool) = if gpu.has_multi_draw_indirect() {
+            let pipeline = crate::gpu_driven::GpuDrivenPipeline::new(rhi, 65536);
+            let pool = crate::geometry_pool::GeometryPool::new(rhi, 65536, 262144);
+            log::info!("GPU-driven rendering pipeline created (max 65536 entities)");
+            (Some(pipeline), Some(pool))
+        } else {
+            (None, None)
+        };
+
         Self {
             pipeline,
             transparent_pipeline,
@@ -1042,6 +1061,8 @@ impl<D: RenderDevice> Renderer<D> {
             ibl_dummy_brdf_view,
             ibl_sampler,
             bindless: None,
+            gpu_driven,
+            geometry_pool,
             instance_capacity: INITIAL_INSTANCE_CAPACITY,
             shadow_instance_capacity: INITIAL_INSTANCE_CAPACITY,
             unified_memory: unified,
@@ -1054,11 +1075,7 @@ impl<D: RenderDevice> Renderer<D> {
 
     /// Grow the main instance buffer and rebuild its bind group if `count`
     /// exceeds the current capacity. Returns `true` if the buffer was grown.
-    fn ensure_instance_capacity(
-        &mut self,
-        rhi: &D,
-        count: usize,
-    ) -> bool {
+    fn ensure_instance_capacity(&mut self, rhi: &D, count: usize) -> bool {
         if count <= self.instance_capacity {
             return false;
         }
@@ -1088,11 +1105,7 @@ impl<D: RenderDevice> Renderer<D> {
 
     /// Grow the shadow instance buffer and rebuild its bind group if `count`
     /// exceeds the current capacity.
-    fn ensure_shadow_instance_capacity(
-        &mut self,
-        rhi: &D,
-        count: usize,
-    ) -> bool {
+    fn ensure_shadow_instance_capacity(&mut self, rhi: &D, count: usize) -> bool {
         if count <= self.shadow_instance_capacity {
             return false;
         }
@@ -1213,6 +1226,12 @@ impl<D: RenderDevice> Renderer<D> {
         });
         rhi.write_buffer(&ib, 0, idata);
 
+        // Also allocate in the global geometry pool when GPU-driven is active.
+        let pool_alloc = self
+            .geometry_pool
+            .as_mut()
+            .map(|pool| pool.allocate(rhi, &mesh.vertices, &mesh.indices));
+
         let handle = MeshHandle(self.meshes.len() as u32);
         self.meshes.push(GpuMesh {
             vertex_buffer: vb,
@@ -1220,6 +1239,7 @@ impl<D: RenderDevice> Renderer<D> {
             index_buffer: ib,
             index_buffer_size: idata.len() as u64,
             index_count: mesh.indices.len() as u32,
+            pool_alloc,
         });
         handle
     }
@@ -1872,7 +1892,12 @@ impl<D: RenderDevice> Renderer<D> {
             for batch in &opaque_batches {
                 let mesh = &self.meshes[batch.mesh.0 as usize];
                 pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                pass.set_index_buffer(
+                    &mesh.index_buffer,
+                    euca_rhi::IndexFormat::Uint32,
+                    0,
+                    mesh.index_buffer_size,
+                );
                 pass.draw_indexed(
                     0..mesh.index_count,
                     0,
@@ -1964,6 +1989,69 @@ impl<D: RenderDevice> Renderer<D> {
             bl.system.flush(&**gpu, &self.textures);
         }
 
+        // ── GPU-driven path: build commands and dispatch compute culling ──
+        // This must happen BEFORE the render pass, since compute dispatches
+        // cannot occur inside a render pass.
+        let gpu_driven_entity_count = if let (Some(gpu_driven), Some(geometry_pool)) =
+            (&self.gpu_driven, &self.geometry_pool)
+        {
+            if self.bindless.is_some() {
+                // Build DrawCommandGpu array from opaque commands.
+                let mut gpu_commands = Vec::with_capacity(opaque_cmds.len());
+                for cmd in &opaque_cmds {
+                    if let Some(alloc) = self.meshes[cmd.mesh.0 as usize].pool_alloc {
+                        let model = cmd.model_matrix.to_cols_array_2d();
+                        let (aabb_center, aabb_half) = cmd
+                            .aabb
+                            .map(|(c, h)| ([c.x, c.y, c.z], [h.x, h.y, h.z]))
+                            .unwrap_or(([0.0; 3], [1.0; 3]));
+                        gpu_commands.push(crate::gpu_driven::DrawCommandGpu::from_components(
+                            &crate::gpu_driven::DrawCommandParams {
+                                model: &model,
+                                vertex_offset: alloc.vertex_offset,
+                                first_index: alloc.first_index,
+                                index_count: alloc.index_count,
+                                aabb_center,
+                                aabb_half_extents: aabb_half,
+                                mesh_id: cmd.mesh.0,
+                                material_id: cmd.material.0,
+                            },
+                        ));
+                    }
+                }
+
+                if !gpu_commands.is_empty() {
+                    let entity_count = gpu_commands.len() as u32;
+
+                    // Upload commands, frustum, and params.
+                    gpu_driven.upload_commands(rhi, &gpu_commands);
+                    let eye = [camera.eye.x, camera.eye.y, camera.eye.z];
+                    let frustum_data = crate::gpu_driven::GpuFrustumData::from_frustum(
+                        &crate::camera::Frustum::from_view_projection(&vp),
+                        eye,
+                    );
+                    gpu_driven.upload_frustum(rhi, &frustum_data);
+                    gpu_driven.upload_params(rhi, entity_count);
+
+                    // Dispatch compute culling (writes indirect args buffer).
+                    gpu_driven.cull_and_prepare(rhi, encoder, entity_count);
+
+                    // Store entity count for use inside the render pass and
+                    // a reference to the geometry pool for buffer binding.
+                    let _ = geometry_pool; // suppress unused; used inside pass below
+                    Some(entity_count)
+                } else {
+                    None
+                }
+            } else {
+                // GPU-driven without bindless not supported (can't switch
+                // materials mid-multi-draw). Fall through to CPU batches.
+                None
+            }
+        } else {
+            None
+        };
+
         // Resolve MSAA into the post-process stack's ping buffer.
         let resolve_target = self.post_process_stack.ping_view();
 
@@ -2000,14 +2088,64 @@ impl<D: RenderDevice> Renderer<D> {
             pass.draw(0..3, 0..1);
             pass.set_bind_group(0, &self.instance_bind_group, &[]);
             pass.set_bind_group(1, &self.scene_bind_group, &[]);
-            if let Some(ref bl) = self.bindless {
-                // Bindless path: single pipeline + single material bind group.
+
+            // ── Opaque geometry ──
+            if let (Some(entity_count), Some(gpu_driven), Some(geometry_pool)) = (
+                gpu_driven_entity_count,
+                &self.gpu_driven,
+                &self.geometry_pool,
+            ) {
+                // GPU-driven path: single multi_draw_indexed_indirect_count call.
+                // Bindless is guaranteed active here (checked when building commands).
+                let bl = self
+                    .bindless
+                    .as_ref()
+                    .expect("GPU-driven requires bindless");
+                pass.set_pipeline(&bl.pipeline);
+                pass.set_bind_group(2, &bl.system.bind_group, &[]);
+
+                // Bind the global geometry pool vertex + index buffers.
+                pass.set_vertex_buffer(
+                    0,
+                    geometry_pool.vertex_buffer(),
+                    0,
+                    geometry_pool.vertex_buffer_capacity_bytes(),
+                );
+                pass.set_index_buffer(
+                    geometry_pool.index_buffer(),
+                    euca_rhi::IndexFormat::Uint32,
+                    0,
+                    geometry_pool.index_buffer_capacity_bytes(),
+                );
+
+                // Single indirect draw call replaces thousands of CPU draw calls.
+                // Use multi_draw_indexed_indirect_count when the count buffer is
+                // written by the compute shader, falling back to per-entity
+                // draw_indexed_indirect loop otherwise.
+                if gpu.has_multi_draw_indirect_count() {
+                    pass.multi_draw_indexed_indirect_count(
+                        gpu_driven.indirect_buffer().raw(),
+                        0,
+                        gpu_driven.draw_count_buffer().raw(),
+                        0,
+                        entity_count,
+                    );
+                } else {
+                    gpu_driven.draw_indirect(&mut pass, entity_count);
+                }
+            } else if let Some(ref bl) = self.bindless {
+                // Bindless CPU-batch path: single pipeline + single material bind group.
                 pass.set_pipeline(&bl.pipeline);
                 pass.set_bind_group(2, &bl.system.bind_group, &[]);
                 for batch in &opaque_batches {
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                    pass.set_index_buffer(
+                        &mesh.index_buffer,
+                        euca_rhi::IndexFormat::Uint32,
+                        0,
+                        mesh.index_buffer_size,
+                    );
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2022,7 +2160,12 @@ impl<D: RenderDevice> Renderer<D> {
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                    pass.set_index_buffer(
+                        &mesh.index_buffer,
+                        euca_rhi::IndexFormat::Uint32,
+                        0,
+                        mesh.index_buffer_size,
+                    );
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,
@@ -2037,7 +2180,12 @@ impl<D: RenderDevice> Renderer<D> {
             // decal texture. For now we bind the decal vertex/index buffers and
             // issue one draw per command so the integration path is exercised.
             if !self.pending_decals.is_empty() {
-                pass.set_vertex_buffer(0, self.decal_renderer.vertex_buffer(), 0, self.decal_renderer.vertex_buffer_size());
+                pass.set_vertex_buffer(
+                    0,
+                    self.decal_renderer.vertex_buffer(),
+                    0,
+                    self.decal_renderer.vertex_buffer_size(),
+                );
                 pass.set_index_buffer(
                     self.decal_renderer.index_buffer(),
                     euca_rhi::IndexFormat::Uint16,
@@ -2069,7 +2217,12 @@ impl<D: RenderDevice> Renderer<D> {
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
-                    pass.set_index_buffer(&mesh.index_buffer, euca_rhi::IndexFormat::Uint32, 0, mesh.index_buffer_size);
+                    pass.set_index_buffer(
+                        &mesh.index_buffer,
+                        euca_rhi::IndexFormat::Uint32,
+                        0,
+                        mesh.index_buffer_size,
+                    );
                     pass.draw_indexed(
                         0..mesh.index_count,
                         0,

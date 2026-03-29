@@ -35,6 +35,8 @@ pub mod dof;
 pub mod extract;
 /// Procedural foliage scattering and instanced rendering.
 pub mod foliage;
+/// Global geometry pool (single vertex + index buffer for all meshes).
+pub mod geometry_pool;
 mod gpu;
 /// GPU-driven rendering with indirect draw and compute culling.
 pub mod gpu_driven;
@@ -108,10 +110,11 @@ pub use foliage::{
     FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, GpuFoliageCuller,
     GpuFoliageInstance, scatter_foliage,
 };
+pub use geometry_pool::{GeometryPool, MeshAllocation};
 pub use gpu::GpuContext;
 pub use gpu_driven::{
-    DrawCommandGpu, DrawIndexedIndirectArgs, GpuCullParams, GpuDrivenPipeline, GpuFrustumData,
-    IndirectDrawBuffer,
+    DrawCommandGpu, DrawCommandParams, DrawIndexedIndirectArgs, GpuCullParams, GpuDrivenPipeline,
+    GpuFrustumData, IndirectDrawBuffer,
 };
 pub use gpu_particles::{GpuParticleConfig, GpuParticleSystem};
 pub use hardware::{AdapterInfo, GpuVendor, HardwareSurvey, RenderBackend, SystemInfo};

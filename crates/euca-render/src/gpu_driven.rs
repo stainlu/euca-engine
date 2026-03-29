@@ -76,6 +76,61 @@ pub struct DrawCommandGpu {
     pub lod_distance_sq: [f32; 4],
 }
 
+/// Parameters for constructing a [`DrawCommandGpu`] from renderer state.
+///
+/// Groups the inputs to [`DrawCommandGpu::from_components`] into a single
+/// struct to keep the public API ergonomic and clippy-clean.
+pub struct DrawCommandParams<'a> {
+    /// Column-major 4x4 model matrix.
+    pub model: &'a [[f32; 4]; 4],
+    /// Added to each index before vertex fetch (from `MeshAllocation`).
+    pub vertex_offset: i32,
+    /// First index in the global index buffer (from `MeshAllocation`).
+    pub first_index: u32,
+    /// Number of indices to draw (from `MeshAllocation`).
+    pub index_count: u32,
+    /// World-space AABB center `[x, y, z]`.
+    pub aabb_center: [f32; 3],
+    /// World-space AABB half-extents `[x, y, z]`.
+    pub aabb_half_extents: [f32; 3],
+    /// Mesh table index.
+    pub mesh_id: u32,
+    /// Material table index.
+    pub material_id: u32,
+}
+
+impl DrawCommandGpu {
+    /// Build a `DrawCommandGpu` from renderer state.
+    ///
+    /// This is the primary constructor used by the renderer when building the
+    /// per-frame command buffer for GPU-driven rendering.
+    pub fn from_components(p: &DrawCommandParams<'_>) -> Self {
+        Self {
+            model_col0: p.model[0],
+            model_col1: p.model[1],
+            model_col2: p.model[2],
+            model_col3: p.model[3],
+            aabb_center: [p.aabb_center[0], p.aabb_center[1], p.aabb_center[2], 0.0],
+            aabb_half_extents: [
+                p.aabb_half_extents[0],
+                p.aabb_half_extents[1],
+                p.aabb_half_extents[2],
+                0.0,
+            ],
+            mesh_id: p.mesh_id,
+            material_id: p.material_id,
+            index_count: p.index_count,
+            first_index: p.first_index,
+            vertex_offset: p.vertex_offset,
+            lod_count: 1,
+            lod_index_counts: [p.index_count, 0, 0, 0],
+            lod_first_indices: [p.first_index, 0, 0, 0],
+            lod_vertex_offsets: [p.vertex_offset, 0, 0, 0],
+            lod_distance_sq: [0.0; 4],
+        }
+    }
+}
+
 /// Mirrors the `DrawIndexedIndirect` GPU layout -- the output of the compute shader.
 ///
 /// Each visible entity gets one of these with valid draw parameters.
