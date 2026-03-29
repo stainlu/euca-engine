@@ -23,7 +23,7 @@ fn validate_wgsl(name: &str, source: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// All 28 shaders must parse and validate
+// All 29 shaders must parse and validate
 // ---------------------------------------------------------------------------
 
 macro_rules! shader_test {
@@ -75,6 +75,7 @@ shader_test!(validate_volumetric_fog, "volumetric_fog.wgsl");
 shader_test!(validate_particle_compute, "particle_compute.wgsl");
 shader_test!(validate_particle_render, "particle_render.wgsl");
 shader_test!(validate_ui_quad, "ui_quad.wgsl");
+shader_test!(validate_meshlet_cull, "meshlet_cull.wgsl");
 shader_test!(validate_brdf_lut, "brdf_lut.wgsl");
 shader_test!(validate_ibl_irradiance, "ibl_irradiance.wgsl");
 shader_test!(validate_ibl_specular, "ibl_specular.wgsl");
