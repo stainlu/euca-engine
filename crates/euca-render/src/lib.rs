@@ -35,6 +35,8 @@ pub mod dof;
 pub mod extract;
 /// Procedural foliage scattering and instanced rendering.
 pub mod foliage;
+/// Simple frame graph for tracking render/compute pass dependencies.
+pub mod frame_graph;
 /// Global geometry pool — single shared vertex + index buffer for all meshes.
 pub mod geometry_pool;
 mod gpu;
@@ -110,6 +112,7 @@ pub use extract::RenderExtractor;
 pub use foliage::{
     FoliageDrawData, FoliageInstance, FoliageLayer, FoliageLayers, FoliageRenderer, scatter_foliage,
 };
+pub use frame_graph::{CompiledGraph, FrameGraph, PassKind, PassNode, ResourceId};
 pub use geometry_pool::{GeometryPool, MeshAllocation};
 pub use gpu::GpuContext;
 pub use gpu_driven::{

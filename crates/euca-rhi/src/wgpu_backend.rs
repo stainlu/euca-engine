@@ -983,6 +983,12 @@ impl RenderDevice for WgpuDevice {
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
+    fn submit_multiple(&self, encoders: Vec<wgpu::CommandEncoder>) {
+        let command_buffers: Vec<wgpu::CommandBuffer> =
+            encoders.into_iter().map(|e| e.finish()).collect();
+        self.queue.submit(command_buffers);
+    }
+
     fn get_current_texture(&self) -> Result<wgpu::SurfaceTexture, SurfaceError> {
         self.surface.get_current_texture().map_err(|e| match e {
             wgpu::SurfaceError::Timeout => SurfaceError::Timeout,

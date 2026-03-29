@@ -116,6 +116,13 @@ pub trait RenderDevice: Send + Sync + 'static {
 
     fn submit(&self, encoder: Self::CommandEncoder);
 
+    /// Submit multiple command encoders in a single batch.
+    ///
+    /// The GPU executes them in order within the submission, but the driver
+    /// may overlap independent work between encoders. This enables splitting
+    /// compute and render work into separate encoders for async compute.
+    fn submit_multiple(&self, encoders: Vec<Self::CommandEncoder>);
+
     // -- Surface management --
 
     fn get_current_texture(&self) -> Result<Self::SurfaceTexture, SurfaceError>;
