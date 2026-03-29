@@ -1035,7 +1035,7 @@ impl Renderer {
             pending_decals: Vec::new(),
             gpu_particle_systems: Vec::new(),
             velocity_textures: crate::velocity::VelocityTextures::new(
-                &gpu.device,
+                rhi,
                 gpu.surface_config.width,
                 gpu.surface_config.height,
             ),
@@ -1374,11 +1374,8 @@ impl Renderer {
             gpu.surface_config.width,
             gpu.surface_config.height,
         );
-        self.velocity_textures.resize(
-            &gpu.device,
-            gpu.surface_config.width,
-            gpu.surface_config.height,
-        );
+        self.velocity_textures
+            .resize(rhi, gpu.surface_config.width, gpu.surface_config.height);
     }
 
     /// Set interpolated SH probe coefficients for indirect lighting.
