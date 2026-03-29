@@ -23,6 +23,12 @@
 //!    It returns a `&wgpu::TextureView` of the half-res GI result.
 
 use euca_math::Mat4;
+use euca_rhi::{
+    BindGroupLayoutDesc, BindGroupLayoutEntry, BindingType, BufferBindingType, BufferDesc,
+    BufferUsages, ComputePipelineDesc, Extent3d, FilterMode, SamplerBindingType, SamplerDesc,
+    ShaderDesc, ShaderSource, ShaderStages, StorageTextureAccess, TextureDesc, TextureDimension,
+    TextureFormat, TextureSampleType, TextureUsages, TextureViewDesc, TextureViewDimension,
+};
 
 const SSGI_SHADER: &str = include_str!("../shaders/ssgi.wgsl");
 
@@ -133,19 +139,19 @@ pub struct SsgiExecuteParams<'a> {
 /// step size.
 const SSGI_MAX_STEPS: u32 = 12;
 
-impl SsgiPass {
+impl<D: euca_rhi::RenderDevice> SsgiPass<D> {
     /// Create a new SSGI pass. `width` and `height` are **full resolution**;
     /// internal textures are allocated at half resolution.
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+    pub fn new(device: &D, width: u32, height: u32) -> Self {
         let half_w = (width / 2).max(1);
         let half_h = (height / 2).max(1);
 
-        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader_module = device.create_shader(&ShaderDesc {
             label: Some("ssgi_compute"),
-            source: wgpu::ShaderSource::Wgsl(SSGI_SHADER.into()),
+            source: ShaderSource::Wgsl(SSGI_SHADER.into()),
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDesc {
             label: Some("ssgi_bgl"),
             entries: &[
                 // 0: depth texture (full-res, current frame)
@@ -159,63 +165,55 @@ impl SsgiPass {
                 // 4: history GI texture (half-res, filterable)
                 bgl_filterable_texture_entry(4),
                 // 5: uniform buffer
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // 6: output storage texture (half-res)
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::StorageTexture {
+                        access: StorageTextureAccess::WriteOnly,
+                        format: TextureFormat::Rgba16Float,
+                        view_dimension: TextureViewDimension::D2,
                     },
                     count: None,
                 },
                 // 7: linear sampler
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ssgi_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline(&ComputePipelineDesc {
             label: Some("ssgi_compute_pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: &[&bind_group_layout],
             module: &shader_module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
+            entry_point: "main",
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&BufferDesc {
             label: Some("ssgi_uniforms"),
             size: std::mem::size_of::<SsgiUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&SamplerDesc {
             label: Some("ssgi_linear_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
             ..Default::default()
         });
 
@@ -240,7 +238,7 @@ impl SsgiPass {
 
     /// Resize internal textures when the window changes size.
     /// `width` and `height` are **full resolution**.
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(&mut self, device: &D, width: u32, height: u32) {
         let half_w = (width / 2).max(1);
         let half_h = (height / 2).max(1);
 
@@ -261,6 +259,73 @@ impl SsgiPass {
         self.current_read = 0;
     }
 
+    /// Half-resolution width.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Half-resolution height.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    fn create_history_textures(
+        device: &D,
+        width: u32,
+        height: u32,
+    ) -> ([D::Texture; 2], [D::TextureView; 2]) {
+        let desc = TextureDesc {
+            label: Some("ssgi_history"),
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba16Float,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        };
+
+        let t0 = device.create_texture(&desc);
+        let t1 = device.create_texture(&desc);
+        let view_desc = TextureViewDesc::default();
+        let v0 = device.create_texture_view(&t0, &view_desc);
+        let v1 = device.create_texture_view(&t1, &view_desc);
+        ([t0, t1], [v0, v1])
+    }
+
+    fn create_output_texture(device: &D, width: u32, height: u32) -> (D::Texture, D::TextureView) {
+        let tex = device.create_texture(&TextureDesc {
+            label: Some("ssgi_output"),
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba16Float,
+            usage: TextureUsages::TEXTURE_BINDING
+                | TextureUsages::STORAGE_BINDING
+                | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = device.create_texture_view(&tex, &TextureViewDesc::default());
+        (tex, view)
+    }
+}
+
+// Keep the wgpu-specific execute method in a separate impl block since the
+// execute params and command encoding are not yet abstracted through RHI.
+impl SsgiPass {
     /// Execute the SSGI compute pass.
     ///
     /// Ray-marches the depth buffer, samples indirect color from the previous
@@ -371,98 +436,32 @@ impl SsgiPass {
     pub fn output_view(&self) -> &wgpu::TextureView {
         &self.output_view
     }
-
-    /// Half-resolution width.
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-
-    /// Half-resolution height.
-    pub fn height(&self) -> u32 {
-        self.height
-    }
-
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
-    fn create_history_textures(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) -> ([wgpu::Texture; 2], [wgpu::TextureView; 2]) {
-        let desc = wgpu::TextureDescriptor {
-            label: Some("ssgi_history"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        };
-
-        let t0 = device.create_texture(&desc);
-        let t1 = device.create_texture(&desc);
-        let v0 = t0.create_view(&Default::default());
-        let v1 = t1.create_view(&Default::default());
-        ([t0, t1], [v0, v1])
-    }
-
-    fn create_output_texture(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ssgi_output"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = tex.create_view(&Default::default());
-        (tex, view)
-    }
 }
 
 // -----------------------------------------------------------------------
 // Bind group layout helpers
 // -----------------------------------------------------------------------
 
-fn bgl_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_texture_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-            view_dimension: wgpu::TextureViewDimension::D2,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: false },
+            view_dimension: TextureViewDimension::D2,
             multisampled: false,
         },
         count: None,
     }
 }
 
-fn bgl_filterable_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_filterable_texture_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
             multisampled: false,
         },
         count: None,

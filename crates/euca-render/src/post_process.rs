@@ -240,6 +240,7 @@ pub struct PostProcessStack<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::
 
 impl PostProcessStack {
     pub fn new(
+        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
@@ -423,7 +424,7 @@ impl PostProcessStack {
 
         let main_bgl = tex_sampler_uniform_bgl;
 
-        let ssr_pass = crate::ssr::SsrPass::new(device, width, height);
+        let ssr_pass = crate::ssr::SsrPass::new(rhi, width, height);
         let (ssr_normals_texture, ssr_normals_view) =
             create_texture_target(device, width, height, "SSR Normals", HDR_FORMAT);
         let ssr_normals_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -537,7 +538,13 @@ impl PostProcessStack {
     }
 
     /// Recreate all resolution-dependent textures and bind groups.
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub fn resize(
+        &mut self,
+        rhi: &euca_rhi::wgpu_backend::WgpuDevice,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) {
         let width = width.max(1);
         let height = height.max(1);
         self.width = width;
@@ -595,7 +602,7 @@ impl PostProcessStack {
             "FXAA BG",
         );
 
-        self.ssr_pass.resize(device, width, height);
+        self.ssr_pass.resize(rhi, width, height);
         let (ssr_normals_texture, ssr_normals_view) =
             create_texture_target(device, width, height, "SSR Normals", HDR_FORMAT);
         self.ssr_normals_bind_group = create_tex_sampler_uniform_bind_group(
