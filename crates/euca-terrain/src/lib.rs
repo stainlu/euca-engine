@@ -28,6 +28,8 @@
 pub mod chunk;
 pub mod component;
 pub mod editing;
+#[cfg(feature = "gpu-terrain")]
+pub mod gpu_terrain;
 pub mod heightmap;
 pub mod lod;
 pub mod mesh;
