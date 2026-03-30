@@ -18,7 +18,7 @@ use euca_gameplay::{
     Fortification, GameState, HeroDef, HeroName, HeroRegistry, HeroTimings, ItemDef, ItemRegistry,
     ItemState, PrimaryAttribute, Roshan, VisionMap, VisionSource, WardStock,
 };
-use euca_math::{Mat4, Transform, Vec3};
+use euca_math::{Mat4, Quat, Transform, Vec3};
 use euca_physics::PhysicsConfig;
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
@@ -618,8 +618,12 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
     }
     let blue = blue.expect("blue material");
 
-    // Capture material handles before moving materials into DefaultAssets
-    let tree_mat = *materials.get("green").unwrap();
+    // Tree mesh: cylinder trunk + sphere canopy in one draw call.
+    let tree_mesh = renderer.upload_mesh(gpu, &Mesh::tree_default());
+    let tree_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.15, 0.5, 0.1, 1.0], 0.0, 0.6), // dark green, matte
+    );
 
     let mut meshes = HashMap::new();
     meshes.insert("cube".to_string(), cube);
@@ -664,7 +668,7 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
     });
 
     // Trees in jungle areas between L-shaped lanes — defines MOBA map geography
-    spawn_tree_lines(world, cube, tree_mat);
+    spawn_tree_lines(world, tree_mesh, tree_mat);
 }
 
 /// Spawn tree entities in the jungle areas between L-shaped lanes.
@@ -699,8 +703,12 @@ fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandl
                 let ox = ((seed >> 16) as f32 / 65536.0 - 0.5) * 1.5;
                 seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
                 let oz = ((seed >> 16) as f32 / 65536.0 - 0.5) * 1.5;
+                // Random uniform scale (0.8 – 1.2)
                 seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-                let scale = 0.8 + ((seed >> 16) as f32 / 65536.0) * 1.2;
+                let scale = 0.8 + ((seed >> 16) as f32 / 65536.0) * 0.4;
+                // Random Y-rotation (0 – 2pi)
+                seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let y_rot = ((seed >> 16) as f32 / 65536.0) * 2.0 * std::f32::consts::PI;
 
                 let px = x + ox;
                 let pz = z + oz;
@@ -717,9 +725,12 @@ fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandl
                     || ((px - 28.0).abs() < lane_half_width && pz < 25.0);
 
                 if !on_top && !on_mid && !on_bot {
-                    let pos = Vec3::new(px, scale * 0.5, pz);
-                    let mut xform = Transform::from_translation(pos);
-                    xform.scale = Vec3::new(0.8, scale, 0.8);
+                    // Tree mesh has its bottom at y=0; place at ground level.
+                    let xform = Transform {
+                        translation: Vec3::new(px, 0.0, pz),
+                        rotation: Quat::from_axis_angle(Vec3::Y, y_rot),
+                        scale: Vec3::new(scale, scale, scale),
+                    };
                     let t = world.spawn(LocalTransform(xform));
                     world.insert(t, GlobalTransform::default());
                     world.insert(t, MeshRenderer { mesh });
@@ -730,7 +741,13 @@ fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandl
                             body_type: euca_physics::RigidBodyType::Static,
                         },
                     );
-                    world.insert(t, euca_physics::Collider::aabb(0.4, scale * 0.5, 0.4));
+                    // Collider sized to the canopy radius (0.6) scaled.
+                    let canopy_r = 0.6 * scale;
+                    let tree_h = 2.4 * scale; // trunk 1.5 + canopy top 0.6 above centre
+                    world.insert(
+                        t,
+                        euca_physics::Collider::aabb(canopy_r, tree_h * 0.5, canopy_r),
+                    );
                 }
 
                 z += spacing;

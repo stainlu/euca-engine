@@ -395,6 +395,60 @@ impl Mesh {
 
         Self { vertices, indices }
     }
+
+    /// Merge another mesh into this one, offsetting its indices.
+    pub fn merge(&mut self, other: &Mesh) {
+        let base = self.vertices.len() as u32;
+        self.vertices.extend_from_slice(&other.vertices);
+        self.indices.extend(other.indices.iter().map(|i| i + base));
+    }
+
+    /// Create a stylised tree: a cylinder trunk topped with a sphere canopy,
+    /// combined into a single mesh.
+    ///
+    /// The trunk sits on the XZ plane (bottom at y = 0) and the canopy sphere
+    /// is centred above it. All geometry lives in a single vertex/index buffer
+    /// so one draw call renders the whole tree.
+    ///
+    /// * `trunk_radius`  – radius of the cylinder trunk (default 0.15)
+    /// * `trunk_height`  – height of the trunk cylinder (default 1.5)
+    /// * `trunk_sectors` – number of sides on the cylinder (default 8)
+    /// * `canopy_radius` – radius of the canopy sphere (default 0.6)
+    /// * `canopy_centre_y` – Y position of the canopy centre (default 1.8)
+    /// * `canopy_stacks` – sphere latitude segments (default 8)
+    /// * `canopy_sectors` – sphere longitude segments (default 16)
+    pub fn tree(
+        trunk_radius: f32,
+        trunk_height: f32,
+        trunk_sectors: u32,
+        canopy_radius: f32,
+        canopy_centre_y: f32,
+        canopy_stacks: u32,
+        canopy_sectors: u32,
+    ) -> Self {
+        // Generate the trunk cylinder centred at origin, then shift it up so
+        // its bottom sits at y = 0.
+        let mut trunk = Self::cylinder(trunk_radius, trunk_height, trunk_sectors);
+        let trunk_offset_y = trunk_height / 2.0;
+        for v in &mut trunk.vertices {
+            v.position[1] += trunk_offset_y;
+        }
+
+        // Generate the canopy sphere at origin, then shift it to canopy_centre_y.
+        let mut canopy = Self::sphere(canopy_radius, canopy_stacks, canopy_sectors);
+        for v in &mut canopy.vertices {
+            v.position[1] += canopy_centre_y;
+        }
+
+        // Merge canopy into trunk to form a single mesh.
+        trunk.merge(&canopy);
+        trunk
+    }
+
+    /// Convenience wrapper with sensible defaults for a MOBA-style tree.
+    pub fn tree_default() -> Self {
+        Self::tree(0.15, 1.5, 8, 0.6, 1.8, 8, 16)
+    }
 }
 
 #[cfg(test)]
@@ -432,5 +486,45 @@ mod tests {
         let plane = Mesh::plane(10.0);
         assert_eq!(plane.vertices.len(), 4);
         assert_eq!(plane.indices.len(), 6);
+    }
+
+    #[test]
+    fn tree_default_has_geometry() {
+        let tree = Mesh::tree_default();
+        assert!(!tree.vertices.is_empty(), "tree should have vertices");
+        assert!(!tree.indices.is_empty(), "tree should have indices");
+        // All indices must reference valid vertices.
+        let max_idx = tree.vertices.len() as u32;
+        for &i in &tree.indices {
+            assert!(i < max_idx, "index {i} out of bounds (max {max_idx})");
+        }
+    }
+
+    #[test]
+    fn tree_bottom_at_ground() {
+        let tree = Mesh::tree_default();
+        let min_y = tree
+            .vertices
+            .iter()
+            .map(|v| v.position[1])
+            .fold(f32::INFINITY, f32::min);
+        // The trunk bottom should sit at y ~= 0.
+        assert!(
+            min_y.abs() < 0.01,
+            "tree bottom should be at y=0, got {min_y}"
+        );
+    }
+
+    #[test]
+    fn merge_combines_meshes() {
+        let mut a = Mesh::cube();
+        let b = Mesh::sphere(0.5, 4, 8);
+        let a_verts = a.vertices.len();
+        let a_indices = a.indices.len();
+        let b_verts = b.vertices.len();
+        let b_indices = b.indices.len();
+        a.merge(&b);
+        assert_eq!(a.vertices.len(), a_verts + b_verts);
+        assert_eq!(a.indices.len(), a_indices + b_indices);
     }
 }
