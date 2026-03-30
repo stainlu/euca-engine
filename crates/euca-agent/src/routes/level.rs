@@ -14,6 +14,48 @@ use super::{
     apply_collider, apply_physics_body, apply_velocity, read_entity_data, resolve_mesh,
 };
 
+// ---------------------------------------------------------------------------
+// New LevelData format (terrain-aware levels with width/height/terrain_mode)
+// ---------------------------------------------------------------------------
+
+/// Camera configuration embedded in a new-format level.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct LevelCamera {
+    #[serde(default)]
+    pub eye: Option<[f32; 3]>,
+    #[serde(default)]
+    pub target: Option<[f32; 3]>,
+    #[serde(default)]
+    pub fov_y: Option<f32>,
+}
+
+/// New level data format that carries terrain dimensions and metadata
+/// alongside the entity list and camera config.
+///
+/// Detected by the presence of `terrain_mode` or both `width` + `height`
+/// fields at the top level of the JSON document.
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct LevelData {
+    /// Human-readable level name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Terrain width in world units.
+    #[serde(default)]
+    pub width: Option<u32>,
+    /// Terrain height (depth) in world units.
+    #[serde(default)]
+    pub height: Option<u32>,
+    /// Terrain generation mode, e.g. "flat", "heightmap", "procedural".
+    #[serde(default)]
+    pub terrain_mode: Option<String>,
+    /// Entities to spawn.
+    #[serde(default)]
+    pub entities: Vec<SpawnRequest>,
+    /// Optional camera override.
+    #[serde(default)]
+    pub camera: Option<LevelCamera>,
+}
+
 /// Level file format request.
 #[derive(serde::Deserialize)]
 pub struct LevelLoadRequest {
@@ -337,6 +379,70 @@ pub fn load_level_into_world(w: &mut euca_ecs::World, level: &serde_json::Value)
     count
 }
 
+/// Auto-detect old vs new level format and load accordingly.
+///
+/// **New format** is identified by the presence of a `terrain_mode` field or
+/// both `width` and `height` fields at the JSON root.  Everything else falls
+/// through to the existing [`load_level_into_world`] path (backward compatible).
+///
+/// Returns the number of entities created.
+pub fn load_level_auto(w: &mut euca_ecs::World, level: &serde_json::Value) -> u32 {
+    let is_new_format = level.get("terrain_mode").is_some()
+        || (level.get("width").is_some() && level.get("height").is_some());
+
+    if !is_new_format {
+        return load_level_into_world(w, level);
+    }
+
+    // -- New format path --------------------------------------------------
+
+    let data: LevelData = match serde_json::from_value(level.clone()) {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("Failed to deserialize new LevelData format: {e}");
+            return 0;
+        }
+    };
+
+    let level_name = data.name.as_deref().unwrap_or("<unnamed>");
+    let width = data.width.unwrap_or(0);
+    let height = data.height.unwrap_or(0);
+    log::info!(
+        "Loading level '{}' ({}x{}, terrain_mode={:?})",
+        level_name,
+        width,
+        height,
+        data.terrain_mode.as_deref().unwrap_or("none"),
+    );
+
+    // Store the LevelData as a world resource so other systems can query it.
+    w.insert_resource(data.clone());
+
+    // Spawn entities.
+    let mut count = 0u32;
+    for entity_def in &data.entities {
+        spawn_entity(w, entity_def);
+        count += 1;
+    }
+
+    // Apply camera config.
+    if let Some(cam_cfg) = &data.camera {
+        if let Some(cam) = w.resource_mut::<euca_render::Camera>() {
+            if let Some(eye) = cam_cfg.eye {
+                cam.eye = Vec3::new(eye[0], eye[1], eye[2]);
+            }
+            if let Some(target) = cam_cfg.target {
+                cam.target = Vec3::new(target[0], target[1], target[2]);
+            }
+            if let Some(fov_y) = cam_cfg.fov_y {
+                cam.fov_y = fov_y;
+            }
+        }
+    }
+
+    count
+}
+
 /// POST /level/load — load a level definition from a JSON file.
 pub async fn level_load(
     State(world): State<SharedWorld>,
@@ -537,4 +643,111 @@ fn format_filter(filter: &euca_gameplay::RuleFilter) -> String {
 
 fn format_actions(actions: &[euca_gameplay::GameAction]) -> Vec<String> {
     actions.iter().map(|a| format!("{a:?}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use euca_ecs::World;
+
+    /// Old-format JSON (no `terrain_mode`, no `width`/`height`) must fall
+    /// through to `load_level_into_world` and still work.
+    #[test]
+    fn auto_detect_old_format() {
+        let mut world = World::new();
+        let level = serde_json::json!({
+            "entities": [
+                { "position": [1.0, 2.0, 3.0] },
+                { "position": [4.0, 5.0, 6.0] },
+            ],
+        });
+
+        let count = load_level_auto(&mut world, &level);
+        assert_eq!(count, 2, "old format should spawn 2 entities");
+        // LevelData resource must NOT be present for legacy path.
+        assert!(
+            world.resource::<LevelData>().is_none(),
+            "old format should not store LevelData resource"
+        );
+    }
+
+    /// New-format JSON (has `terrain_mode`) must be detected and stored as
+    /// a `LevelData` world resource.
+    #[test]
+    fn auto_detect_new_format() {
+        let mut world = World::new();
+        let level = serde_json::json!({
+            "name": "Test Arena",
+            "width": 256,
+            "height": 256,
+            "terrain_mode": "flat",
+            "entities": [
+                { "position": [0.0, 0.0, 0.0] },
+            ],
+        });
+
+        let count = load_level_auto(&mut world, &level);
+        assert_eq!(count, 1);
+
+        let ld = world
+            .resource::<LevelData>()
+            .expect("LevelData should be stored");
+        assert_eq!(ld.name.as_deref(), Some("Test Arena"));
+        assert_eq!(ld.width, Some(256));
+        assert_eq!(ld.height, Some(256));
+        assert_eq!(ld.terrain_mode.as_deref(), Some("flat"));
+    }
+
+    /// Entities in the new format must actually be spawned into the world.
+    #[test]
+    fn new_format_entities_spawn() {
+        let mut world = World::new();
+        let level = serde_json::json!({
+            "width": 64,
+            "height": 64,
+            "entities": [
+                { "position": [1.0, 0.0, 0.0] },
+                { "position": [2.0, 0.0, 0.0] },
+                { "position": [3.0, 0.0, 0.0] },
+            ],
+        });
+
+        let count = load_level_auto(&mut world, &level);
+        assert_eq!(count, 3);
+
+        // Verify entities actually exist by querying LocalTransform.
+        let query = euca_ecs::Query::<(Entity, &LocalTransform)>::new(&world);
+        let spawned: Vec<_> = query.iter().collect();
+        assert_eq!(spawned.len(), 3, "3 entities should be queryable");
+    }
+
+    /// Camera config in the new format must be applied to the world resource.
+    #[test]
+    fn new_format_camera_applied() {
+        let mut world = World::new();
+        world.insert_resource(euca_render::Camera::default());
+
+        let level = serde_json::json!({
+            "terrain_mode": "heightmap",
+            "entities": [],
+            "camera": {
+                "eye": [10.0, 20.0, 30.0],
+                "target": [0.0, 0.0, 0.0],
+                "fov_y": 1.2,
+            },
+        });
+
+        load_level_auto(&mut world, &level);
+
+        let cam = world
+            .resource::<euca_render::Camera>()
+            .expect("Camera should exist");
+        assert!((cam.eye.x - 10.0).abs() < f32::EPSILON);
+        assert!((cam.eye.y - 20.0).abs() < f32::EPSILON);
+        assert!((cam.eye.z - 30.0).abs() < f32::EPSILON);
+        assert!((cam.target.x).abs() < f32::EPSILON);
+        assert!((cam.target.y).abs() < f32::EPSILON);
+        assert!((cam.target.z).abs() < f32::EPSILON);
+        assert!((cam.fov_y - 1.2).abs() < f32::EPSILON);
+    }
 }
