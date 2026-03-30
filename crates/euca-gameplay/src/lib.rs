@@ -20,6 +20,8 @@ pub mod assertions;
 pub mod attributes;
 /// Dota 2 tower and building system — types, backdoor, fortification, aggro, bounties.
 pub mod building;
+/// ECS systems for buildings — backdoor protection, fortification, barracks death.
+pub mod building_systems;
 /// Camera modes and follow systems.
 pub mod camera;
 /// Timed corpse/entity cleanup after death.
@@ -119,6 +121,10 @@ pub use abilities::{
     scaled_value, start_channel, tick_channel, toggle_ability, use_ability_system,
 };
 pub use cleanup::{CorpseTimer, corpse_cleanup_system};
+pub use creep_wave::{
+    CreepAggro, CreepStats, LaneConfig, LaneWaypoints, SpawnWaveEvent, WaveConfig, WaveSpawner,
+    can_deny, creep_stats, denial_xp, last_hit_gold, wave_composition, wave_spawn_system,
+};
 pub use crowd_control::{
     CcState, CcType, CrowdControl, DisableFlags, DispelType, SpellImmunity, StatusResistance,
 };
@@ -141,9 +147,9 @@ pub fn cc_tick_system(world: &mut euca_ecs::World, dt: f32) {
 pub use economy::{
     BUYBACK_COOLDOWN, BuybackState, CreepType, EconomyError, Gold, GoldBounty, GoldWallet,
     HeroEconomy, PASSIVE_GOLD_PER_SECOND, STARTING_GOLD, apply_death_penalty, assist_gold,
-    attempt_buyback, award_kill, buyback_cost, creep_bounty, gold_loss_on_death,
-    gold_on_kill_system, hero_kill_bounty, respawn_time, tick_buyback_cooldown,
-    tick_passive_income, tower_bounty,
+    attempt_buyback, award_kill, buyback_cooldown_system, buyback_cost, creep_bounty,
+    economy_death_system, gold_loss_on_death, gold_on_kill_system, hero_kill_bounty,
+    passive_income_system, respawn_time, tick_buyback_cooldown, tick_passive_income, tower_bounty,
 };
 pub use hero::{AbilityDef, HeroDef, HeroName, HeroRegistry, StatGrowth, spawn_hero};
 pub use inventory::{
@@ -187,6 +193,11 @@ pub use building::{
     activate_fortification, backdoor_damage_modifier, barracks_destroyed_effect, building_stats,
     is_building_invulnerable, tick_fortification, tower_bounty as building_tower_bounty,
     update_backdoor_protection, update_tower_aggro,
+};
+
+pub use building_systems::{
+    DestroyedBarracks, TeamFortifications, backdoor_protection_system, barracks_death_system,
+    building_damage_multiplier, building_tower_aggro_system, fortification_tick_system,
 };
 
 pub use fog_of_war::{

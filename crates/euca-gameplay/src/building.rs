@@ -39,7 +39,7 @@ pub enum BuildingType {
 }
 
 /// Which lane a building belongs to (towers and barracks are lane-specific).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Lane {
     Top,
     Mid,

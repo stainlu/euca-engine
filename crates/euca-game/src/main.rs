@@ -82,6 +82,8 @@ impl GameApp {
         });
         world.insert_resource(PostProcessSettings::default());
         world.insert_resource(euca_core::Profiler::default());
+        world.insert_resource(euca_gameplay::TeamFortifications::default());
+        world.insert_resource(euca_gameplay::DestroyedBarracks::default());
 
         let attrs = WindowAttributes::default()
             .with_title(&project.window.title)
@@ -253,8 +255,11 @@ impl GameApp {
         physics_step_system(&mut self.world);
         euca_physics::character_controller_system(&mut self.world, dt);
         euca_gameplay::attribute_update_system(&mut self.world);
+        euca_gameplay::backdoor_protection_system(&mut self.world, dt);
+        euca_gameplay::fortification_tick_system(&mut self.world, dt);
         euca_gameplay::apply_damage_system(&mut self.world);
         euca_gameplay::death_check_system(&mut self.world);
+        euca_gameplay::barracks_death_system(&mut self.world);
         euca_gameplay::projectile_system(&mut self.world, dt);
         euca_gameplay::trigger_system(&mut self.world);
         euca_gameplay::ai_system(&mut self.world, dt);
@@ -308,6 +313,10 @@ impl GameApp {
         }
 
         euca_gameplay::gold_on_kill_system(&mut self.world);
+        euca_gameplay::economy_death_system(&mut self.world);
+        euca_gameplay::passive_income_system(&mut self.world, dt);
+        euca_gameplay::buyback_cooldown_system(&mut self.world, dt);
+        euca_gameplay::wave_spawn_system(&mut self.world, dt);
         euca_gameplay::xp_on_kill_system(&mut self.world);
         euca_gameplay::ability_tick_system(&mut self.world, dt);
         euca_gameplay::use_ability_system(&mut self.world);

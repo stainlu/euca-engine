@@ -281,6 +281,101 @@ pub fn award_kill(
     }
 }
 
+// ── ECS systems for HeroEconomy ──
+
+/// Tick passive gold income for all entities with `HeroEconomy`.
+pub fn passive_income_system(world: &mut World, dt: f32) {
+    let entities: Vec<euca_ecs::Entity> = {
+        let query = euca_ecs::Query::<(euca_ecs::Entity, &HeroEconomy)>::new(world);
+        query.iter().map(|(e, _)| e).collect()
+    };
+    for entity in entities {
+        if let Some(econ) = world.get_mut::<HeroEconomy>(entity) {
+            tick_passive_income(econ, dt);
+        }
+    }
+}
+
+/// Tick buyback cooldowns for all entities with `HeroEconomy`.
+pub fn buyback_cooldown_system(world: &mut World, dt: f32) {
+    let entities: Vec<euca_ecs::Entity> = {
+        let query = euca_ecs::Query::<(euca_ecs::Entity, &HeroEconomy)>::new(world);
+        query.iter().map(|(e, _)| e).collect()
+    };
+    for entity in entities {
+        if let Some(econ) = world.get_mut::<HeroEconomy>(entity) {
+            tick_buyback_cooldown(econ, dt);
+        }
+    }
+}
+
+/// Handle hero death economy: apply death penalty to victim and award
+/// kill bounty to killer (if the killer also has `HeroEconomy`).
+///
+/// Non-hero kills (entities without `HeroEconomy`) are handled by the
+/// legacy `gold_on_kill_system`. This system only fires for hero victims.
+pub fn economy_death_system(world: &mut World) {
+    let events: Vec<DeathEvent> = world
+        .resource::<Events>()
+        .map(|e| e.read::<DeathEvent>().cloned().collect())
+        .unwrap_or_default();
+
+    // Collect victim data first, then mutate.
+    struct DeathInfo {
+        victim: euca_ecs::Entity,
+        victim_level: u32,
+        victim_streak: u32,
+        killer: euca_ecs::Entity,
+    }
+
+    let mut deaths = Vec::new();
+    for event in &events {
+        let killer = match event.killer {
+            Some(k) => k,
+            None => continue,
+        };
+
+        // Only process heroes (entities with HeroEconomy).
+        let (victim_level, victim_streak) = match world.get::<HeroEconomy>(event.entity) {
+            Some(econ) => {
+                let level = world
+                    .get::<crate::leveling::Level>(event.entity)
+                    .map(|l| l.level)
+                    .unwrap_or(1);
+                (level, econ.kill_streak)
+            }
+            None => continue,
+        };
+
+        deaths.push(DeathInfo {
+            victim: event.entity,
+            victim_level,
+            victim_streak,
+            killer,
+        });
+    }
+
+    for death in deaths {
+        // Apply death penalty to victim.
+        if let Some(victim_econ) = world.get_mut::<HeroEconomy>(death.victim) {
+            apply_death_penalty(victim_econ, death.victim_level);
+        }
+
+        // Award kill bounty to killer (if killer is a hero with HeroEconomy).
+        let bounty = hero_kill_bounty(death.victim_level, death.victim_streak);
+        if let Some(killer_econ) = world.get_mut::<HeroEconomy>(death.killer) {
+            killer_econ.wallet.add_reliable(bounty);
+            killer_econ.kill_streak += 1;
+            log::info!(
+                "Hero {} earned {} reliable gold for hero kill (streak: {})",
+                death.killer.index(),
+                bounty,
+                killer_econ.kill_streak
+            );
+        }
+    }
+}
+
 // ── Legacy system (backward compatible) ──
 
 /// Award gold to killers when entities with GoldBounty die.
