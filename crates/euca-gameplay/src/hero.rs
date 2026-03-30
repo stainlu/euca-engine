@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use euca_ecs::{Entity, World};
 
 use crate::abilities::{Ability, AbilityEffect, AbilitySet, AbilitySlot, Mana};
+use crate::attributes::{
+    AttributeGrowth, BaseAttributes, HeroAttributes, HeroTimings, PrimaryAttribute,
+};
 use crate::combat::{AutoCombat, EntityRole};
 use crate::economy::Gold;
 use crate::health::Health;
@@ -62,6 +65,14 @@ pub struct HeroDef {
     pub range: f32,
     /// Ability definitions.
     pub abilities: Vec<AbilityDef>,
+    /// Primary attribute (STR/AGI/INT/Universal). `None` for legacy heroes.
+    pub primary_attribute: Option<PrimaryAttribute>,
+    /// Base attribute values at level 1 (STR/AGI/INT).
+    pub base_attributes: Option<BaseAttributes>,
+    /// Per-level attribute growth rates.
+    pub attribute_growth: Option<AttributeGrowth>,
+    /// Movement, attack animation, vision, and projectile parameters.
+    pub hero_timings: Option<HeroTimings>,
 }
 
 // ── Resources ──
@@ -123,6 +134,23 @@ pub fn spawn_hero(world: &mut World, def: &HeroDef) -> Entity {
     }
     world.insert(entity, ability_set);
 
+    // If the definition has Dota 2 attribute data, attach HeroAttributes.
+    if let (Some(primary), Some(base), Some(growth)) = (
+        def.primary_attribute,
+        def.base_attributes,
+        def.attribute_growth,
+    ) {
+        world.insert(
+            entity,
+            HeroAttributes {
+                primary,
+                base,
+                growth,
+                timings: def.hero_timings.unwrap_or_default(),
+            },
+        );
+    }
+
     entity
 }
 
@@ -153,6 +181,10 @@ mod tests {
                     damage: 100.0,
                 },
             }],
+            primary_attribute: None,
+            base_attributes: None,
+            attribute_growth: None,
+            hero_timings: None,
         };
 
         let entity = spawn_hero(&mut world, &def);
@@ -203,6 +235,10 @@ mod tests {
             damage: 52.0,
             range: 1.5,
             abilities: vec![],
+            primary_attribute: None,
+            base_attributes: None,
+            attribute_growth: None,
+            hero_timings: None,
         });
 
         assert!(registry.get("Axe").is_some());

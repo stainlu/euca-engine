@@ -251,12 +251,14 @@ impl GameApp {
         // Run core systems inline (simplified — no parallel schedule for standalone)
         physics_step_system(&mut self.world);
         euca_physics::character_controller_system(&mut self.world, dt);
+        euca_gameplay::attribute_update_system(&mut self.world);
         euca_gameplay::apply_damage_system(&mut self.world);
         euca_gameplay::death_check_system(&mut self.world);
         euca_gameplay::projectile_system(&mut self.world, dt);
         euca_gameplay::trigger_system(&mut self.world);
         euca_gameplay::ai_system(&mut self.world, dt);
         euca_gameplay::player_input::player_input_system(&mut self.world);
+        euca_gameplay::cc_tick_system(&mut self.world, dt);
         euca_gameplay::player::player_command_system(&mut self.world, dt);
         euca_gameplay::auto_combat_system(&mut self.world, dt);
         euca_gameplay::game_state_system(&mut self.world, dt);
