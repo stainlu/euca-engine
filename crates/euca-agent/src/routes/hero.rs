@@ -113,6 +113,10 @@ pub async fn hero_define(
                     effect: a.effect,
                 })
                 .collect(),
+            primary_attribute: None,
+            base_attributes: None,
+            attribute_growth: None,
+            hero_timings: None,
         };
 
         if let Some(registry) = w.resource_mut::<euca_gameplay::HeroRegistry>() {

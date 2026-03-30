@@ -13,8 +13,8 @@ use euca_ecs::{Entity, Events, Query, World};
 use euca_gameplay::camera::{MobaCamera, ScreenSize};
 use euca_gameplay::player_input::ViewportSize;
 use euca_gameplay::{
-    AbilityDef, AbilityEffect, AbilitySlot, GameState, HeroDef, HeroName, HeroRegistry, ItemDef,
-    ItemRegistry,
+    AbilityDef, AbilityEffect, AbilitySlot, AttrGrowth, BaseAttributes, GameState, HeroDef,
+    HeroName, HeroRegistry, HeroTimings, ItemDef, ItemRegistry, PrimaryAttribute,
 };
 use euca_math::{Mat4, Transform, Vec3};
 use euca_physics::PhysicsConfig;
@@ -89,6 +89,7 @@ fn define_heroes() -> HeroRegistry {
     let mut registry = HeroRegistry::new();
 
     // Juggernaut — melee carry with Blade Fury and Omnislash
+    // STR primary, base 20+2.2 / AGI 16+2.4 / INT 14+1.4
     registry.register(HeroDef {
         name: "Juggernaut".into(),
         health: 620.0,
@@ -144,9 +145,29 @@ fn define_heroes() -> HeroRegistry {
                 ]),
             },
         ],
+        primary_attribute: Some(PrimaryAttribute::Strength),
+        base_attributes: Some(BaseAttributes {
+            strength: 20.0,
+            agility: 16.0,
+            intelligence: 14.0,
+        }),
+        attribute_growth: Some(AttrGrowth {
+            strength: 2.2,
+            agility: 2.4,
+            intelligence: 1.4,
+        }),
+        hero_timings: Some(HeroTimings {
+            attack_point: 0.33,
+            attack_backswing: 0.84,
+            base_attack_time: 1.4,
+            movement_speed: 300.0,
+            attack_range: 150.0,
+            ..HeroTimings::default()
+        }),
     });
 
     // Crystal Maiden — ranged support
+    // INT primary, base STR 18+2.2 / AGI 16+1.6 / INT 16+3.3
     registry.register(HeroDef {
         name: "Crystal Maiden".into(),
         health: 480.0,
@@ -202,9 +223,30 @@ fn define_heroes() -> HeroRegistry {
                 },
             },
         ],
+        primary_attribute: Some(PrimaryAttribute::Intelligence),
+        base_attributes: Some(BaseAttributes {
+            strength: 18.0,
+            agility: 16.0,
+            intelligence: 16.0,
+        }),
+        attribute_growth: Some(AttrGrowth {
+            strength: 2.2,
+            agility: 1.6,
+            intelligence: 3.3,
+        }),
+        hero_timings: Some(HeroTimings {
+            attack_point: 0.45,
+            attack_backswing: 0.0,
+            base_attack_time: 1.7,
+            movement_speed: 280.0,
+            attack_range: 600.0,
+            projectile_speed: 900.0,
+            ..HeroTimings::default()
+        }),
     });
 
     // Sven — melee strength carry
+    // STR primary, base STR 22+3.2 / AGI 21+2.0 / INT 16+1.3
     registry.register(HeroDef {
         name: "Sven".into(),
         health: 700.0,
@@ -268,6 +310,25 @@ fn define_heroes() -> HeroRegistry {
                 },
             },
         ],
+        primary_attribute: Some(PrimaryAttribute::Strength),
+        base_attributes: Some(BaseAttributes {
+            strength: 22.0,
+            agility: 21.0,
+            intelligence: 16.0,
+        }),
+        attribute_growth: Some(AttrGrowth {
+            strength: 3.2,
+            agility: 2.0,
+            intelligence: 1.3,
+        }),
+        hero_timings: Some(HeroTimings {
+            attack_point: 0.4,
+            attack_backswing: 0.3,
+            base_attack_time: 1.8,
+            movement_speed: 325.0,
+            attack_range: 150.0,
+            ..HeroTimings::default()
+        }),
     });
 
     registry
@@ -324,6 +385,23 @@ fn apply_hero_template(world: &mut World, entity: Entity, hero_name: &str) {
         );
     }
     world.insert(entity, ability_set);
+
+    // If the definition has Dota 2 attribute data, attach HeroAttributes.
+    if let (Some(primary), Some(base), Some(growth)) = (
+        def.primary_attribute,
+        def.base_attributes,
+        def.attribute_growth,
+    ) {
+        world.insert(
+            entity,
+            euca_gameplay::HeroAttributes {
+                primary,
+                base,
+                growth,
+                timings: def.hero_timings.unwrap_or_default(),
+            },
+        );
+    }
 }
 
 // ── DefaultAssets setup ─────────────────────────────────────────────────────
@@ -648,6 +726,7 @@ impl DotaClientApp {
         euca_gameplay::zone_dynamic_system(&mut self.world, dt);
         euca_gameplay::status_effect_tick_system(&mut self.world, dt);
         euca_gameplay::stat_resolution_system(&mut self.world);
+        euca_gameplay::attribute_update_system(&mut self.world);
 
         // Core gameplay
         euca_gameplay::apply_damage_system(&mut self.world);
