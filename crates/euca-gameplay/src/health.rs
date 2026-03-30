@@ -182,6 +182,11 @@ pub fn apply_damage_system(world: &mut World) {
     for event in events {
         let target = event.target;
 
+        // Skip damage to dead entities — prevents phantom damage after respawn.
+        if world.get::<Dead>(target).is_some() {
+            continue;
+        }
+
         // Prefer the new combat_math path when the target has Armor or MagicResistances.
         let has_new_components =
             world.get::<Armor>(target).is_some() || world.get::<MagicResistances>(target).is_some();
@@ -402,6 +407,30 @@ mod tests {
 
         let health = world.get::<Health>(entity).unwrap();
         assert_eq!(health.current, 100.0);
+    }
+
+    #[test]
+    fn dead_entities_ignore_damage() {
+        let mut world = World::new();
+        world.insert_resource(Events::default());
+
+        let entity = world.spawn(Health::new(100.0));
+        // Mark entity as dead (e.g. just respawned but Dead not yet removed,
+        // or stale damage events from before death).
+        world.insert(entity, Dead);
+
+        world
+            .resource_mut::<Events>()
+            .unwrap()
+            .send(DamageEvent::new(entity, 50.0, None));
+
+        apply_damage_system(&mut world);
+
+        let health = world.get::<Health>(entity).unwrap();
+        assert_eq!(
+            health.current, 100.0,
+            "Dead entities should not take damage"
+        );
     }
 
     // ── Damage resistance tests ──

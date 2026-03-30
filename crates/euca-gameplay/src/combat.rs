@@ -95,12 +95,14 @@ pub fn projectile_system(world: &mut World, dt: f32) {
             .collect()
     };
 
-    // Collect potential targets (entities with Health and a position)
+    // Collect potential targets (entities with Health and a position, excluding dead)
     let targets: Vec<(Entity, Vec3)> = {
         let query = Query::<(Entity, &LocalTransform)>::new(world);
         query
             .iter()
-            .filter(|(e, _)| world.get::<crate::health::Health>(*e).is_some())
+            .filter(|(e, _)| {
+                world.get::<crate::health::Health>(*e).is_some() && world.get::<Dead>(*e).is_none()
+            })
             .map(|(e, lt)| (e, lt.0.translation))
             .collect()
     };
@@ -295,7 +297,11 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
                     .get::<EntityRole>(e)
                     .copied()
                     .unwrap_or(EntityRole::Hero);
-                (e, lt.0.translation, team.0, health.is_dead(), role)
+                // Check both HP depletion and the Dead marker component.
+                // The Dead marker is authoritative — it persists until respawn
+                // removes it, even if HP is restored first.
+                let dead = health.is_dead() || world.get::<Dead>(e).is_some();
+                (e, lt.0.translation, team.0, dead, role)
             })
             .collect()
     };
