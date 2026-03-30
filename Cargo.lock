@@ -1637,12 +1637,15 @@ dependencies = [
 name = "euca-terrain"
 version = "1.1.0"
 dependencies = [
+ "bincode",
  "bytemuck",
  "euca-ecs",
  "euca-math",
  "euca-physics",
  "euca-rhi",
  "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

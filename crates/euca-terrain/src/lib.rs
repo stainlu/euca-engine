@@ -31,6 +31,7 @@ pub mod editing;
 #[cfg(feature = "gpu-terrain")]
 pub mod gpu_terrain;
 pub mod heightmap;
+pub mod level_data;
 pub mod lod;
 pub mod mesh;
 pub mod physics;
