@@ -585,12 +585,6 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
     let cube = renderer.upload_mesh(gpu, &Mesh::cube());
     let sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.5, 16, 32));
 
-    let grid_tex = renderer.checkerboard_texture(gpu, 512, 32);
-    let grid_mat = renderer.upload_material(
-        gpu,
-        &Material::new([0.25, 0.35, 0.2, 1.0], 0.0, 0.95).with_texture(grid_tex),
-    );
-
     let palette: &[(&str, Material)] = &[
         ("blue", Material::blue_plastic()),
         ("red", Material::red_plastic()),
@@ -636,28 +630,11 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
         default_material: blue,
     });
 
-    // Ground plane — larger than default to accommodate the DotA map (-30..30 range)
-    let g = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
-    world.insert(g, GlobalTransform::default());
-    world.insert(g, MeshRenderer { mesh: plane });
-    world.insert(g, MaterialRef { handle: grid_mat });
-    world.insert(g, euca_physics::PhysicsBody::fixed());
-    world.insert(g, euca_physics::Collider::aabb(40.0, 0.01, 40.0));
-
-    // River — reflective water strip across the center of the map
-    let river_mesh = renderer.upload_mesh(gpu, &Mesh::plane(1.0));
-    let river_mat = renderer.upload_material(
-        gpu,
-        &Material::new([0.15, 0.25, 0.45, 0.85], 0.6, 0.15), // blue, metallic, smooth
-    );
-    let r = world.spawn(LocalTransform({
-        let mut t = Transform::from_translation(Vec3::new(0.0, 0.05, 0.0));
-        t.scale = Vec3::new(70.0, 1.0, 4.0); // wide and narrow
-        t
-    }));
-    world.insert(r, GlobalTransform::default());
-    world.insert(r, MeshRenderer { mesh: river_mesh });
-    world.insert(r, MaterialRef { handle: river_mat });
+    // ── MOBA terrain ────────────────────────────────────────────────────────
+    // Multiple flat quads at different heights with distinct materials form
+    // the DotA 2 map geography: grass base, diagonal river, L-shaped lanes,
+    // and two base areas.
+    spawn_moba_terrain(world, gpu, renderer);
 
     // Directional light — neutral white sun for the DotA arena
     world.spawn(DirectionalLight {
@@ -669,6 +646,172 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
 
     // Trees in jungle areas between L-shaped lanes — defines MOBA map geography
     spawn_tree_lines(world, tree_mesh, tree_mat);
+}
+
+// ── MOBA terrain generation ────────────────────────────────────────────────
+
+/// Spawn a single flat terrain quad entity with the given transform and material.
+fn spawn_terrain_quad(
+    world: &mut World,
+    mesh: MeshHandle,
+    material: MaterialHandle,
+    transform: Transform,
+) -> Entity {
+    let e = world.spawn(LocalTransform(transform));
+    world.insert(e, GlobalTransform::default());
+    world.insert(e, MeshRenderer { mesh });
+    world.insert(e, MaterialRef { handle: material });
+    e
+}
+
+/// Build the full MOBA terrain: grass base, diagonal river, three L-shaped
+/// lanes, and two base areas. Each zone is a separate entity with its own
+/// material so colours distinguish the different map regions.
+fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext, renderer: &mut Renderer) {
+    // Shared unit plane mesh -- each entity scales/rotates/translates it.
+    let unit_plane = renderer.upload_mesh(gpu, &Mesh::plane(1.0));
+
+    // ── Materials ──────────────────────────────────────────────────────────
+    let grass_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.2, 0.5, 0.15, 1.0], 0.0, 0.95), // bright green
+    );
+    let river_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.15, 0.3, 0.6, 0.9], 0.5, 0.15), // blue, slightly metallic
+    );
+    let lane_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.4, 0.35, 0.2, 1.0], 0.0, 0.85), // brown / tan
+    );
+    let base_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.35, 0.35, 0.3, 1.0], 0.0, 0.8), // stone gray
+    );
+    let jungle_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.12, 0.3, 0.1, 1.0], 0.0, 0.95), // darker green
+    );
+
+    // Helper: build a Transform that positions a unit plane as an axis-aligned
+    // rectangle covering [cx - hw, cx + hw] x [cz - hd, cz + hd] at height y.
+    let axis_rect = |cx: f32, cz: f32, half_w: f32, half_d: f32, y: f32| -> Transform {
+        Transform {
+            translation: Vec3::new(cx, y, cz),
+            rotation: Quat::IDENTITY,
+            // plane(1.0) spans -0.5..0.5, so scale by 2*half to get the desired size.
+            scale: Vec3::new(half_w * 2.0, 1.0, half_d * 2.0),
+        }
+    };
+
+    // Helper: diagonal strip centered at (cx, cz), rotated 45 degrees around Y,
+    // with given width and length (measured along the diagonal).
+    let diag_rect = |cx: f32, cz: f32, length: f32, width: f32, y: f32| -> Transform {
+        Transform {
+            translation: Vec3::new(cx, y, cz),
+            rotation: Quat::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), std::f32::consts::FRAC_PI_4),
+            scale: Vec3::new(length, 1.0, width),
+        }
+    };
+
+    // ── 1. Grass base plane ───────────────────────────────────────────────
+    // Covers the full map (-35..35) at y=0. Also carries the physics collider
+    // so click-to-move raycasts can hit the ground.
+    let grass = spawn_terrain_quad(
+        world,
+        unit_plane,
+        grass_mat,
+        axis_rect(0.0, 0.0, 35.0, 35.0, 0.0),
+    );
+    world.insert(grass, euca_physics::PhysicsBody::fixed());
+    world.insert(grass, euca_physics::Collider::aabb(40.0, 0.01, 40.0));
+
+    // ── 2. River ──────────────────────────────────────────────────────────
+    // Diagonal band from bottom-left to top-right, slightly below ground.
+    // Length ~100 (diagonal of 70x70), width 6 units.
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        river_mat,
+        diag_rect(0.0, 0.0, 100.0, 6.0, -0.05),
+    );
+
+    // ── 3. Lane paths ─────────────────────────────────────────────────────
+    let lane_w = 3.0; // half-width of each lane strip
+
+    // Top lane: vertical segment along the left edge, then horizontal along the top.
+    // Vertical: x=-28, z from -25 to +25
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        lane_mat,
+        axis_rect(-28.0, 0.0, lane_w, 25.0, 0.01),
+    );
+    // Horizontal: z=+25, x from -28 to +28
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        lane_mat,
+        axis_rect(0.0, 25.0, 28.0, lane_w, 0.01),
+    );
+
+    // Mid lane: diagonal from bottom-left base to top-right base.
+    // Length ~71 (diagonal of ~50x50), width 5 units.
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        lane_mat,
+        diag_rect(0.0, 0.0, 71.0, 5.0, 0.01),
+    );
+
+    // Bot lane: horizontal along the bottom edge, then vertical along the right.
+    // Horizontal: z=-25, x from -28 to +28
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        lane_mat,
+        axis_rect(0.0, -25.0, 28.0, lane_w, 0.01),
+    );
+    // Vertical: x=+28, z from -25 to +25
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        lane_mat,
+        axis_rect(28.0, 0.0, lane_w, 25.0, 0.01),
+    );
+
+    // ── 4. Base areas ─────────────────────────────────────────────────────
+    // Radiant base: bottom-left corner
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        base_mat,
+        axis_rect(-28.0, -28.0, 7.0, 7.0, 0.01),
+    );
+    // Dire base: top-right corner
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        base_mat,
+        axis_rect(28.0, 28.0, 7.0, 7.0, 0.01),
+    );
+
+    // ── 5. Jungle zones ──────────────────────────────────────────────────
+    // Darker green patches between lanes to distinguish jungle from grass.
+    // Upper-left jungle (Radiant side, between top lane and mid lane)
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        jungle_mat,
+        axis_rect(-12.0, 14.0, 13.0, 8.0, 0.005),
+    );
+    // Lower-right jungle (Dire side, between mid lane and bot lane)
+    spawn_terrain_quad(
+        world,
+        unit_plane,
+        jungle_mat,
+        axis_rect(12.0, -14.0, 13.0, 8.0, 0.005),
+    );
 }
 
 /// Spawn tree entities in the jungle areas between L-shaped lanes.
