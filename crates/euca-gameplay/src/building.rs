@@ -71,14 +71,14 @@ pub struct BuildingStats {
 /// `team` and `lane` are caller-supplied; everything else comes from the type.
 pub fn building_stats(building_type: BuildingType, team: u32, lane: Option<Lane>) -> BuildingStats {
     let (max_hp, armor, attack_damage, attack_range, attack_speed) = match building_type {
-        BuildingType::Tier1Tower => (1800.0, 10.0, Some(110.0), Some(700.0), Some(1.0)),
-        BuildingType::Tier2Tower => (2500.0, 15.0, Some(150.0), Some(700.0), Some(1.0)),
-        BuildingType::Tier3Tower => (2500.0, 22.0, Some(175.0), Some(700.0), Some(1.0)),
-        BuildingType::Tier4Tower => (2600.0, 25.0, Some(195.0), Some(700.0), Some(1.0)),
+        BuildingType::Tier1Tower => (1800.0, 10.0, Some(110.0), Some(7.0), Some(1.0)),
+        BuildingType::Tier2Tower => (2500.0, 15.0, Some(150.0), Some(7.0), Some(1.0)),
+        BuildingType::Tier3Tower => (2500.0, 22.0, Some(175.0), Some(7.0), Some(1.0)),
+        BuildingType::Tier4Tower => (2600.0, 25.0, Some(195.0), Some(7.0), Some(1.0)),
         BuildingType::MeleeBarracks => (2200.0, 13.0, None, None, None),
         BuildingType::RangedBarracks => (1300.0, 5.0, None, None, None),
         BuildingType::Ancient => (4500.0, 15.0, None, None, None),
-        BuildingType::Fountain => (f32::INFINITY, 0.0, Some(300.0), Some(1200.0), Some(0.15)),
+        BuildingType::Fountain => (f32::INFINITY, 0.0, Some(300.0), Some(12.0), Some(0.15)),
         BuildingType::Effigy => (100.0, 0.0, None, None, None),
         BuildingType::Outpost => (0.0, 0.0, None, None, None), // not destroyable
     };
@@ -119,7 +119,7 @@ impl Default for BackdoorProtection {
     fn default() -> Self {
         Self {
             active: true,
-            check_radius: 900.0,
+            check_radius: 9.0,
             damage_reduction: 0.75,
             hp_regen_per_sec: 90.0,
         }
@@ -228,7 +228,7 @@ impl Default for TowerAggro {
         Self {
             current_target: None,
             priority_target: None,
-            aggro_range: 700.0,
+            aggro_range: 7.0,
             aggro_switch_cooldown: 0.0,
         }
     }
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(stats.current_hp, 1800.0);
         assert_eq!(stats.armor, 10.0);
         assert!(stats.attack_damage.is_some());
-        assert_eq!(stats.attack_range, Some(700.0));
+        assert_eq!(stats.attack_range, Some(7.0));
         assert!(stats.is_alive);
     }
 

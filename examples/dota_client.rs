@@ -1303,6 +1303,11 @@ impl DotaClientApp {
         // have a massive delta (30+ seconds of GLB loading). Without this,
         // edge-pan speed * huge_delta drifts the camera hundreds of units.
         self.world.resource_mut::<Time>().unwrap().update();
+
+        // Unlock camera now that loading is complete — enables edge-pan.
+        if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
+            cam.locked = false;
+        }
     }
 
     fn render_frame(&mut self) {
