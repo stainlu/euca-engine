@@ -1312,11 +1312,13 @@ impl DotaClientApp {
                     .map(|lt| lt.0.translation)
             })
         };
+        log::info!("Hero position after load: {:?}", hero_pos);
         if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
             if let Some(pos) = hero_pos {
                 cam.center = pos;
             }
             cam.locked = false;
+            log::info!("Camera centered on hero, unlocked for edge-pan");
         }
     }
 

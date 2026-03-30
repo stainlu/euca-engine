@@ -11,7 +11,9 @@ use crate::skeleton::{Skeleton, parse_skeleton};
 /// 50K vertices is sufficient for high-quality rendering of most game assets
 /// while avoiding the GPU cost of oversized source models (e.g., 280K-vertex
 /// tower GLBs that balloon level load times).
-const AUTO_DECIMATE_VERTEX_THRESHOLD: usize = 50_000;
+// Disabled: QEM decimation on 280K meshes takes longer than just loading them.
+// Re-enable when we have faster simplification or pre-processed assets.
+const AUTO_DECIMATE_VERTEX_THRESHOLD: usize = usize::MAX;
 
 /// Axis-aligned bounding box computed from mesh vertex positions.
 #[derive(Clone, Copy, Debug)]
