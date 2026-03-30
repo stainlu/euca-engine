@@ -96,7 +96,8 @@ pub use combat::{
 pub use data_table::DataTable;
 pub use game_state::{GamePhase, GameState, MatchConfig, ScoreEvent, game_state_system};
 pub use health::{
-    DamageEvent, Dead, DeathEvent, Health, LastAttacker, apply_damage_system, death_check_system,
+    Armor, DamageEvent, Dead, DeathEvent, Health, LastAttacker, MagicResistances,
+    apply_damage_system, death_check_system,
 };
 pub use rules::{
     ActionTarget, GameAction, HealthBelowRule, OnDeathRule, OnPhaseRule, OnScoreRule,

@@ -32,10 +32,14 @@ pub struct Projectile {
     pub elapsed: f32,
     /// Collision radius for hit detection.
     pub radius: f32,
+    /// Damage category (e.g. "physical", "magical", "pure").
+    /// Used to determine [`DamageType`] when the projectile hits.
+    pub category: String,
 }
 
 impl Projectile {
     /// Create a projectile with the given trajectory, damage, and lifetime.
+    /// Defaults to `"physical"` damage category.
     pub fn new(direction: Vec3, speed: f32, damage: f32, lifetime: f32, owner: Entity) -> Self {
         Self {
             direction: direction.normalize(),
@@ -45,7 +49,14 @@ impl Projectile {
             owner,
             elapsed: 0.0,
             radius: 0.5,
+            category: "physical".to_string(),
         }
+    }
+
+    /// Set the damage category (e.g. `"magical"`, `"pure"`).
+    pub fn with_category(mut self, category: impl Into<String>) -> Self {
+        self.category = category.into();
+        self
     }
 }
 
@@ -56,20 +67,29 @@ pub fn projectile_system(world: &mut World, dt: f32) {
     let mut damage_events: Vec<DamageEvent> = Vec::new();
 
     // Collect projectile data
-    let projectiles: Vec<(Entity, Vec3, f32, f32, Entity, Vec3, f32)> = {
+    struct ProjSnapshot {
+        entity: Entity,
+        direction: Vec3,
+        speed: f32,
+        damage: f32,
+        owner: Entity,
+        pos: Vec3,
+        radius: f32,
+        category: String,
+    }
+    let projectiles: Vec<ProjSnapshot> = {
         let query = Query::<(Entity, &Projectile, &LocalTransform)>::new(world);
         query
             .iter()
-            .map(|(e, p, lt)| {
-                (
-                    e,
-                    p.direction,
-                    p.speed,
-                    p.damage,
-                    p.owner,
-                    lt.0.translation,
-                    p.radius,
-                )
+            .map(|(e, p, lt)| ProjSnapshot {
+                entity: e,
+                direction: p.direction,
+                speed: p.speed,
+                damage: p.damage,
+                owner: p.owner,
+                pos: lt.0.translation,
+                radius: p.radius,
+                category: p.category.clone(),
             })
             .collect()
     };
@@ -84,32 +104,37 @@ pub fn projectile_system(world: &mut World, dt: f32) {
             .collect()
     };
 
-    for (proj_entity, direction, speed, damage, owner, pos, radius) in &projectiles {
-        let new_pos = *pos + *direction * (*speed * dt);
+    for proj in &projectiles {
+        let new_pos = proj.pos + proj.direction * (proj.speed * dt);
 
         // Update position
-        if let Some(lt) = world.get_mut::<LocalTransform>(*proj_entity) {
+        if let Some(lt) = world.get_mut::<LocalTransform>(proj.entity) {
             lt.0.translation = new_pos;
         }
 
         // Tick lifetime
-        if let Some(proj) = world.get_mut::<Projectile>(*proj_entity) {
-            proj.elapsed += dt;
-            if proj.elapsed >= proj.lifetime {
-                to_despawn.push(*proj_entity);
+        if let Some(p) = world.get_mut::<Projectile>(proj.entity) {
+            p.elapsed += dt;
+            if p.elapsed >= p.lifetime {
+                to_despawn.push(proj.entity);
                 continue;
             }
         }
 
         // Simple sphere collision with targets
         for (target_entity, target_pos) in &targets {
-            if *target_entity == *owner || *target_entity == *proj_entity {
+            if *target_entity == proj.owner || *target_entity == proj.entity {
                 continue;
             }
             let dist = (new_pos - *target_pos).length();
-            if dist < *radius {
-                damage_events.push(DamageEvent::new(*target_entity, *damage, Some(*owner)));
-                to_despawn.push(*proj_entity);
+            if dist < proj.radius {
+                damage_events.push(DamageEvent::with_category(
+                    *target_entity,
+                    proj.damage,
+                    Some(proj.owner),
+                    proj.category.as_str(),
+                ));
+                to_despawn.push(proj.entity);
                 break;
             }
         }
