@@ -612,14 +612,23 @@ impl Mesh {
 
     /// Procedural tree: cylinder trunk + sphere canopy in one mesh.
     pub fn tree(
-        trunk_radius: f32, trunk_height: f32, trunk_sectors: u32,
-        canopy_radius: f32, canopy_centre_y: f32, canopy_stacks: u32, canopy_sectors: u32,
+        trunk_radius: f32,
+        trunk_height: f32,
+        trunk_sectors: u32,
+        canopy_radius: f32,
+        canopy_centre_y: f32,
+        canopy_stacks: u32,
+        canopy_sectors: u32,
     ) -> Self {
         let mut trunk = Self::cylinder(trunk_radius, trunk_height, trunk_sectors);
         let trunk_offset_y = trunk_height / 2.0;
-        for v in &mut trunk.vertices { v.position[1] += trunk_offset_y; }
+        for v in &mut trunk.vertices {
+            v.position[1] += trunk_offset_y;
+        }
         let mut canopy = Self::sphere(canopy_radius, canopy_stacks, canopy_sectors);
-        for v in &mut canopy.vertices { v.position[1] += canopy_centre_y; }
+        for v in &mut canopy.vertices {
+            v.position[1] += canopy_centre_y;
+        }
         trunk.merge(&canopy);
         trunk
     }
@@ -629,7 +638,6 @@ impl Mesh {
         Self::tree(0.15, 1.5, 8, 0.6, 1.8, 8, 16)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

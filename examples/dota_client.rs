@@ -104,6 +104,21 @@ struct DotaMobaState {
     item_states: HashMap<u32, ItemState>,
 }
 
+// ── Loading phase state machine ──────────────────────────────────────────────
+
+/// Tracks the application lifecycle so the window stays responsive during
+/// level loading. Each phase renders a different screen.
+enum AppPhase {
+    /// Window just opened. Render one frame so the OS shows the window, then
+    /// start loading on the next frame.
+    WaitingToLoad,
+    /// Level JSON parsed and entities created (GLB files loaded from disk).
+    /// GPU mesh uploads happen one per frame so the progress bar animates.
+    Loading { total: usize, loaded: usize },
+    /// All meshes uploaded and post-load setup complete. Normal gameplay.
+    Playing,
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const WINDOW_WIDTH: u32 = 1280;
@@ -1097,7 +1112,7 @@ struct DotaClientApp {
     renderer: Option<Renderer>,
     ui_overlay: Option<UiOverlayRenderer>,
     window_attrs: WindowAttributes,
-    level_loaded: bool,
+    phase: AppPhase,
     /// Entities that had the `Dead` marker last frame — used to detect respawns.
     previously_dead: HashSet<Entity>,
 }
@@ -1155,12 +1170,16 @@ impl DotaClientApp {
             window_attrs: WindowAttributes::default()
                 .with_title("Euca Engine — DotA Client")
                 .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
-            level_loaded: false,
+            phase: AppPhase::WaitingToLoad,
             previously_dead: HashSet::new(),
         }
     }
 
-    fn load_level(&mut self) {
+    /// Phase 1: Parse the level JSON and create all entities. GLB files are
+    /// loaded from disk during `spawn_entity` (the blocking part), and queued
+    /// into `PendingMeshUpload` for incremental GPU upload. Returns the number
+    /// of pending mesh uploads.
+    fn start_loading(&mut self) -> usize {
         let path = "levels/dota.json";
         match std::fs::read_to_string(path) {
             Ok(data) => match serde_json::from_str::<serde_json::Value>(&data) {
@@ -1170,15 +1189,25 @@ impl DotaClientApp {
                 }
                 Err(e) => {
                     log::error!("Invalid level JSON in {path}: {e}");
-                    return;
+                    return 0;
                 }
             },
             Err(e) => {
                 log::error!("Cannot read level file {path}: {e}");
-                return;
+                return 0;
             }
         }
 
+        // Return pending mesh count so the loading phase knows the total.
+        self.world
+            .resource::<euca_agent::routes::PendingMeshUpload>()
+            .map(|p| p.queue.len())
+            .unwrap_or(0)
+    }
+
+    /// Phase 2: Called once all pending mesh uploads are complete. Sets up
+    /// hero template, Roshan, navmesh, camera, and starts the game.
+    fn finish_loading(&mut self) {
         // Initialize Roshan manager — find the Roshan entity loaded from the level
         // (team 0 structure with combat, at the pit location).
         {
@@ -1308,7 +1337,8 @@ impl DotaClientApp {
         let hero_pos = {
             let q = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(&self.world);
             q.iter().next().and_then(|(e, _)| {
-                self.world.get::<euca_scene::LocalTransform>(e)
+                self.world
+                    .get::<euca_scene::LocalTransform>(e)
                     .map(|lt| lt.0.translation)
             })
         };
@@ -1323,6 +1353,106 @@ impl DotaClientApp {
     }
 
     fn render_frame(&mut self) {
+        // Take current phase to allow mutation during the match.
+        let phase = std::mem::replace(&mut self.phase, AppPhase::Playing);
+        match phase {
+            AppPhase::WaitingToLoad => {
+                // First frame: render a loading screen so the window is visible,
+                // then parse the level JSON and load GLB files from disk.
+                // The GLB I/O blocks (~48s) but at least the window shows
+                // "Loading..." before the freeze.
+                self.render_loading_screen(0, 1);
+                log::info!("Loading screen displayed, starting level load...");
+                let total = self.start_loading();
+                log::info!("Level entities created, {total} meshes pending GPU upload");
+                self.phase = AppPhase::Loading { total, loaded: 0 };
+            }
+            AppPhase::Loading { total, mut loaded } => {
+                // Upload one pending mesh per frame so the progress bar animates.
+                let gpu = self.gpu.as_ref().unwrap();
+                let renderer = self.renderer.as_mut().unwrap();
+                let did_upload = euca_agent::routes::drain_one_pending_mesh_upload(
+                    &mut self.world,
+                    renderer,
+                    gpu,
+                );
+                if did_upload {
+                    loaded += 1;
+                }
+                self.render_loading_screen(loaded, total);
+
+                // Check if all done.
+                let pending_empty = self
+                    .world
+                    .resource::<euca_agent::routes::PendingMeshUpload>()
+                    .map(|p| p.queue.is_empty())
+                    .unwrap_or(true);
+                if pending_empty {
+                    log::info!("All meshes uploaded, finishing level setup...");
+                    self.finish_loading();
+                    self.phase = AppPhase::Playing;
+                } else {
+                    self.phase = AppPhase::Loading { total, loaded };
+                }
+            }
+            AppPhase::Playing => {
+                self.gameplay_frame();
+                self.phase = AppPhase::Playing;
+            }
+        }
+    }
+
+    /// Render the loading screen: dark background with a centered progress bar.
+    fn render_loading_screen(&mut self, loaded: usize, total: usize) {
+        let gpu = self.gpu.as_ref().unwrap();
+        let output = match gpu.surface.get_current_texture() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("loading frame"),
+            });
+
+        // Clear to dark background using the 3D renderer (no draw commands).
+        let camera = self.world.resource::<Camera>().unwrap().clone();
+        let light = DirectionalLight::default();
+        let ambient = AmbientLight {
+            color: [0.0, 0.0, 0.0],
+            intensity: 0.0,
+        };
+        let renderer = self.renderer.as_mut().unwrap();
+        renderer.render_to_view_with_lights(
+            gpu,
+            &camera,
+            &light,
+            &ambient,
+            &[], // no draw commands
+            &[], // no point lights
+            &[], // no spot lights
+            &view,
+            &mut encoder,
+        );
+
+        // Build progress bar UI quads.
+        let vw = gpu.surface_config.width as f32;
+        let vh = gpu.surface_config.height as f32;
+        let quads = build_loading_screen_quads(loaded, total, vw, vh);
+        if let Some(ui) = self.ui_overlay.as_mut() {
+            ui.render(&*gpu, &mut encoder, &view, &quads, vw, vh);
+        }
+
+        gpu.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+    }
+
+    /// Full gameplay frame: run all ECS systems, then render the 3D scene
+    /// with the HUD overlay.
+    fn gameplay_frame(&mut self) {
         self.world.resource_mut::<Time>().unwrap().update();
 
         let dt = self.world.resource::<Time>().map(|t| t.delta).unwrap_or(DT);
@@ -1550,6 +1680,122 @@ impl DotaClientApp {
         gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
+}
+
+// ── Loading screen ──────────────────────────────────────────────────────────
+
+/// Build UI quads for the loading screen: a centered progress bar that fills
+/// from left to right as meshes are uploaded to the GPU.
+fn build_loading_screen_quads(loaded: usize, total: usize, vw: f32, vh: f32) -> Vec<UiQuad> {
+    let mut quads = Vec::new();
+
+    // Full-screen dark background.
+    quads.push(UiQuad {
+        x: 0.0,
+        y: 0.0,
+        w: vw,
+        h: vh,
+        color: [0.05, 0.05, 0.08, 1.0],
+    });
+
+    // Title bar — a colored accent stripe near the top-center.
+    let title_w = 300.0;
+    let title_h = 6.0;
+    let title_x = (vw - title_w) * 0.5;
+    let title_y = vh * 0.35;
+    quads.push(UiQuad {
+        x: title_x,
+        y: title_y,
+        w: title_w,
+        h: title_h,
+        color: [0.3, 0.6, 1.0, 0.9],
+    });
+
+    // Progress bar background (dark gray).
+    let bar_w = vw * 0.5;
+    let bar_h = 24.0;
+    let bar_x = (vw - bar_w) * 0.5;
+    let bar_y = vh * 0.5 - bar_h * 0.5;
+    quads.push(UiQuad {
+        x: bar_x,
+        y: bar_y,
+        w: bar_w,
+        h: bar_h,
+        color: [0.15, 0.15, 0.18, 1.0],
+    });
+
+    // Progress bar fill (green, proportional to loaded/total).
+    let progress = if total > 0 {
+        loaded as f32 / total as f32
+    } else {
+        0.0
+    };
+    let fill_w = bar_w * progress;
+    if fill_w > 0.0 {
+        quads.push(UiQuad {
+            x: bar_x,
+            y: bar_y,
+            w: fill_w,
+            h: bar_h,
+            color: [0.2, 0.8, 0.3, 1.0],
+        });
+    }
+
+    // Progress bar border (thin outline around the bar).
+    let border = 2.0;
+    // Top edge
+    quads.push(UiQuad {
+        x: bar_x - border,
+        y: bar_y - border,
+        w: bar_w + border * 2.0,
+        h: border,
+        color: [0.3, 0.3, 0.35, 1.0],
+    });
+    // Bottom edge
+    quads.push(UiQuad {
+        x: bar_x - border,
+        y: bar_y + bar_h,
+        w: bar_w + border * 2.0,
+        h: border,
+        color: [0.3, 0.3, 0.35, 1.0],
+    });
+    // Left edge
+    quads.push(UiQuad {
+        x: bar_x - border,
+        y: bar_y,
+        w: border,
+        h: bar_h,
+        color: [0.3, 0.3, 0.35, 1.0],
+    });
+    // Right edge
+    quads.push(UiQuad {
+        x: bar_x + bar_w,
+        y: bar_y,
+        w: border,
+        h: bar_h,
+        color: [0.3, 0.3, 0.35, 1.0],
+    });
+
+    // Small "counter" bar below the progress bar — width proportional to count,
+    // giving a visual hint of how many items are done even without text.
+    let counter_h = 8.0;
+    let counter_y = bar_y + bar_h + 12.0;
+    let max_dot_w = 6.0;
+    let dot_gap = 2.0;
+    let dots_to_show = loaded.min(50); // cap visual dots at 50
+    let total_dots_w = dots_to_show as f32 * (max_dot_w + dot_gap);
+    let dots_start_x = (vw - total_dots_w) * 0.5;
+    for i in 0..dots_to_show {
+        quads.push(UiQuad {
+            x: dots_start_x + i as f32 * (max_dot_w + dot_gap),
+            y: counter_y,
+            w: max_dot_w,
+            h: counter_h,
+            color: [0.3, 0.7, 0.4, 0.6],
+        });
+    }
+
+    quads
 }
 
 /// Map a `CreepType` to the string tag used in procedural mesh names.
@@ -3734,17 +3980,14 @@ impl ApplicationHandler for DotaClientApp {
         self.ui_overlay = Some(ui_overlay);
         self.initialized = true;
 
-        // Upload meshes, materials, and create the ground plane + light
+        // Upload meshes, materials, and create the ground plane + light.
+        // Level loading is deferred to the first render_frame (WaitingToLoad
+        // phase) so the window is visible before the blocking GLB I/O starts.
         setup_default_assets(
             &mut self.world,
             self.gpu.as_ref().unwrap(),
             self.renderer.as_mut().unwrap(),
         );
-
-        if !self.level_loaded {
-            self.load_level();
-            self.level_loaded = true;
-        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {

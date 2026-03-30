@@ -458,6 +458,82 @@ pub fn drain_pending_mesh_uploads(
     }
 }
 
+/// Upload a single pending mesh from the queue.
+///
+/// Removes the first entry from `PendingMeshUpload`, uploads it to the GPU,
+/// attaches `MeshRenderer` + `MaterialRef` to the entity, and caches the
+/// handle in `MeshCache`. Returns `true` if an entry was processed.
+///
+/// Use this for incremental loading (one mesh per frame) to keep the window
+/// responsive during level load.
+pub fn drain_one_pending_mesh_upload(
+    w: &mut euca_ecs::World,
+    renderer: &mut euca_render::Renderer,
+    gpu: &euca_render::GpuContext,
+) -> bool {
+    let entry = match w.resource_mut::<PendingMeshUpload>() {
+        Some(pending) if !pending.queue.is_empty() => pending.queue.remove(0),
+        _ => return false,
+    };
+
+    // Ensure MeshCache resource exists.
+    if w.resource::<MeshCache>().is_none() {
+        w.insert_resource(MeshCache::default());
+    }
+
+    // Check cache first (another call may have already uploaded this path).
+    let cached = w
+        .resource::<MeshCache>()
+        .and_then(|c| c.meshes.get(&entry.path).copied());
+
+    let handle = if let Some(h) = cached {
+        h
+    } else {
+        let h = renderer.upload_mesh(gpu, &entry.mesh);
+        if let Some(cache) = w.resource_mut::<MeshCache>() {
+            cache.meshes.insert(entry.path.clone(), h);
+        }
+        h
+    };
+
+    // Only attach MeshRenderer + MaterialRef if the entity is still alive.
+    if w.is_alive(entry.entity) {
+        w.insert(entry.entity, euca_render::MeshRenderer { mesh: handle });
+
+        if let Some(offset) = entry.ground_offset {
+            w.insert(entry.entity, euca_render::GroundOffset(offset));
+        }
+
+        let mat_handle = if let Some(ref mat) = entry.material {
+            let mut uploaded_mat = mat.clone();
+            if let Some(tex_idx) = entry.albedo_tex_index
+                && let Some(img) = entry.images.get(tex_idx)
+            {
+                let tex_handle = renderer.upload_texture(gpu, img.width, img.height, &img.pixels);
+                uploaded_mat.albedo_texture = Some(tex_handle);
+            }
+            Some(renderer.upload_material(gpu, &uploaded_mat))
+        } else {
+            None
+        };
+
+        if let Some(mh) = mat_handle {
+            w.insert(entry.entity, euca_render::MaterialRef { handle: mh });
+        } else if w.get::<euca_render::MaterialRef>(entry.entity).is_none()
+            && let Some(assets) = w.resource::<DefaultAssets>()
+        {
+            w.insert(
+                entry.entity,
+                euca_render::MaterialRef {
+                    handle: assets.default_material,
+                },
+            );
+        }
+    }
+
+    true
+}
+
 /// Named entity templates for quick spawning. Stored as World resource.
 #[derive(Clone, Default)]
 pub struct TemplateRegistry {
