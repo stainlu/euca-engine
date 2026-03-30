@@ -11,10 +11,12 @@ use std::collections::HashMap;
 use euca_core::Time;
 use euca_ecs::{Entity, Events, Query, World};
 use euca_gameplay::camera::{MobaCamera, ScreenSize};
+use euca_gameplay::creep_wave::{Lane, LaneConfig, LaneWaypoints, WaveSpawner};
 use euca_gameplay::player_input::ViewportSize;
 use euca_gameplay::{
-    AbilityDef, AbilityEffect, AbilitySlot, GameState, HeroDef, HeroName, HeroRegistry, ItemDef,
-    ItemRegistry,
+    AbilityDef, AbilityEffect, AbilitySlot, DayNightCycle, Fortification, GameState, HeroDef,
+    HeroName, HeroRegistry, ItemDef, ItemRegistry, ItemState, Roshan, VisionMap, VisionSource,
+    WardStock,
 };
 use euca_math::{Mat4, Transform, Vec3};
 use euca_physics::PhysicsConfig;
@@ -27,6 +29,34 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{WindowAttributes, WindowId};
 
+// ── MOBA gameplay state (fog, items, roshan, wards, waves) ──────────────────
+
+/// Bundles all DotA-specific gameplay subsystems that are pure data + logic
+/// (not ECS systems). Stored as a single World resource and driven each tick.
+struct DotaMobaState {
+    /// Per-team fog of war vision grids.
+    vision_t1: VisionMap,
+    vision_t2: VisionMap,
+    /// Day/night cycle controlling vision radii and lighting.
+    day_night: DayNightCycle,
+    /// Ward stock per team (restock timers, counts).
+    ward_stock_t1: WardStock,
+    ward_stock_t2: WardStock,
+    /// Placed wards on the map.
+    wards: Vec<euca_gameplay::Ward>,
+    /// Roshan boss state.
+    roshan: Roshan,
+    /// Aegis (if dropped and not yet consumed/expired).
+    aegis: Option<euca_gameplay::Aegis>,
+    /// Per-team fortification (glyph).
+    fort_t1: Fortification,
+    fort_t2: Fortification,
+    /// Creep wave spawner (3-lane).
+    wave_spawner: WaveSpawner,
+    /// Per-hero item active state, keyed by entity index.
+    item_states: HashMap<u32, ItemState>,
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const WINDOW_WIDTH: u32 = 1280;
@@ -37,6 +67,69 @@ const DT: f32 = 1.0 / 60.0;
 
 // NOTE: No hardcoded entity indices. All entities are found by their
 // ECS components (PlayerHero, Team, EntityRole, etc.), not by creation order.
+
+impl DotaMobaState {
+    fn new() -> Self {
+        // 128x128 grid, 1 world-unit per cell — covers the -35..35 map range.
+        let vision_t1 = VisionMap::new(1, 128, 128, 1.0);
+        let vision_t2 = VisionMap::new(2, 128, 128, 1.0);
+
+        // Three-lane wave spawner with standard DotA layout.
+        let lanes = vec![
+            LaneConfig {
+                lane: Lane::Top,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Top,
+                    points: vec![
+                        Vec3::new(-28.0, 0.0, 20.0),
+                        Vec3::new(0.0, 0.0, 20.0),
+                        Vec3::new(28.0, 0.0, 20.0),
+                    ],
+                },
+                barracks_destroyed: false,
+            },
+            LaneConfig {
+                lane: Lane::Mid,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Mid,
+                    points: vec![
+                        Vec3::new(-28.0, 0.0, 0.0),
+                        Vec3::new(0.0, 0.0, 0.0),
+                        Vec3::new(28.0, 0.0, 0.0),
+                    ],
+                },
+                barracks_destroyed: false,
+            },
+            LaneConfig {
+                lane: Lane::Bot,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Bot,
+                    points: vec![
+                        Vec3::new(-28.0, 0.0, -20.0),
+                        Vec3::new(0.0, 0.0, -20.0),
+                        Vec3::new(28.0, 0.0, -20.0),
+                    ],
+                },
+                barracks_destroyed: false,
+            },
+        ];
+
+        Self {
+            vision_t1,
+            vision_t2,
+            day_night: DayNightCycle::new(),
+            ward_stock_t1: WardStock::new(),
+            ward_stock_t2: WardStock::new(),
+            wards: Vec::new(),
+            roshan: euca_gameplay::spawn_roshan(0.0),
+            aegis: None,
+            fort_t1: Fortification::default(),
+            fort_t2: Fortification::default(),
+            wave_spawner: WaveSpawner::new(lanes),
+            item_states: HashMap::new(),
+        }
+    }
+}
 
 // ── Item definitions (same as dota.sh) ──────────────────────────────────────
 
@@ -521,6 +614,9 @@ impl DotaClientApp {
         world.insert_resource(define_items());
         world.insert_resource(define_heroes());
 
+        // Initialize DotA MOBA gameplay state (fog, wards, roshan, waves, items)
+        world.insert_resource(DotaMobaState::new());
+
         Self {
             world,
             initialized: false,
@@ -566,6 +662,18 @@ impl DotaClientApp {
                 "Applied Juggernaut template to player hero (entity {})",
                 hero.index()
             );
+
+            // Initialize item active state for this hero (6 main inventory slots).
+            if let Some(moba) = self.world.resource_mut::<DotaMobaState>() {
+                moba.item_states.insert(
+                    hero.index(),
+                    ItemState {
+                        actives: vec![None; 6],
+                        charges: vec![None; 6],
+                        ..Default::default()
+                    },
+                );
+            }
 
             // Read the hero's position for camera initialization.
             // Use LocalTransform (source of truth from level JSON), NOT GlobalTransform
@@ -709,6 +817,9 @@ impl DotaClientApp {
         euca_gameplay::ability_tick_system(&mut self.world, dt);
         euca_gameplay::use_ability_system(&mut self.world);
 
+        // ── MOBA subsystems (fog, CC, items, roshan, wards, waves) ───────
+        moba_subsystems_tick(&mut self.world, dt);
+
         // Navigation
         euca_nav::pathfinding_system(&mut self.world);
         euca_nav::steering_system(&mut self.world, dt);
@@ -819,6 +930,123 @@ impl DotaClientApp {
     }
 }
 
+/// Tick all DotA MOBA subsystems that are driven by pure data + logic
+/// (not ECS-native systems). Reads/writes ECS components as needed.
+fn moba_subsystems_tick(world: &mut World, dt: f32) {
+    // Borrow the moba state. We take it out temporarily to avoid holding
+    // a mutable borrow on World while we also need to query components.
+    let Some(mut moba) = world.remove_resource::<DotaMobaState>() else {
+        return;
+    };
+
+    // ── 1. Day/night cycle ───────────────────────────────────────────
+    moba.day_night.tick(dt);
+
+    // ── 2. Crowd control tick — expire CC durations on all entities ──
+    {
+        let entities_with_cc: Vec<Entity> = {
+            let q = Query::<(Entity, &euca_gameplay::CcState)>::new(world);
+            q.iter().map(|(e, _)| e).collect()
+        };
+        for entity in entities_with_cc {
+            if let Some(cc) = world.get_mut::<euca_gameplay::CcState>(entity) {
+                cc.remove_expired(dt);
+            }
+        }
+    }
+
+    // ── 3. Fog of war — collect vision sources and update maps ───────
+    {
+        let vision_mult = moba.day_night.vision_multiplier();
+
+        let mut sources_t1 = Vec::new();
+        let mut sources_t2 = Vec::new();
+
+        // Heroes and structures provide vision.
+        let query_data: Vec<(Vec3, u8)> = {
+            let q = Query::<(&GlobalTransform, &euca_gameplay::Team)>::new(world);
+            q.iter().map(|(gt, t)| (gt.0.translation, t.0)).collect()
+        };
+        for (pos, team) in &query_data {
+            // Base vision radius 12 units, modulated by day/night.
+            let radius = 12.0 * vision_mult;
+            // Vision map uses 2D (x, z) mapped to positive grid coordinates.
+            // Offset by 35 so that world x=-35 maps to grid x=0 (128 cells cover 0..128).
+            let src = VisionSource {
+                team: *team as u32,
+                position: [pos.x + 64.0, pos.z + 64.0],
+                radius,
+                provides_true_sight: false,
+            };
+            match team {
+                1 => sources_t1.push(src),
+                2 => sources_t2.push(src),
+                _ => {}
+            }
+        }
+
+        // Wards provide vision.
+        for ward in &moba.wards {
+            let src = VisionSource {
+                team: ward.team,
+                position: [ward.position[0] + 64.0, ward.position[1] + 64.0],
+                radius: ward.vision_radius * vision_mult,
+                provides_true_sight: ward.true_sight_radius > 0.0,
+            };
+            match ward.team {
+                1 => sources_t1.push(src),
+                2 => sources_t2.push(src),
+                _ => {}
+            }
+        }
+
+        euca_gameplay::update_vision(&mut moba.vision_t1, &sources_t1);
+        euca_gameplay::update_vision(&mut moba.vision_t2, &sources_t2);
+    }
+
+    // ── 4. Ward tick — count down durations, remove expired ──────────
+    euca_gameplay::tick_wards(&mut moba.wards, dt);
+    euca_gameplay::tick_ward_stock(&mut moba.ward_stock_t1, dt);
+    euca_gameplay::tick_ward_stock(&mut moba.ward_stock_t2, dt);
+
+    // ── 5. Item active cooldowns and charges — tick per hero ─────────
+    for item_state in moba.item_states.values_mut() {
+        euca_gameplay::tick_cooldowns(item_state, dt);
+        euca_gameplay::tick_charges(item_state, dt);
+    }
+
+    // ── 6. Roshan tick — respawn timer ───────────────────────────────
+    let game_elapsed = world
+        .resource::<GameState>()
+        .map(|gs| gs.elapsed)
+        .unwrap_or(0.0);
+    if euca_gameplay::tick_roshan(&mut moba.roshan, dt) {
+        euca_gameplay::respawn_roshan(&mut moba.roshan, game_elapsed / 60.0);
+        log::info!("Roshan has respawned!");
+    }
+
+    // ── 7. Aegis tick — expire if 5 minutes elapsed ─────────────────
+    if let Some(aegis) = &mut moba.aegis {
+        if euca_gameplay::tick_aegis(aegis, dt) {
+            log::info!("Aegis has expired");
+            moba.aegis = None;
+        }
+    }
+
+    // ── 8. Fortification tick ────────────────────────────────────────
+    euca_gameplay::tick_fortification(&mut moba.fort_t1, dt);
+    euca_gameplay::tick_fortification(&mut moba.fort_t2, dt);
+
+    // ── 9. Creep wave spawner tick ───────────────────────────────────
+    let _wave_events = moba.wave_spawner.tick(dt);
+    // Wave events are consumed by the existing timer-rule minion system
+    // in the level JSON. The spawner here tracks wave state for future
+    // integration with the creep_wave module's composition logic.
+
+    // Return the state to the world.
+    world.insert_resource(moba);
+}
+
 /// Collect draw commands for all alive renderable entities.
 fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
     let query = Query::<(Entity, &GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
@@ -834,17 +1062,28 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
         .collect()
 }
 
-/// Day/night cycle: slowly oscillate lighting over a 4-minute cycle.
+/// Day/night cycle: modulate lighting based on the DayNightCycle in DotaMobaState.
 /// Also applies subtle Radiant vs Dire color grading based on camera position.
 fn day_night_system(world: &mut World, _dt: f32) {
-    let elapsed = world
-        .resource::<euca_gameplay::GameState>()
-        .map(|gs| gs.elapsed)
-        .unwrap_or(0.0);
-
-    // 5-minute day/night cycle (300 seconds), starts at full day
-    let cycle = (elapsed / 300.0 * std::f32::consts::TAU + std::f32::consts::FRAC_PI_2).sin();
-    let day_factor = cycle * 0.5 + 0.5; // 0 (night) to 1 (day), starts at 1.0
+    // Use the authoritative DayNightCycle from the MOBA state.
+    let day_factor = world
+        .resource::<DotaMobaState>()
+        .map(|moba| {
+            if moba.day_night.is_day() {
+                // Smooth transition within the day portion (full bright at midday).
+                let progress = moba.day_night.current_time / moba.day_night.day_duration;
+                // Bell curve: peak at 0.5, min at edges.
+                let t = (progress * std::f32::consts::PI).sin();
+                0.5 + 0.5 * t
+            } else {
+                // Night: dim lighting, smooth transition.
+                let night_elapsed = moba.day_night.current_time - moba.day_night.day_duration;
+                let progress = night_elapsed / moba.day_night.night_duration;
+                let t = (progress * std::f32::consts::PI).sin();
+                0.5 - 0.35 * t // 0.15 at deepest night, 0.5 at transitions
+            }
+        })
+        .unwrap_or(1.0);
 
     // Interpolate directional light — subtle variation, never too dark
     let query_entities: Vec<Entity> = {
@@ -1160,6 +1399,55 @@ fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQua
             w: bar_w * fill,
             h: bar_h,
             color: [0.2, 0.4, 1.0, 0.9],
+        });
+    }
+
+    // ── Day/night indicator (top-right) ──
+    if let Some(moba) = world.resource::<DotaMobaState>() {
+        let indicator_size = 20.0;
+        let ix = viewport_w - indicator_size - 20.0;
+        let iy = 20.0;
+
+        // Day = bright yellow circle, Night = dark blue circle
+        let color = if moba.day_night.is_day() {
+            [1.0, 0.9, 0.3, 0.9] // sun yellow
+        } else {
+            [0.15, 0.15, 0.5, 0.9] // moon blue
+        };
+        quads.push(UiQuad {
+            x: ix,
+            y: iy,
+            w: indicator_size,
+            h: indicator_size,
+            color,
+        });
+
+        // Ward count bar (below day/night indicator) — shows observer wards remaining
+        let ward_bar_y = iy + indicator_size + 8.0;
+        let ward_bar_w = 60.0;
+        let ward_bar_h = 8.0;
+
+        // Background
+        quads.push(UiQuad {
+            x: ix - (ward_bar_w - indicator_size),
+            y: ward_bar_y,
+            w: ward_bar_w,
+            h: ward_bar_h,
+            color: [0.1, 0.1, 0.1, 0.7],
+        });
+
+        // Fill: proportion of observer wards in stock (player team = 1)
+        let obs_fill = if moba.ward_stock_t1.observer_max > 0 {
+            moba.ward_stock_t1.observer_count as f32 / moba.ward_stock_t1.observer_max as f32
+        } else {
+            0.0
+        };
+        quads.push(UiQuad {
+            x: ix - (ward_bar_w - indicator_size),
+            y: ward_bar_y,
+            w: ward_bar_w * obs_fill,
+            h: ward_bar_h,
+            color: [0.3, 0.9, 0.3, 0.8], // green for observer wards
         });
     }
 

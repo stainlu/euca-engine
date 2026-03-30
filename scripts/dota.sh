@@ -192,6 +192,46 @@ if [ -n "$HERO_T2" ]; then
 fi
 echo "  Heroes: Juggernaut (id=$HERO_T1) vs Sven (id=$HERO_T2)"
 
+# ── 3c. Hero attribute definitions (STR/AGI/INT base + growth) ──
+echo "Setting hero attributes..."
+# Juggernaut: Agility hero
+if [ -n "$HERO_T1" ]; then
+  curl -s -X POST "${SERVER}/entity/${HERO_T1}/component" \
+    -H 'Content-Type: application/json' \
+    -d '{"HeroAttributes": {
+      "primary": "Agility",
+      "base": {"strength": 20.0, "agility": 34.0, "intelligence": 14.0},
+      "growth": {"strength": 2.2, "agility": 2.8, "intelligence": 1.4},
+      "timings": {"base_attack_time": 1.4, "attack_point": 0.33, "turn_rate": 0.6, "projectile_speed": 0}
+    }}'
+  echo ""
+fi
+# Sven: Strength hero
+if [ -n "$HERO_T2" ]; then
+  curl -s -X POST "${SERVER}/entity/${HERO_T2}/component" \
+    -H 'Content-Type: application/json' \
+    -d '{"HeroAttributes": {
+      "primary": "Strength",
+      "base": {"strength": 22.0, "agility": 21.0, "intelligence": 16.0},
+      "growth": {"strength": 3.2, "agility": 2.0, "intelligence": 1.3},
+      "timings": {"base_attack_time": 1.8, "attack_point": 0.4, "turn_rate": 0.6, "projectile_speed": 0}
+    }}'
+  echo ""
+fi
+echo "  Hero attributes set."
+
+# ── 3d. Initialize match state (Roshan, day/night, wards) ──
+echo "Initializing MOBA subsystems..."
+
+# Spawn Roshan at pit location (near center, slightly dire-side)
+$E entity create --mesh assets/generated/roshan.glb --position=8,0.5,0 --scale 1.5,1.5,1.5 --color orange --health 6000 --physics Kinematic --combat --combat-damage 75 --combat-range 3 --combat-speed 2 --combat-cooldown 2.0 --gold-bounty 225 --xp-bounty 400 2>/dev/null
+echo "  Roshan spawned at pit."
+
+# Day/night cycle and ward stock are initialized in-engine by DotaMobaState;
+# the shell script sets up the entity world, the client code handles the rest.
+echo "  Day/night cycle: 5m day / 5m night (managed by engine)"
+echo "  Ward stock: 2 observers, 3 sentries per team (managed by engine)"
+
 # ── 4. Spawn neutral jungle camps ──
 echo "Spawning neutral camps..."
 
@@ -249,4 +289,8 @@ echo "  Team 1 (Radiant) — cyan, base at x=-30"
 echo "  Team 2 (Dire)    — red,  base at x=+30"
 echo "  3 lanes (top z=20, mid z=0, bot z=-20)"
 echo "  12 towers, 6 neutral camps, minion waves every 30s"
+echo "  Roshan at (8, 0) — drops Aegis, Cheese, Refresher Shard"
+echo "  Day/night cycle: 5m day / 5m night (affects vision range)"
+echo "  Wards: observer (6m, 1600 vision) + sentry (4m, 900 true sight)"
+echo "  Hero attributes: STR/AGI/INT with per-level growth"
 echo "  Destroy the enemy Ancient to win!"
