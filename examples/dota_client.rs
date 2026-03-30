@@ -30,6 +30,52 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{WindowAttributes, WindowId};
 
+// ── Visual Effects ───────────────────────────────────────────────────────────
+
+/// What kind of visual effect to display.
+#[derive(Clone, Debug)]
+enum VfxKind {
+    /// A sphere that lerps from `from` to `to` over its lifetime, then despawns.
+    Projectile {
+        from: Vec3,
+        to: Vec3,
+        color: [f32; 4],
+    },
+    /// A flat disc that expands from 0 to `max_radius` over its lifetime, then fades.
+    AreaCircle {
+        center: Vec3,
+        max_radius: f32,
+        color: [f32; 4],
+    },
+    /// A small sphere that rises upward and fades.
+    FloatingRise { origin: Vec3, color: [f32; 4] },
+    /// A brief flash at a position (melee hit).
+    MeleeSlash { position: Vec3 },
+}
+
+/// Component attached to VFX entities to drive their animation.
+#[derive(Clone, Debug)]
+struct VisualEffect {
+    kind: VfxKind,
+    /// Total time this effect should live (seconds).
+    lifetime: f32,
+    /// Time elapsed since spawn.
+    elapsed: f32,
+}
+
+/// Pre-uploaded GPU handles for VFX meshes and materials.
+#[derive(Clone)]
+struct VfxAssets {
+    sphere_mesh: MeshHandle,
+    disc_mesh: MeshHandle,
+    mat_white: MaterialHandle,
+    mat_yellow: MaterialHandle,
+    mat_red: MaterialHandle,
+    mat_green: MaterialHandle,
+    mat_blue: MaterialHandle,
+    mat_cyan: MaterialHandle,
+}
+
 // ── MOBA gameplay state (fog, items, roshan, wards, waves) ──────────────────
 
 /// Bundles all DotA-specific gameplay subsystems that are pure data + logic
@@ -745,6 +791,24 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
 
     // Trees in jungle areas between L-shaped lanes — defines MOBA map geography
     spawn_tree_lines(world, tree_mesh, tree_mat);
+
+    // VFX assets — small sphere for projectiles, flat disc for area effects.
+    // Materials are bright emissive-style (low roughness, full saturation).
+    let vfx_sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.2, 8, 16));
+    let vfx_disc = renderer.upload_mesh(gpu, &Mesh::disc(1.0, 24));
+    let mut vfx_mat =
+        |color: [f32; 4]| renderer.upload_material(gpu, &Material::new(color, 0.0, 0.2));
+
+    world.insert_resource(VfxAssets {
+        sphere_mesh: vfx_sphere,
+        disc_mesh: vfx_disc,
+        mat_white: vfx_mat([1.0, 1.0, 1.0, 1.0]),
+        mat_yellow: vfx_mat([1.0, 0.9, 0.2, 1.0]),
+        mat_red: vfx_mat([1.0, 0.2, 0.1, 1.0]),
+        mat_green: vfx_mat([0.2, 1.0, 0.3, 1.0]),
+        mat_blue: vfx_mat([0.3, 0.5, 1.0, 1.0]),
+        mat_cyan: vfx_mat([0.2, 0.9, 1.0, 1.0]),
+    });
 }
 
 // ── MOBA terrain generation ────────────────────────────────────────────────
@@ -1319,6 +1383,10 @@ impl DotaClientApp {
         euca_gameplay::ability_tick_system(&mut self.world, dt);
         euca_gameplay::use_ability_system(&mut self.world);
 
+        // Visual effects: spawn VFX from combat/ability events, then animate.
+        vfx_spawn_system(&mut self.world);
+        vfx_tick_system(&mut self.world, dt);
+
         // ── MOBA subsystems (fog, CC, items, roshan, wards, waves) ───────
         moba_subsystems_tick(&mut self.world, dt);
 
@@ -1729,6 +1797,343 @@ fn tick_respawn_animations(world: &mut World, dt: f32) {
 fn collect_dead_entities(world: &World) -> HashSet<Entity> {
     let query = Query::<(Entity, &euca_gameplay::Dead)>::new(world);
     query.iter().map(|(e, _)| e).collect()
+}
+
+// ── Visual Effect Systems ────────────────────────────────────────────────────
+
+/// Scan for combat `DamageEvent`s and `UseAbilityEvent`s emitted this frame
+/// and spawn corresponding `VisualEffect` entities with meshes and materials.
+fn vfx_spawn_system(world: &mut World) {
+    let Some(vfx) = world.resource::<VfxAssets>().cloned() else {
+        return;
+    };
+
+    // ── 1. Combat damage VFX (auto-attack projectiles / melee flashes) ──────
+
+    let damage_events: Vec<euca_gameplay::DamageEvent> = world
+        .resource::<Events>()
+        .map(|e| e.read::<euca_gameplay::DamageEvent>().cloned().collect())
+        .unwrap_or_default();
+
+    for dmg in &damage_events {
+        let Some(source) = dmg.source else {
+            continue;
+        };
+        // Determine source and target positions.
+        let source_pos = world
+            .get::<LocalTransform>(source)
+            .map(|lt| lt.0.translation);
+        let target_pos = world
+            .get::<LocalTransform>(dmg.target)
+            .map(|lt| lt.0.translation);
+        let (Some(src_pos), Some(tgt_pos)) = (source_pos, target_pos) else {
+            continue;
+        };
+
+        // Decide VFX based on attacker properties.
+        let attack_style = world
+            .get::<euca_gameplay::AutoCombat>(source)
+            .map(|ac| ac.attack_style);
+        let attack_range = world
+            .get::<euca_gameplay::AutoCombat>(source)
+            .map(|ac| ac.range)
+            .unwrap_or(1.5);
+
+        let is_ranged =
+            attack_style == Some(euca_gameplay::AttackStyle::Stationary) || attack_range > 3.0;
+
+        if is_ranged {
+            // Ranged attack or tower: flying projectile sphere.
+            let team = world
+                .get::<euca_gameplay::Team>(source)
+                .map(|t| t.0)
+                .unwrap_or(0);
+            let color = if team == 1 {
+                [0.2, 0.9, 1.0, 1.0] // Radiant: cyan
+            } else {
+                [1.0, 0.3, 0.1, 1.0] // Dire: red-orange
+            };
+
+            let dist = (tgt_pos - src_pos).length().max(0.1);
+            let speed = 20.0; // units/sec — fast enough to feel snappy
+            let lifetime = dist / speed;
+
+            spawn_vfx_entity(
+                world,
+                &vfx,
+                VisualEffect {
+                    kind: VfxKind::Projectile {
+                        from: Vec3::new(src_pos.x, src_pos.y + 1.0, src_pos.z),
+                        to: Vec3::new(tgt_pos.x, tgt_pos.y + 0.5, tgt_pos.z),
+                        color,
+                    },
+                    lifetime,
+                    elapsed: 0.0,
+                },
+            );
+        } else {
+            // Melee attack: brief flash at target.
+            spawn_vfx_entity(
+                world,
+                &vfx,
+                VisualEffect {
+                    kind: VfxKind::MeleeSlash { position: tgt_pos },
+                    lifetime: 0.2,
+                    elapsed: 0.0,
+                },
+            );
+        }
+    }
+
+    // ── 2. Ability VFX ──────────────────────────────────────────────────────
+
+    let ability_events: Vec<euca_gameplay::UseAbilityEvent> = world
+        .resource::<Events>()
+        .map(|e| {
+            e.read::<euca_gameplay::UseAbilityEvent>()
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for evt in &ability_events {
+        let caster_pos = world
+            .get::<LocalTransform>(evt.entity)
+            .map(|lt| lt.0.translation)
+            .unwrap_or(Vec3::ZERO);
+        let caster_rotation = world
+            .get::<LocalTransform>(evt.entity)
+            .map(|lt| lt.0.rotation)
+            .unwrap_or(euca_math::Quat::IDENTITY);
+
+        // Look up the ability effect for this slot.
+        let effect = world
+            .get::<euca_gameplay::AbilitySet>(evt.entity)
+            .and_then(|set| set.get(evt.slot).map(|a| a.effect.clone()));
+        let Some(effect) = effect else { continue };
+
+        // Walk the effect tree and spawn VFX for visual-worthy effects.
+        spawn_ability_vfx(world, &vfx, &effect, caster_pos, caster_rotation);
+    }
+}
+
+/// Recursively walk an `AbilityEffect` tree and spawn VFX for visual effects.
+fn spawn_ability_vfx(
+    world: &mut World,
+    vfx: &VfxAssets,
+    effect: &AbilityEffect,
+    caster_pos: Vec3,
+    caster_rotation: euca_math::Quat,
+) {
+    match effect {
+        AbilityEffect::AreaDamage { radius, .. } => {
+            spawn_vfx_entity(
+                world,
+                vfx,
+                VisualEffect {
+                    kind: VfxKind::AreaCircle {
+                        center: caster_pos,
+                        max_radius: *radius,
+                        color: [1.0, 0.4, 0.1, 0.7], // fiery orange
+                    },
+                    lifetime: 0.5,
+                    elapsed: 0.0,
+                },
+            );
+        }
+        AbilityEffect::Heal { .. } => {
+            spawn_vfx_entity(
+                world,
+                vfx,
+                VisualEffect {
+                    kind: VfxKind::FloatingRise {
+                        origin: caster_pos,
+                        color: [0.2, 1.0, 0.3, 1.0], // green
+                    },
+                    lifetime: 0.8,
+                    elapsed: 0.0,
+                },
+            );
+        }
+        AbilityEffect::SpawnProjectile { speed, range, .. } => {
+            // Compute facing direction from rotation.
+            let forward = caster_rotation * Vec3::new(0.0, 0.0, 1.0);
+            let from = Vec3::new(caster_pos.x, caster_pos.y + 1.0, caster_pos.z);
+            let to = from + forward * *range;
+            let lifetime = if *speed > 0.0 { *range / *speed } else { 1.0 };
+            spawn_vfx_entity(
+                world,
+                vfx,
+                VisualEffect {
+                    kind: VfxKind::Projectile {
+                        from,
+                        to,
+                        color: [0.3, 0.5, 1.0, 1.0], // blue ability projectile
+                    },
+                    lifetime,
+                    elapsed: 0.0,
+                },
+            );
+        }
+        AbilityEffect::Chain(effects) => {
+            for sub in effects {
+                spawn_ability_vfx(world, vfx, sub, caster_pos, caster_rotation);
+            }
+        }
+        // Other effects (Dash, ApplyEffect, ApplyCc, etc.) don't need VFX.
+        _ => {}
+    }
+}
+
+/// Spawn a VFX entity with the correct mesh, material, and transform.
+fn spawn_vfx_entity(world: &mut World, vfx: &VfxAssets, effect: VisualEffect) {
+    let (initial_pos, mesh, material, initial_scale) = match &effect.kind {
+        VfxKind::Projectile { from, color, .. } => {
+            let mat = vfx_material_for_color(vfx, color);
+            (*from, vfx.sphere_mesh, mat, Vec3::new(1.0, 1.0, 1.0))
+        }
+        VfxKind::AreaCircle { center, color, .. } => {
+            let mat = vfx_material_for_color(vfx, color);
+            // Start at zero scale; tick system will expand it.
+            let pos = Vec3::new(center.x, center.y + 0.1, center.z);
+            (pos, vfx.disc_mesh, mat, Vec3::new(0.01, 1.0, 0.01))
+        }
+        VfxKind::FloatingRise { origin, color } => {
+            let mat = vfx_material_for_color(vfx, color);
+            (*origin, vfx.sphere_mesh, mat, Vec3::new(0.5, 0.5, 0.5))
+        }
+        VfxKind::MeleeSlash { position } => {
+            let pos = Vec3::new(position.x, position.y + 0.5, position.z);
+            (
+                pos,
+                vfx.sphere_mesh,
+                vfx.mat_white,
+                Vec3::new(0.8, 0.8, 0.8),
+            )
+        }
+    };
+
+    let mut transform = Transform::from_translation(initial_pos);
+    transform.scale = initial_scale;
+
+    let entity = world.spawn(LocalTransform(transform));
+    world.insert(entity, GlobalTransform(transform));
+    world.insert(entity, MeshRenderer { mesh });
+    world.insert(entity, MaterialRef { handle: material });
+    world.insert(entity, effect);
+}
+
+/// Pick the closest pre-uploaded VFX material based on dominant color channel.
+fn vfx_material_for_color(vfx: &VfxAssets, color: &[f32; 4]) -> MaterialHandle {
+    let [r, g, b, _] = *color;
+    // Simple heuristic: pick by dominant channel.
+    if g > r && g > b {
+        vfx.mat_green
+    } else if b > r && b > g {
+        vfx.mat_blue
+    } else if r > 0.8 && g > 0.6 {
+        vfx.mat_yellow
+    } else if r > g && r > b {
+        vfx.mat_red
+    } else if g > 0.5 && b > 0.5 {
+        vfx.mat_cyan
+    } else {
+        vfx.mat_white
+    }
+}
+
+/// Advance all active `VisualEffect` entities: update positions/scales and
+/// despawn completed effects.
+fn vfx_tick_system(world: &mut World, dt: f32) {
+    // Collect all VFX entities and their current state.
+    let vfx_entities: Vec<(Entity, VisualEffect)> = {
+        let query = Query::<(Entity, &VisualEffect)>::new(world);
+        query.iter().map(|(e, v)| (e, v.clone())).collect()
+    };
+
+    let mut to_despawn: Vec<Entity> = Vec::new();
+
+    for (entity, mut effect) in vfx_entities {
+        effect.elapsed += dt;
+        let t = (effect.elapsed / effect.lifetime).clamp(0.0, 1.0);
+
+        if effect.elapsed >= effect.lifetime {
+            to_despawn.push(entity);
+            continue;
+        }
+
+        match &effect.kind {
+            VfxKind::Projectile { from, to, .. } => {
+                // Lerp position from start to end.
+                let pos = Vec3::new(
+                    from.x + (to.x - from.x) * t,
+                    from.y + (to.y - from.y) * t,
+                    from.z + (to.z - from.z) * t,
+                );
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = pos;
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = pos;
+                }
+            }
+            VfxKind::AreaCircle {
+                center, max_radius, ..
+            } => {
+                // Expand disc from 0 to max_radius.
+                let scale = t * max_radius;
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = Vec3::new(center.x, center.y + 0.1, center.z);
+                    lt.0.scale = Vec3::new(scale, 1.0, scale);
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = Vec3::new(center.x, center.y + 0.1, center.z);
+                    gt.0.scale = Vec3::new(scale, 1.0, scale);
+                }
+            }
+            VfxKind::FloatingRise { origin, .. } => {
+                // Rise 2 units over lifetime.
+                let rise = t * 2.0;
+                let pos = Vec3::new(origin.x, origin.y + rise, origin.z);
+                // Shrink as it rises (fade effect via scale).
+                let s = 0.5 * (1.0 - t * 0.7);
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = pos;
+                    lt.0.scale = Vec3::new(s, s, s);
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = pos;
+                    gt.0.scale = Vec3::new(s, s, s);
+                }
+            }
+            VfxKind::MeleeSlash { position } => {
+                // Flash: scale up quickly then shrink.
+                let scale = if t < 0.3 {
+                    0.8 + t * 3.0 // expand to ~1.7
+                } else {
+                    1.7 * (1.0 - (t - 0.3) / 0.7) // shrink back to 0
+                };
+                let pos = Vec3::new(position.x, position.y + 0.5, position.z);
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = pos;
+                    lt.0.scale = Vec3::new(scale, scale, scale);
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = pos;
+                    gt.0.scale = Vec3::new(scale, scale, scale);
+                }
+            }
+        }
+
+        // Write back elapsed time.
+        if let Some(ve) = world.get_mut::<VisualEffect>(entity) {
+            ve.elapsed = effect.elapsed;
+        }
+    }
+
+    for entity in to_despawn {
+        world.despawn(entity);
+    }
 }
 
 /// Collect draw commands for all renderable entities, applying death/respawn
