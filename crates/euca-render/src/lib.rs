@@ -25,6 +25,8 @@ mod camera;
 pub mod clustered;
 /// GPU compute pipeline management and indirect dispatch utilities.
 pub mod compute;
+/// Procedural mesh generation for MOBA creep types (melee, ranged, siege).
+pub mod creep_meshes;
 /// Deferred decal projection volumes.
 pub mod decal;
 /// Deferred shading G-buffer and lighting pass.
@@ -99,6 +101,10 @@ pub use clustered::{
 pub use compute::{
     ComputeManager, ComputePipeline, ComputePipelineDesc, CullParams, GpuAabb, GpuBuffer,
     GpuFrustumPlanes,
+};
+pub use creep_meshes::{
+    combine_meshes, creep_mesh_name, make_box, make_cylinder, make_sphere, melee_creep_mesh,
+    ranged_creep_mesh, siege_creep_mesh,
 };
 pub use decal::{
     Decal, DecalBlendMode, DecalDrawCommand, DecalProjection, DecalRenderer,

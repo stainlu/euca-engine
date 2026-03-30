@@ -19,6 +19,16 @@ use euca_math::Vec3;
 use crate::economy::CreepType;
 use crate::rules::RuleSpawnEvent;
 
+/// Map a `CreepType` to the string tag used in procedural mesh names.
+fn creep_type_tag(ct: CreepType) -> &'static str {
+    match ct {
+        CreepType::Melee => "melee",
+        CreepType::Ranged => "ranged",
+        CreepType::Siege => "siege",
+        CreepType::Super => "super",
+    }
+}
+
 // ── Creep stats ──
 
 /// Base stats for a creep, determined by its type.
@@ -386,11 +396,12 @@ pub fn wave_spawn_system(world: &mut World, dt: f32) {
             );
             world.insert(entity, crate::combat::MarchDirection(march_dir));
 
-            // Emit RuleSpawnEvent so the rendering layer attaches visuals.
+            // Emit RuleSpawnEvent with a per-creep-type procedural mesh name.
+            let mesh_name = euca_render::creep_mesh_name(creep_type_tag(creep_type), event.team);
             if let Some(events) = world.resource_mut::<Events>() {
                 events.send(RuleSpawnEvent {
                     entity,
-                    mesh: event.mesh.clone(),
+                    mesh: mesh_name,
                     color: Some(event.color.clone()),
                     scale: Some([creep_scale.x, creep_scale.y, creep_scale.z]),
                 });

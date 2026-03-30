@@ -638,6 +638,21 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
     meshes.insert("sphere".to_string(), sphere);
     meshes.insert("plane".to_string(), plane);
 
+    // Pre-generate procedural creep meshes: 3 types x 2 teams = 6 meshes.
+    // Each type has a distinct silhouette; both teams share geometry but
+    // differ in material color (assigned at spawn time).
+    let melee_mesh = renderer.upload_mesh(gpu, &euca_render::melee_creep_mesh());
+    let ranged_mesh = renderer.upload_mesh(gpu, &euca_render::ranged_creep_mesh());
+    let siege_mesh = renderer.upload_mesh(gpu, &euca_render::siege_creep_mesh());
+
+    for team in [1u8, 2] {
+        meshes.insert(euca_render::creep_mesh_name("melee", team), melee_mesh);
+        meshes.insert(euca_render::creep_mesh_name("ranged", team), ranged_mesh);
+        meshes.insert(euca_render::creep_mesh_name("siege", team), siege_mesh);
+        // Super creeps reuse the melee mesh (they are upgraded melee creeps).
+        meshes.insert(euca_render::creep_mesh_name("super", team), melee_mesh);
+    }
+
     world.insert_resource(euca_agent::routes::DefaultAssets {
         meshes,
         materials,
@@ -1343,6 +1358,16 @@ impl DotaClientApp {
     }
 }
 
+/// Map a `CreepType` to the string tag used in procedural mesh names.
+fn creep_type_tag(ct: euca_gameplay::CreepType) -> &'static str {
+    match ct {
+        euca_gameplay::CreepType::Melee => "melee",
+        euca_gameplay::CreepType::Ranged => "ranged",
+        euca_gameplay::CreepType::Siege => "siege",
+        euca_gameplay::CreepType::Super => "super",
+    }
+}
+
 /// Tick all DotA MOBA subsystems that are driven by pure data + logic
 /// (not ECS-native systems). Reads/writes ECS components as needed.
 fn moba_subsystems_tick(world: &mut World, dt: f32) {
@@ -1507,11 +1532,13 @@ fn moba_subsystems_tick(world: &mut World, dt: f32) {
             );
             world.insert(entity, euca_gameplay::MarchDirection(march_dir));
 
-            // Emit RuleSpawnEvent so the rendering layer attaches visuals.
+            // Emit RuleSpawnEvent with a per-creep-type procedural mesh name.
+            // The rendering layer resolves this to the pre-generated mesh handle.
+            let mesh_name = euca_render::creep_mesh_name(creep_type_tag(creep_type), event.team);
             if let Some(events) = world.resource_mut::<Events>() {
                 events.send(euca_gameplay::RuleSpawnEvent {
                     entity,
-                    mesh: event.mesh.clone(),
+                    mesh: mesh_name,
                     color: Some(event.color.clone()),
                     scale: Some([creep_scale.x, creep_scale.y, creep_scale.z]),
                 });
