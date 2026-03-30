@@ -17,11 +17,13 @@
 //! steering_system(&mut world, dt);
 //! ```
 
+pub mod level_nav;
 pub mod navmesh;
 mod pathfinding;
 pub mod rvo;
 mod steering;
 
+pub use level_nav::{navmesh_from_level_data, navmesh_with_obstacles};
 pub use navmesh::{
     GridConfig, NavMesh, build_navmesh_from_world, build_navmesh_from_world_with_radius,
 };
