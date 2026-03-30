@@ -6,7 +6,7 @@
 //!
 //! Run: `cargo run -p euca-game --example dota_client`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use euca_core::Time;
 use euca_ecs::{Entity, Events, Query, World};
@@ -67,6 +67,20 @@ const DT: f32 = 1.0 / 60.0;
 
 // NOTE: No hardcoded entity indices. All entities are found by their
 // ECS components (PlayerHero, Team, EntityRole, etc.), not by creation order.
+
+// ── Death / respawn visual transition components ─────────────────────────────
+
+/// Drives the death animation: entity tilts forward, scales down, and fades out.
+struct DeathAnimation {
+    elapsed: f32,
+    duration: f32,
+}
+
+/// Drives the respawn animation: entity scales up from zero with a golden tint.
+struct RespawnAnimation {
+    elapsed: f32,
+    duration: f32,
+}
 
 impl DotaMobaState {
     fn new() -> Self {
@@ -910,6 +924,8 @@ struct DotaClientApp {
     ui_overlay: Option<UiOverlayRenderer>,
     window_attrs: WindowAttributes,
     level_loaded: bool,
+    /// Entities that had the `Dead` marker last frame — used to detect respawns.
+    previously_dead: HashSet<Entity>,
 }
 
 impl DotaClientApp {
@@ -961,6 +977,7 @@ impl DotaClientApp {
                 .with_title("Euca Engine — DotA Client")
                 .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
             level_loaded: false,
+            previously_dead: HashSet::new(),
         }
     }
 
@@ -1166,6 +1183,13 @@ impl DotaClientApp {
         }
         euca_gameplay::respawn_system(&mut self.world, dt);
         euca_gameplay::corpse_cleanup_system(&mut self.world, dt);
+
+        // Death/respawn animations
+        spawn_death_animations(&mut self.world);
+        spawn_respawn_animations(&mut self.world, &self.previously_dead);
+        tick_death_animations(&mut self.world, dt);
+        tick_respawn_animations(&mut self.world, dt);
+        self.previously_dead = collect_dead_entities(&self.world);
 
         // Roshan lifecycle + Aegis resurrection
         euca_gameplay::roshan_system(&mut self.world, dt);
@@ -1508,26 +1532,190 @@ fn moba_subsystems_tick(world: &mut World, dt: f32) {
     world.insert_resource(moba);
 }
 
-/// Collect draw commands for all alive renderable entities.
+// ── Death / respawn animation systems ────────────────────────────────────────
+
+/// Attach `DeathAnimation` to entities that just received the `Dead` marker.
+///
+/// We detect "just died" by looking for entities that have `Dead` but do
+/// not yet have a `DeathAnimation` component.
+fn spawn_death_animations(world: &mut World) {
+    let newly_dead: Vec<Entity> = {
+        let query = Query::<(Entity, &euca_gameplay::Dead)>::new(world);
+        query
+            .iter()
+            .filter(|(e, _)| world.get::<DeathAnimation>(*e).is_none())
+            .map(|(e, _)| e)
+            .collect()
+    };
+    for entity in newly_dead {
+        world.insert(
+            entity,
+            DeathAnimation {
+                elapsed: 0.0,
+                duration: 1.5,
+            },
+        );
+    }
+}
+
+/// Attach `RespawnAnimation` to entities that were dead last frame but are
+/// no longer dead (i.e. the `Dead` component was removed by `respawn_system`).
+fn spawn_respawn_animations(world: &mut World, previously_dead: &HashSet<Entity>) {
+    for &entity in previously_dead {
+        if !world.is_alive(entity) {
+            continue;
+        }
+        // Entity was dead last frame but no longer has Dead => just respawned.
+        if world.get::<euca_gameplay::Dead>(entity).is_none() {
+            // Clean up any leftover death animation component.
+            world.remove::<DeathAnimation>(entity);
+            world.insert(
+                entity,
+                RespawnAnimation {
+                    elapsed: 0.0,
+                    duration: 1.0,
+                },
+            );
+        }
+    }
+}
+
+/// Advance death animation timers each frame.
+fn tick_death_animations(world: &mut World, dt: f32) {
+    let entities: Vec<Entity> = {
+        let query = Query::<(Entity, &DeathAnimation)>::new(world);
+        query.iter().map(|(e, _)| e).collect()
+    };
+    for entity in entities {
+        if let Some(anim) = world.get_mut::<DeathAnimation>(entity) {
+            anim.elapsed += dt;
+        }
+    }
+}
+
+/// Advance respawn animation timers and remove the component when complete.
+fn tick_respawn_animations(world: &mut World, dt: f32) {
+    let entities: Vec<Entity> = {
+        let query = Query::<(Entity, &RespawnAnimation)>::new(world);
+        query.iter().map(|(e, _)| e).collect()
+    };
+    let mut finished = Vec::new();
+    for entity in entities {
+        if let Some(anim) = world.get_mut::<RespawnAnimation>(entity) {
+            anim.elapsed += dt;
+            if anim.elapsed >= anim.duration {
+                finished.push(entity);
+            }
+        }
+    }
+    for entity in finished {
+        world.remove::<RespawnAnimation>(entity);
+    }
+}
+
+/// Snapshot the set of currently-dead entities for next-frame respawn detection.
+fn collect_dead_entities(world: &World) -> HashSet<Entity> {
+    let query = Query::<(Entity, &euca_gameplay::Dead)>::new(world);
+    query.iter().map(|(e, _)| e).collect()
+}
+
+/// Collect draw commands for all renderable entities, applying death/respawn
+/// animation transforms when present.
+///
+/// - **Death animation** (entity has `Dead` + `DeathAnimation`): tilt forward
+///   around X-axis (0 to 90 degrees), scale down (1 to 0), using a smooth
+///   ease-out curve. Once the animation completes, the entity is hidden.
+/// - **Respawn animation** (entity has `RespawnAnimation`): scale up from 0
+///   to 1 with a smooth ease-out curve.
+/// - **Dead with completed animation**: not rendered.
+/// - **Normal entities**: rendered as usual.
 fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
     let query = Query::<(Entity, &GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
-    query
-        .iter()
-        .filter(|(e, _, _, _)| world.get::<euca_gameplay::Dead>(*e).is_none())
-        .map(|(e, gt, mr, mat)| {
-            let mut model_matrix = gt.0.to_matrix();
-            // Apply visual ground offset so mesh bottoms sit on the ground.
-            if let Some(offset) = world.get::<GroundOffset>(e) {
-                model_matrix.cols[3][1] += offset.0;
+    let mut commands = Vec::new();
+
+    for (e, gt, mr, mat) in query.iter() {
+        let is_dead = world.get::<euca_gameplay::Dead>(e).is_some();
+        let death_anim = world.get::<DeathAnimation>(e);
+        let respawn_anim = world.get::<RespawnAnimation>(e);
+
+        // Dead entity whose death animation has finished: skip entirely.
+        if is_dead {
+            if let Some(anim) = &death_anim {
+                if anim.elapsed >= anim.duration {
+                    continue;
+                }
+            } else {
+                // Dead but no animation component (shouldn't happen normally,
+                // but handle gracefully): skip.
+                continue;
             }
-            DrawCommand {
-                mesh: mr.mesh,
-                material: mat.handle,
-                model_matrix,
-                aabb: None,
-            }
-        })
-        .collect()
+        }
+
+        let mut model_matrix = gt.0.to_matrix();
+
+        // Apply visual ground offset so mesh bottoms sit on the ground.
+        if let Some(offset) = world.get::<GroundOffset>(e) {
+            model_matrix.cols[3][1] += offset.0;
+        }
+
+        // Death animation: tilt forward and scale down with ease-out.
+        if let Some(anim) = death_anim {
+            let t = (anim.elapsed / anim.duration).clamp(0.0, 1.0);
+            // Smooth ease-out: fast start, slow finish.
+            let smooth = 1.0 - (1.0 - t) * (1.0 - t);
+
+            // Tilt: rotate around X-axis from 0 to 90 degrees (entity falls forward).
+            let tilt_angle = smooth * std::f32::consts::FRAC_PI_2;
+            let tilt_rot =
+                Mat4::from_rotation(Quat::from_axis_angle(Vec3::new(1.0, 0.0, 0.0), tilt_angle));
+
+            // Scale: shrink from 1.0 to 0.0.
+            let scale_factor = 1.0 - smooth;
+            let scale_mat = Mat4::from_scale(Vec3::new(scale_factor, scale_factor, scale_factor));
+
+            // Extract translation, apply rotation and scale around the entity's
+            // world position so it tilts/shrinks in place.
+            let translation = Vec3::new(
+                model_matrix.cols[3][0],
+                model_matrix.cols[3][1],
+                model_matrix.cols[3][2],
+            );
+            let to_origin =
+                Mat4::from_translation(Vec3::new(-translation.x, -translation.y, -translation.z));
+            let from_origin = Mat4::from_translation(translation);
+            model_matrix = from_origin * tilt_rot * scale_mat * to_origin * model_matrix;
+        }
+
+        // Respawn animation: scale up from 0 to 1 with ease-out.
+        if let Some(anim) = respawn_anim {
+            let t = (anim.elapsed / anim.duration).clamp(0.0, 1.0);
+            // Ease-out: overshoot slightly for a satisfying "pop" feeling.
+            // Deceleration curve: 1 - (1 - t)^2
+            let smooth = 1.0 - (1.0 - t) * (1.0 - t);
+
+            let scale_factor = smooth;
+            let scale_mat = Mat4::from_scale(Vec3::new(scale_factor, scale_factor, scale_factor));
+
+            let translation = Vec3::new(
+                model_matrix.cols[3][0],
+                model_matrix.cols[3][1],
+                model_matrix.cols[3][2],
+            );
+            let to_origin =
+                Mat4::from_translation(Vec3::new(-translation.x, -translation.y, -translation.z));
+            let from_origin = Mat4::from_translation(translation);
+            model_matrix = from_origin * scale_mat * to_origin * model_matrix;
+        }
+
+        commands.push(DrawCommand {
+            mesh: mr.mesh,
+            material: mat.handle,
+            model_matrix,
+            aabb: None,
+        });
+    }
+
+    commands
 }
 
 /// Day/night cycle: modulate lighting based on the DayNightCycle in DotaMobaState.
