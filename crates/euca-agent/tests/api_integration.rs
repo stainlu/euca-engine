@@ -156,6 +156,8 @@ fn test_template_create_and_spawn() {
                 role: None,
                 spawn_point: None,
                 player: None,
+                building_type: None,
+                lane: None,
             },
         );
     });

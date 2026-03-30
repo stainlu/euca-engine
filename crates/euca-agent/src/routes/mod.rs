@@ -699,6 +699,13 @@ pub struct SpawnRequest {
     /// Mark this entity as the player-controlled hero
     #[serde(default)]
     pub player: Option<bool>,
+    /// Building type (e.g. "tier1_tower", "melee_barracks", "ancient").
+    /// When set, attaches BuildingStats, BackdoorProtection, and TowerAggro.
+    #[serde(default)]
+    pub building_type: Option<String>,
+    /// Lane assignment for buildings: "top", "mid", or "bot".
+    #[serde(default)]
+    pub lane: Option<String>,
 }
 
 #[derive(Serialize)]

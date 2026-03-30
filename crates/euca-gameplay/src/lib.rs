@@ -20,6 +20,8 @@ pub mod assertions;
 pub mod attributes;
 /// Dota 2 tower and building system — types, backdoor, fortification, aggro, bounties.
 pub mod building;
+/// ECS systems for buildings — backdoor protection, fortification, barracks death.
+pub mod building_systems;
 /// Camera modes and follow systems.
 pub mod camera;
 /// Timed corpse/entity cleanup after death.
@@ -190,6 +192,11 @@ pub use building::{
     activate_fortification, backdoor_damage_modifier, barracks_destroyed_effect, building_stats,
     is_building_invulnerable, tick_fortification, tower_bounty as building_tower_bounty,
     update_backdoor_protection, update_tower_aggro,
+};
+
+pub use building_systems::{
+    DestroyedBarracks, TeamFortifications, backdoor_protection_system, barracks_death_system,
+    building_damage_multiplier, building_tower_aggro_system, fortification_tick_system,
 };
 
 pub use fog_of_war::{

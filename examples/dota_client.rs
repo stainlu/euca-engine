@@ -897,6 +897,24 @@ impl DotaClientApp {
             log::info!("Match started");
         }
 
+        // Initialize building system resources (fortification + barracks tracking).
+        if self
+            .world
+            .resource::<euca_gameplay::TeamFortifications>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(euca_gameplay::TeamFortifications::default());
+        }
+        if self
+            .world
+            .resource::<euca_gameplay::DestroyedBarracks>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(euca_gameplay::DestroyedBarracks::default());
+        }
+
         // Build navmesh for pathfinding
         if self.world.resource::<euca_nav::NavMesh>().is_none() {
             let config = euca_nav::GridConfig {
@@ -943,9 +961,14 @@ impl DotaClientApp {
         euca_gameplay::stat_resolution_system(&mut self.world);
         euca_gameplay::attribute_update_system(&mut self.world);
 
+        // Building systems (before damage so protection state is current)
+        euca_gameplay::backdoor_protection_system(&mut self.world, dt);
+        euca_gameplay::fortification_tick_system(&mut self.world, dt);
+
         // Core gameplay
         euca_gameplay::apply_damage_system(&mut self.world);
         euca_gameplay::death_check_system(&mut self.world);
+        euca_gameplay::barracks_death_system(&mut self.world);
         euca_gameplay::projectile_system(&mut self.world, dt);
         euca_gameplay::trigger_system(&mut self.world);
         euca_gameplay::ai_system(&mut self.world, dt);

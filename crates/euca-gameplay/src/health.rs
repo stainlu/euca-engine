@@ -107,6 +107,11 @@ pub struct DeathEvent {
 /// `effective = raw * (100.0 / (100.0 + resistance))`.
 /// The special category `"true"` bypasses resistance entirely.
 /// If the target has no `DamageResistance`, full damage is dealt.
+///
+/// If the target has building components ([`BackdoorProtection`],
+/// [`Fortification`]), the building damage multiplier is applied after
+/// resistance. Fortification makes buildings invulnerable (0 damage).
+/// Backdoor protection reduces damage to 25%.
 pub fn apply_damage_system(world: &mut World) {
     // Collect events first to avoid borrow conflicts
     let events: Vec<DamageEvent> = world
@@ -116,15 +121,28 @@ pub fn apply_damage_system(world: &mut World) {
 
     for event in events {
         // Calculate effective damage after resistance
-        let effective_damage = compute_effective_damage(
+        let mut effective_damage = compute_effective_damage(
             event.amount,
             &event.category,
             world.get::<DamageResistance>(event.target),
         );
 
+        // Apply building damage modifiers (backdoor protection, fortification).
+        effective_damage *=
+            crate::building_systems::building_damage_multiplier(world, event.target);
+
         if let Some(health) = world.get_mut::<Health>(event.target) {
             health.current = (health.current - effective_damage).max(0.0);
         }
+
+        // Sync damage to BuildingStats if present.
+        let current_hp = world.get::<Health>(event.target).map(|h| h.current);
+        if let Some(hp) = current_hp
+            && let Some(bs) = world.get_mut::<crate::building::BuildingStats>(event.target)
+        {
+            bs.current_hp = hp;
+        }
+
         // Track who dealt this damage for kill attribution
         if event.source.is_some() {
             world.insert(event.target, LastAttacker(event.source));
