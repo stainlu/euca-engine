@@ -21,14 +21,15 @@ use crate::heightmap::Heightmap;
 // ---------------------------------------------------------------------------
 
 /// Classification of a terrain cell's surface material.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
 pub enum SurfaceType {
-    Grass,
-    Dirt,
-    Rock,
-    Sand,
-    Snow,
-    Water,
+    Grass = 0,
+    Dirt = 1,
+    Rock = 2,
+    Sand = 3,
+    Snow = 4,
+    Water = 5,
 }
 
 /// Return an RGBA color (each channel in `[0.0, 1.0]`) representative of the
@@ -184,7 +185,7 @@ pub fn generate_terrain_meshes(
         .collect();
 
     // Deterministic output order (useful for tests and snapshot comparisons).
-    chunks.sort_by_key(|c| std::mem::discriminant(&c.surface));
+    chunks.sort_by_key(|c| c.surface);
     chunks
 }
 
@@ -290,8 +291,14 @@ mod tests {
 
         assert_eq!(chunks.len(), 2, "Should produce two batches");
 
-        let grass = chunks.iter().find(|c| c.surface == SurfaceType::Grass).unwrap();
-        let rock = chunks.iter().find(|c| c.surface == SurfaceType::Rock).unwrap();
+        let grass = chunks
+            .iter()
+            .find(|c| c.surface == SurfaceType::Grass)
+            .unwrap();
+        let rock = chunks
+            .iter()
+            .find(|c| c.surface == SurfaceType::Rock)
+            .unwrap();
 
         // Each batch covers 2 cells => 8 vertices, 12 indices.
         assert_eq!(grass.mesh.vertices.len(), 8);
@@ -309,11 +316,7 @@ mod tests {
         for chunk in &chunks {
             let max = chunk.mesh.vertices.len() as u32;
             for &idx in &chunk.mesh.indices {
-                assert!(
-                    idx < max,
-                    "{:?} chunk: index {idx} >= {max}",
-                    chunk.surface
-                );
+                assert!(idx < max, "{:?} chunk: index {idx} >= {max}", chunk.surface);
             }
         }
     }

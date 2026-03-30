@@ -8,7 +8,6 @@ categories = ["game-development"]
 
 [features]
 gpu-terrain = ["dep:euca-rhi", "dep:bytemuck"]
-level-import = ["dep:image"]
 level-render = ["euca-render"]
 
 [dependencies]
@@ -17,9 +16,5 @@ euca-math = { path = "../euca-math" }
 euca-physics = { path = "../euca-physics" }
 euca-rhi = { path = "../euca-rhi", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
-image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 euca-render = { path = "../euca-render", optional = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-bincode = "1"
 log = "0.4"
