@@ -1641,6 +1641,7 @@ dependencies = [
  "euca-ecs",
  "euca-math",
  "euca-physics",
+ "euca-render",
  "euca-rhi",
  "log",
 ]
