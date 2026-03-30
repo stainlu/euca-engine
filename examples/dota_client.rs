@@ -1474,37 +1474,76 @@ fn add_structure_lights(world: &mut World) {
 }
 
 /// Build health bar UI quads for all alive entities with Health + GlobalTransform.
+///
+/// Renders Dota 2-style health bars: team-colored, sized by entity role, with
+/// dark borders, mana bars for heroes, and level indicators. Only shows bars
+/// for damaged entities (full health entities are hidden).
 fn build_health_bar_quads(
     world: &World,
     view_proj: &Mat4,
     viewport_w: f32,
     viewport_h: f32,
 ) -> Vec<UiQuad> {
-    use euca_gameplay::{Dead, EntityRole, Health, Team};
+    use euca_gameplay::player::PlayerHero;
+    use euca_gameplay::{Dead, EntityRole, Health, Level, Mana, Team};
+
+    const BORDER: f32 = 1.0;
+    const BORDER_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.7];
+    const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 0.6];
+
+    // Team fill colors.
+    const RADIANT_COLOR: [f32; 4] = [0.1, 0.8, 0.2, 0.9];
+    const DIRE_COLOR: [f32; 4] = [0.8, 0.15, 0.15, 0.9];
+    const NEUTRAL_COLOR: [f32; 4] = [0.8, 0.8, 0.2, 0.9];
+    // Player's own hero gets a brighter green.
+    const PLAYER_HERO_COLOR: [f32; 4] = [0.15, 0.95, 0.3, 0.95];
+    const PLAYER_HERO_OUTLINE: [f32; 4] = [1.0, 1.0, 1.0, 0.6];
+
+    const MANA_COLOR: [f32; 4] = [0.2, 0.3, 0.9, 0.85];
+    const MANA_BG_COLOR: [f32; 4] = [0.05, 0.05, 0.15, 0.5];
 
     let mut quads = Vec::new();
     let query = Query::<(Entity, &GlobalTransform, &Health)>::new(world);
 
-    // Find which team the player is on (for color coding)
-    let player_team = {
-        let pq = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(world);
-        pq.iter()
-            .next()
-            .and_then(|(e, _)| world.get::<Team>(e).map(|t| t.0))
-            .unwrap_or(1)
+    // Identify the player's hero entity.
+    let player_entity = {
+        let pq = Query::<(Entity, &PlayerHero)>::new(world);
+        pq.iter().next().map(|(e, _)| e)
     };
 
     for (entity, gt, health) in query.iter() {
+        // Skip dead entities.
         if world.get::<Dead>(entity).is_some() {
             continue;
         }
+        // Skip entities with no meaningful health.
         if health.max <= 0.0 {
             continue;
         }
+        // Skip entities at full health.
+        if health.current >= health.max {
+            continue;
+        }
 
+        let role = world.get::<EntityRole>(entity);
+        let is_hero = matches!(role, Some(EntityRole::Hero));
+        let is_player_hero = player_entity == Some(entity);
+
+        // Bar dimensions by entity role:
+        //   Heroes:           80px wide, 8px tall, world Y offset 2.5
+        //   Towers/Structures: 60px wide, 6px tall, world Y offset 4.0
+        //   Creeps/Minions:   40px wide, 4px tall, world Y offset 1.0
+        let (bar_w, bar_h, world_y_offset) = match role {
+            Some(EntityRole::Hero) => (80.0_f32, 8.0_f32, 2.5_f32),
+            Some(EntityRole::Tower) | Some(EntityRole::Structure) => (60.0, 6.0, 4.0),
+            _ => (40.0, 4.0, 1.0),
+        };
+
+        // Project the offset world position (above the entity model) to screen space.
         let world_pos = gt.0.translation;
-        // Project world position to clip space
-        let clip = *view_proj * euca_math::Vec4::new(world_pos.x, world_pos.y, world_pos.z, 1.0);
+        let above =
+            euca_math::Vec4::new(world_pos.x, world_pos.y + world_y_offset, world_pos.z, 1.0);
+        let clip = *view_proj * above;
         if clip.w <= 0.0 {
             continue; // behind camera
         }
@@ -1512,54 +1551,140 @@ fn build_health_bar_quads(
         let ndc_x = clip.x / clip.w;
         let ndc_y = clip.y / clip.w;
 
-        // NDC → screen pixels
+        // NDC to screen pixels.
         let screen_x = (ndc_x + 1.0) * 0.5 * viewport_w;
         let screen_y = (1.0 - ndc_y) * 0.5 * viewport_h; // Y flipped
 
-        // Bar dimensions based on entity role
-        let role = world.get::<EntityRole>(entity);
-        let (bar_w, bar_h, y_offset) = match role {
-            Some(EntityRole::Hero) => (60.0, 8.0, -45.0),
-            Some(EntityRole::Tower) | Some(EntityRole::Structure) => (80.0, 6.0, -60.0),
-            _ => (40.0, 5.0, -30.0), // minions, neutrals
-        };
-
         let bar_x = screen_x - bar_w * 0.5;
-        let bar_y = screen_y + y_offset;
+        let bar_y = screen_y - bar_h * 0.5;
 
-        // Skip if off-screen
-        if bar_x + bar_w < 0.0 || bar_x > viewport_w || bar_y + bar_h < 0.0 || bar_y > viewport_h {
+        // Skip if off-screen (with border margin).
+        if bar_x + bar_w + BORDER < 0.0
+            || bar_x - BORDER > viewport_w
+            || bar_y + bar_h + BORDER < 0.0
+            || bar_y - BORDER > viewport_h
+        {
             continue;
         }
 
-        let fill = (health.current / health.max).clamp(0.0, 1.0);
+        let fill_frac = health.fraction();
         let team = world.get::<Team>(entity).map(|t| t.0).unwrap_or(0);
 
-        // Background (dark)
+        // ── Player hero: white outline (rendered as a slightly larger rect behind everything) ──
+        if is_player_hero {
+            quads.push(UiQuad {
+                x: bar_x - BORDER - 1.0,
+                y: bar_y - BORDER - 1.0,
+                w: bar_w + (BORDER + 1.0) * 2.0,
+                h: bar_h + (BORDER + 1.0) * 2.0,
+                color: PLAYER_HERO_OUTLINE,
+            });
+        }
+
+        // ── Dark border ──
+        quads.push(UiQuad {
+            x: bar_x - BORDER,
+            y: bar_y - BORDER,
+            w: bar_w + BORDER * 2.0,
+            h: bar_h + BORDER * 2.0,
+            color: BORDER_COLOR,
+        });
+
+        // ── Background ──
         quads.push(UiQuad {
             x: bar_x,
             y: bar_y,
             w: bar_w,
             h: bar_h,
-            color: [0.1, 0.1, 0.1, 0.7],
+            color: BG_COLOR,
         });
 
-        // Fill bar — green for allies, red for enemies, yellow for neutrals
-        let fill_color = if team == 0 {
-            [0.8, 0.8, 0.0, 0.9] // neutral: yellow
-        } else if team == player_team {
-            [0.1, 0.9, 0.1, 0.9] // ally: green
+        // ── Health fill ──
+        let fill_color = if is_player_hero {
+            PLAYER_HERO_COLOR
+        } else if team == 0 {
+            NEUTRAL_COLOR
+        } else if team == 1 {
+            RADIANT_COLOR
         } else {
-            [0.9, 0.1, 0.1, 0.9] // enemy: red
+            DIRE_COLOR
         };
 
         quads.push(UiQuad {
             x: bar_x,
             y: bar_y,
-            w: bar_w * fill,
+            w: bar_w * fill_frac,
             h: bar_h,
             color: fill_color,
         });
+
+        // ── Mana bar (heroes only) ──
+        if is_hero {
+            if let Some(mana) = world.get::<Mana>(entity) {
+                if mana.max > 0.0 {
+                    let mana_h = (bar_h * 0.4).max(2.0); // thin bar below health
+                    let mana_y = bar_y + bar_h + BORDER;
+                    let mana_frac = (mana.current / mana.max).clamp(0.0, 1.0);
+
+                    // Mana border
+                    quads.push(UiQuad {
+                        x: bar_x - BORDER,
+                        y: mana_y - BORDER,
+                        w: bar_w + BORDER * 2.0,
+                        h: mana_h + BORDER * 2.0,
+                        color: BORDER_COLOR,
+                    });
+
+                    // Mana background
+                    quads.push(UiQuad {
+                        x: bar_x,
+                        y: mana_y,
+                        w: bar_w,
+                        h: mana_h,
+                        color: MANA_BG_COLOR,
+                    });
+
+                    // Mana fill
+                    quads.push(UiQuad {
+                        x: bar_x,
+                        y: mana_y,
+                        w: bar_w * mana_frac,
+                        h: mana_h,
+                        color: MANA_COLOR,
+                    });
+                }
+            }
+        }
+
+        // ── Level indicator (heroes only) ──
+        if is_hero {
+            if let Some(lvl) = world.get::<Level>(entity) {
+                let indicator_size = bar_h + 2.0;
+                let indicator_x = bar_x - BORDER - indicator_size - 2.0;
+                let indicator_y = bar_y - 1.0;
+
+                // Level brightness scales with level (1-30). Higher = brighter.
+                let brightness = 0.3 + 0.7 * (lvl.level as f32 / 30.0).min(1.0);
+
+                // Border
+                quads.push(UiQuad {
+                    x: indicator_x - BORDER,
+                    y: indicator_y - BORDER,
+                    w: indicator_size + BORDER * 2.0,
+                    h: indicator_size + BORDER * 2.0,
+                    color: BORDER_COLOR,
+                });
+
+                // Level square — golden tint that brightens with level.
+                quads.push(UiQuad {
+                    x: indicator_x,
+                    y: indicator_y,
+                    w: indicator_size,
+                    h: indicator_size,
+                    color: [brightness * 0.9, brightness * 0.75, brightness * 0.1, 0.9],
+                });
+            }
+        }
     }
 
     quads
