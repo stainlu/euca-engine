@@ -543,6 +543,7 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
         ("cyan", Material::new([0.0, 0.9, 0.9, 1.0], 0.0, 0.4)),
         ("magenta", Material::new([0.9, 0.0, 0.9, 1.0], 0.0, 0.4)),
         ("orange", Material::new([1.0, 0.5, 0.0, 1.0], 0.0, 0.4)),
+        ("purple", Material::new([0.5, 0.0, 0.8, 1.0], 0.0, 0.4)),
     ];
 
     let mut materials = HashMap::new();
@@ -747,6 +748,28 @@ impl DotaClientApp {
             }
         }
 
+        // Initialize Roshan manager — find the Roshan entity loaded from the level
+        // (team 0 structure with combat, at the pit location).
+        {
+            let mut mgr = euca_gameplay::RoshanManager::new(0.0);
+            let roshan_entity = {
+                let q = Query::<(
+                    Entity,
+                    &euca_gameplay::Team,
+                    &euca_gameplay::EntityRole,
+                    &euca_gameplay::Health,
+                )>::new(&self.world);
+                q.iter()
+                    .find(|(_, t, r, _)| t.0 == 0 && **r == euca_gameplay::EntityRole::Structure)
+                    .map(|(e, _, _, _)| e)
+            };
+            mgr.entity = roshan_entity;
+            self.world.insert_resource(mgr);
+            if let Some(e) = roshan_entity {
+                log::info!("RoshanManager initialized (entity {})", e.index());
+            }
+        }
+
         // Find the player hero by its PlayerHero marker component — never
         // hardcode entity indices (creation order varies between client/server).
         let hero_entity = {
@@ -885,6 +908,10 @@ impl DotaClientApp {
         }
         euca_gameplay::respawn_system(&mut self.world, dt);
         euca_gameplay::corpse_cleanup_system(&mut self.world, dt);
+
+        // Roshan lifecycle + Aegis resurrection
+        euca_gameplay::roshan_system(&mut self.world, dt);
+        euca_gameplay::aegis_system(&mut self.world, dt);
 
         // Attach visuals to rule-spawned entities (minion waves etc.)
         let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = self

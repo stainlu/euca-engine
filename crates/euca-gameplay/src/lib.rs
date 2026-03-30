@@ -194,8 +194,9 @@ pub use fog_of_war::{
 };
 
 pub use roshan::{
-    Aegis, AegisResurrection, Cheese, RefresherShard, Roshan, RoshanDrops, RoshanSlam,
-    aegis_trigger, new_aegis, new_cheese, new_refresher_shard, new_roshan_slam, pick_up_aegis,
-    respawn_roshan, roshan_dies, roshan_respawn_time, roshan_slam_tick, roshan_takes_damage,
-    spawn_roshan, tick_aegis, tick_roshan, use_cheese,
+    Aegis, AegisHolder, AegisResurrectTimer, AegisResurrection, Cheese, RefresherShard, Roshan,
+    RoshanDrops, RoshanManager, RoshanPickup, RoshanSlam, aegis_system, aegis_trigger, new_aegis,
+    new_cheese, new_refresher_shard, new_roshan_slam, pick_up_aegis, respawn_roshan, roshan_dies,
+    roshan_respawn_time, roshan_slam_tick, roshan_system, roshan_takes_damage, spawn_roshan,
+    tick_aegis, tick_roshan, use_cheese,
 };
