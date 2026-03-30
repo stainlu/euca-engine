@@ -20,7 +20,7 @@ use euca_ecs::{Entity, Query, World};
 use euca_scene::GlobalTransform;
 
 use crate::material::MaterialHandle;
-use crate::mesh::MeshHandle;
+use crate::mesh::{GroundOffset, MeshHandle};
 use crate::renderer::DrawCommand;
 
 /// Render-side copy of an entity's mesh and material handles.
@@ -97,7 +97,12 @@ impl RenderExtractor {
         let current_tick = world.current_tick();
 
         for (entity, gt, mesh_renderer, mat_ref) in query.iter() {
-            let model_matrix = gt.0.to_matrix();
+            let mut model_matrix = gt.0.to_matrix();
+            // Apply visual ground offset: shift the rendered mesh upward so its
+            // bottom sits on the ground, without affecting the entity's logical position.
+            if let Some(offset) = world.get::<GroundOffset>(entity) {
+                model_matrix.cols[3][1] += offset.0;
+            }
 
             if let Some(&slot) = self.entity_to_slot.get(&entity) {
                 // Existing entity — check if transform changed.

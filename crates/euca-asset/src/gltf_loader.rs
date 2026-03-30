@@ -4,11 +4,48 @@ use std::path::Path;
 use crate::animation::{AnimationClipData, parse_animations};
 use crate::skeleton::{Skeleton, parse_skeleton};
 
+/// Axis-aligned bounding box computed from mesh vertex positions.
+#[derive(Clone, Copy, Debug)]
+pub struct MeshBounds {
+    /// Minimum vertex position per axis.
+    pub min: [f32; 3],
+    /// Maximum vertex position per axis.
+    pub max: [f32; 3],
+}
+
+impl MeshBounds {
+    /// Compute the AABB from a slice of vertices.
+    pub fn from_vertices(vertices: &[Vertex]) -> Option<Self> {
+        if vertices.is_empty() {
+            return None;
+        }
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for v in vertices {
+            for i in 0..3 {
+                min[i] = min[i].min(v.position[i]);
+                max[i] = max[i].max(v.position[i]);
+            }
+        }
+        Some(Self { min, max })
+    }
+
+    /// The vertical (Y-axis) offset needed to place the mesh bottom on the ground plane.
+    ///
+    /// Returns `-min_y` so that when added to the entity's Y position, the lowest
+    /// vertex sits exactly at the entity's logical Y coordinate.
+    pub fn ground_offset(&self) -> f32 {
+        -self.min[1]
+    }
+}
+
 /// A loaded glTF mesh with its associated material.
 pub struct GltfMesh {
     pub mesh: Mesh,
     pub material: Material,
     pub name: Option<String>,
+    /// Axis-aligned bounding box of the mesh in local space.
+    pub bounds: Option<MeshBounds>,
     /// Per-vertex joint indices (4 joints per vertex). Present if model has a skin.
     pub joint_indices: Option<Vec<[u16; 4]>>,
     /// Per-vertex joint weights (4 weights per vertex). Present if model has a skin.
@@ -318,10 +355,13 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
                 tex_count,
             );
 
+            let bounds = MeshBounds::from_vertices(&vertices);
+
             scene_meshes.push(GltfMesh {
                 mesh: Mesh { vertices, indices },
                 material,
                 name: mesh_name.clone(),
+                bounds,
                 joint_indices,
                 joint_weights,
                 albedo_tex_index,
@@ -406,5 +446,55 @@ mod tests {
         };
         let rgba = convert_to_rgba8(&data);
         assert_eq!(rgba, pixels);
+    }
+
+    #[test]
+    fn mesh_bounds_empty_returns_none() {
+        let bounds = MeshBounds::from_vertices(&[]);
+        assert!(bounds.is_none());
+    }
+
+    #[test]
+    fn mesh_bounds_ground_offset() {
+        let vertices = vec![
+            Vertex {
+                position: [-1.0, -0.5, 0.0],
+                normal: [0.0, 1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0],
+                uv: [0.0, 0.0],
+            },
+            Vertex {
+                position: [1.0, 1.5, 0.0],
+                normal: [0.0, 1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0],
+                uv: [1.0, 1.0],
+            },
+        ];
+        let bounds = MeshBounds::from_vertices(&vertices).unwrap();
+        assert_eq!(bounds.min, [-1.0, -0.5, 0.0]);
+        assert_eq!(bounds.max, [1.0, 1.5, 0.0]);
+        // ground_offset should be -min_y = 0.5
+        assert!((bounds.ground_offset() - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mesh_bounds_already_grounded() {
+        // Mesh with bottom at y=0 should have zero ground offset.
+        let vertices = vec![
+            Vertex {
+                position: [0.0, 0.0, 0.0],
+                normal: [0.0, 1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0],
+                uv: [0.0, 0.0],
+            },
+            Vertex {
+                position: [0.0, 2.0, 0.0],
+                normal: [0.0, 1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0],
+                uv: [0.0, 0.0],
+            },
+        ];
+        let bounds = MeshBounds::from_vertices(&vertices).unwrap();
+        assert!((bounds.ground_offset()).abs() < 1e-6);
     }
 }

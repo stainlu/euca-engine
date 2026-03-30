@@ -1,6 +1,6 @@
 use euca_asset::load_gltf;
 use euca_core::Time;
-use euca_ecs::{Query, World};
+use euca_ecs::{Entity, Query, World};
 use euca_math::{Transform, Vec3};
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
@@ -125,14 +125,21 @@ impl GltfViewerApp {
         cam.eye = Vec3::new(angle.cos() * radius, 1.5, angle.sin() * radius);
 
         let draw_commands: Vec<DrawCommand> = {
-            let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
+            let query =
+                Query::<(Entity, &GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
             query
                 .iter()
-                .map(|(gt, mr, mat)| DrawCommand {
-                    mesh: mr.mesh,
-                    material: mat.handle,
-                    model_matrix: gt.0.to_matrix(),
-                    aabb: None,
+                .map(|(e, gt, mr, mat)| {
+                    let mut model_matrix = gt.0.to_matrix();
+                    if let Some(offset) = self.world.get::<GroundOffset>(e) {
+                        model_matrix.cols[3][1] += offset.0;
+                    }
+                    DrawCommand {
+                        mesh: mr.mesh,
+                        material: mat.handle,
+                        model_matrix,
+                        aabb: None,
+                    }
                 })
                 .collect()
         };

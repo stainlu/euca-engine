@@ -1354,11 +1354,18 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
     query
         .iter()
         .filter(|(e, _, _, _)| world.get::<euca_gameplay::Dead>(*e).is_none())
-        .map(|(_, gt, mr, mat)| DrawCommand {
-            mesh: mr.mesh,
-            material: mat.handle,
-            model_matrix: gt.0.to_matrix(),
-            aabb: None,
+        .map(|(e, gt, mr, mat)| {
+            let mut model_matrix = gt.0.to_matrix();
+            // Apply visual ground offset so mesh bottoms sit on the ground.
+            if let Some(offset) = world.get::<GroundOffset>(e) {
+                model_matrix.cols[3][1] += offset.0;
+            }
+            DrawCommand {
+                mesh: mr.mesh,
+                material: mat.handle,
+                model_matrix,
+                aabb: None,
+            }
         })
         .collect()
 }

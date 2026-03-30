@@ -453,11 +453,17 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
     query
         .iter()
         .filter(|(e, _, _, _)| world.get::<euca_gameplay::Dead>(*e).is_none())
-        .map(|(_, gt, mr, mat)| DrawCommand {
-            mesh: mr.mesh,
-            material: mat.handle,
-            model_matrix: gt.0.to_matrix(),
-            aabb: None,
+        .map(|(e, gt, mr, mat)| {
+            let mut model_matrix = gt.0.to_matrix();
+            if let Some(offset) = world.get::<GroundOffset>(e) {
+                model_matrix.cols[3][1] += offset.0;
+            }
+            DrawCommand {
+                mesh: mr.mesh,
+                material: mat.handle,
+                model_matrix,
+                aabb: None,
+            }
         })
         .collect()
 }
@@ -1483,14 +1489,25 @@ impl EditorApp {
             let read_pool = self.shared.lock_read();
             let w = read_pool.world();
             let draw_cmds: Vec<DrawCommand> = {
-                let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(w);
+                let query = Query::<(
+                    euca_ecs::Entity,
+                    &GlobalTransform,
+                    &MeshRenderer,
+                    &MaterialRef,
+                )>::new(w);
                 query
                     .iter()
-                    .map(|(gt, mr, mat)| DrawCommand {
-                        mesh: mr.mesh,
-                        material: mat.handle,
-                        model_matrix: gt.0.to_matrix(),
-                        aabb: None,
+                    .map(|(e, gt, mr, mat)| {
+                        let mut model_matrix = gt.0.to_matrix();
+                        if let Some(offset) = w.get::<GroundOffset>(e) {
+                            model_matrix.cols[3][1] += offset.0;
+                        }
+                        DrawCommand {
+                            mesh: mr.mesh,
+                            material: mat.handle,
+                            model_matrix,
+                            aabb: None,
+                        }
                     })
                     .collect()
             };

@@ -12,6 +12,16 @@ pub struct MeshRenderer {
     pub mesh: MeshHandle,
 }
 
+/// Visual vertical offset applied at render time so that a mesh's bottom
+/// sits on the ground plane, without altering the entity's logical position.
+///
+/// When present on an entity, the render extraction layer adds this value
+/// to the model matrix's Y translation. This keeps the entity's position
+/// at ground level for physics and gameplay calculations while the visual
+/// mesh is shifted upward.
+#[derive(Clone, Copy, Debug)]
+pub struct GroundOffset(pub f32);
+
 /// CPU-side mesh geometry (vertices and triangle indices).
 ///
 /// Upload to the GPU via [`Renderer::upload_mesh`] to obtain a [`MeshHandle`]

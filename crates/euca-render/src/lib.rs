@@ -132,7 +132,7 @@ pub use light::{AmbientLight, DirectionalLight, PointLight, SpotLight};
 pub use light_probe::{LightProbe, LightProbeGrid, evaluate_sh};
 pub use lod::{LodSettings, lod_select_system};
 pub use material::{AlphaMode, Material, MaterialHandle, MaterialRef};
-pub use mesh::{Mesh, MeshHandle, MeshRenderer};
+pub use mesh::{GroundOffset, Mesh, MeshHandle, MeshRenderer};
 pub use meshlet::{
     GpuMeshlet, MAX_MESHLET_TRIANGLES, MAX_MESHLET_VERTICES, Meshlet, MeshletMesh, meshletize,
 };

@@ -253,6 +253,9 @@ pub struct PendingMeshEntry {
     pub images: Vec<euca_asset::gltf_loader::GltfImage>,
     /// Index into `images` for the albedo texture.
     pub albedo_tex_index: Option<usize>,
+    /// Vertical offset to place the mesh bottom on the ground plane.
+    /// Computed from the mesh's AABB when loaded from a glTF file.
+    pub ground_offset: Option<f32>,
 }
 
 /// Returns true if the mesh name looks like a file path rather than a
@@ -325,6 +328,7 @@ pub(crate) fn resolve_mesh(
     }
 
     // 7. Push to pending queue for GPU upload in the render loop.
+    let ground_offset = gltf_mesh.bounds.map(|b| b.ground_offset());
     if let Some(pending) = w.resource_mut::<PendingMeshUpload>() {
         pending.queue.push(PendingMeshEntry {
             entity,
@@ -333,6 +337,7 @@ pub(crate) fn resolve_mesh(
             material: Some(gltf_mesh.material),
             images: scene.images,
             albedo_tex_index: gltf_mesh.albedo_tex_index,
+            ground_offset,
         });
     }
 
@@ -384,6 +389,11 @@ pub fn drain_pending_mesh_uploads(
         // Only attach MeshRenderer + MaterialRef if the entity is still alive.
         if w.is_alive(entry.entity) {
             w.insert(entry.entity, euca_render::MeshRenderer { mesh: handle });
+
+            // Attach GroundOffset so the mesh bottom sits on the ground plane.
+            if let Some(offset) = entry.ground_offset {
+                w.insert(entry.entity, euca_render::GroundOffset(offset));
+            }
 
             // Upload GLB material with textures if available, otherwise use default.
             let mat_handle = if let Some(ref mat) = entry.material {

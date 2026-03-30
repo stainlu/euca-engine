@@ -298,14 +298,20 @@ impl ClientApp {
 
 /// Collect draw commands from all entities with GlobalTransform + MeshRenderer + MaterialRef.
 fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
-    let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
+    let query = Query::<(Entity, &GlobalTransform, &MeshRenderer, &MaterialRef)>::new(world);
     query
         .iter()
-        .map(|(gt, mr, mat)| DrawCommand {
-            mesh: mr.mesh,
-            material: mat.handle,
-            model_matrix: gt.0.to_matrix(),
-            aabb: None,
+        .map(|(e, gt, mr, mat)| {
+            let mut model_matrix = gt.0.to_matrix();
+            if let Some(offset) = world.get::<GroundOffset>(e) {
+                model_matrix.cols[3][1] += offset.0;
+            }
+            DrawCommand {
+                mesh: mr.mesh,
+                material: mat.handle,
+                model_matrix,
+                aabb: None,
+            }
         })
         .collect()
 }
