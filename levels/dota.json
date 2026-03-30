@@ -37,12 +37,5 @@
     {"mesh": "assets/generated/hero_juggernaut.glb", "position": [-28, 0.5, 0], "color": "cyan", "health": 600, "team": 1, "physics_body": "Kinematic", "combat": true, "combat_damage": 50, "combat_range": 2, "combat_speed": 5, "combat_cooldown": 0.8, "role": "hero", "gold": 600, "gold_bounty": 300, "xp_bounty": 200, "player": true},
     {"mesh": "assets/generated/hero_sven.glb", "position": [28, 0.5, 0], "color": "red", "health": 600, "team": 2, "physics_body": "Kinematic", "combat": true, "combat_damage": 50, "combat_range": 2, "combat_speed": 5, "combat_cooldown": 0.8, "role": "hero", "gold": 600, "gold_bounty": 300, "xp_bounty": 200}
   ],
-  "rules": [
-    {"when": "timer:30", "filter": "any", "actions": ["spawn assets/generated/radiant_minion.glb -28,0.5,20 cyan 300 1 true -28,0,20:-10,0,20:10,0,20:28,0,20 3 0.4,0.4,0.4 40 60 minion 3"]},
-    {"when": "timer:30", "filter": "any", "actions": ["spawn assets/generated/radiant_minion.glb -28,0.5,0 cyan 300 1 true -28,0,0:-10,0,0:10,0,0:28,0,0 3 0.4,0.4,0.4 40 60 minion 3"]},
-    {"when": "timer:30", "filter": "any", "actions": ["spawn assets/generated/radiant_minion.glb -28,0.5,-20 cyan 300 1 true -28,0,-20:-10,0,-20:10,0,-20:28,0,-20 3 0.4,0.4,0.4 40 60 minion 3"]},
-    {"when": "timer:30", "filter": "any", "actions": ["spawn assets/generated/dire_minion.glb 28,0.5,20 red 300 2 true 28,0,20:10,0,20:-10,0,20:-28,0,20 3 0.4,0.4,0.4 40 60 minion 3"]},
-    {"when": "timer:30", "filter": "any", "actions": ["spawn assets/generated/dire_minion.glb 28,0.5,0 red 300 2 true 28,0,0:10,0,0:-10,0,0:-28,0,0 3 0.4,0.4,0.4 40 60 minion 3"]},
-    {"when": "timer:30", "filter": "any", "actions": ["spawn assets/generated/dire_minion.glb 28,0.5,-20 red 300 2 true 28,0,-20:10,0,-20:-10,0,-20:-28,0,-20 3 0.4,0.4,0.4 40 60 minion 3"]}
-  ]
+  "rules": []
 }

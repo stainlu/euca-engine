@@ -74,43 +74,105 @@ impl DotaMobaState {
         let vision_t1 = VisionMap::new(1, 128, 128, 1.0);
         let vision_t2 = VisionMap::new(2, 128, 128, 1.0);
 
-        // Three-lane wave spawner with standard DotA layout.
+        // Six-lane wave spawner: 3 lanes x 2 teams (Radiant + Dire).
         let lanes = vec![
+            // Radiant lanes (team 1) — march left-to-right.
             LaneConfig {
                 lane: Lane::Top,
                 waypoints: LaneWaypoints {
                     lane: Lane::Top,
                     points: vec![
-                        Vec3::new(-28.0, 0.0, 20.0),
-                        Vec3::new(0.0, 0.0, 20.0),
+                        Vec3::new(-28.0, 0.5, 20.0),
+                        Vec3::new(-10.0, 0.0, 20.0),
+                        Vec3::new(10.0, 0.0, 20.0),
                         Vec3::new(28.0, 0.0, 20.0),
                     ],
                 },
                 barracks_destroyed: false,
+                team: 1,
+                mesh: "assets/generated/radiant_minion.glb".to_string(),
+                color: "cyan".to_string(),
             },
             LaneConfig {
                 lane: Lane::Mid,
                 waypoints: LaneWaypoints {
                     lane: Lane::Mid,
                     points: vec![
-                        Vec3::new(-28.0, 0.0, 0.0),
-                        Vec3::new(0.0, 0.0, 0.0),
+                        Vec3::new(-28.0, 0.5, 0.0),
+                        Vec3::new(-10.0, 0.0, 0.0),
+                        Vec3::new(10.0, 0.0, 0.0),
                         Vec3::new(28.0, 0.0, 0.0),
                     ],
                 },
                 barracks_destroyed: false,
+                team: 1,
+                mesh: "assets/generated/radiant_minion.glb".to_string(),
+                color: "cyan".to_string(),
             },
             LaneConfig {
                 lane: Lane::Bot,
                 waypoints: LaneWaypoints {
                     lane: Lane::Bot,
                     points: vec![
-                        Vec3::new(-28.0, 0.0, -20.0),
-                        Vec3::new(0.0, 0.0, -20.0),
+                        Vec3::new(-28.0, 0.5, -20.0),
+                        Vec3::new(-10.0, 0.0, -20.0),
+                        Vec3::new(10.0, 0.0, -20.0),
                         Vec3::new(28.0, 0.0, -20.0),
                     ],
                 },
                 barracks_destroyed: false,
+                team: 1,
+                mesh: "assets/generated/radiant_minion.glb".to_string(),
+                color: "cyan".to_string(),
+            },
+            // Dire lanes (team 2) — march right-to-left.
+            LaneConfig {
+                lane: Lane::Top,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Top,
+                    points: vec![
+                        Vec3::new(28.0, 0.5, 20.0),
+                        Vec3::new(10.0, 0.0, 20.0),
+                        Vec3::new(-10.0, 0.0, 20.0),
+                        Vec3::new(-28.0, 0.0, 20.0),
+                    ],
+                },
+                barracks_destroyed: false,
+                team: 2,
+                mesh: "assets/generated/dire_minion.glb".to_string(),
+                color: "red".to_string(),
+            },
+            LaneConfig {
+                lane: Lane::Mid,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Mid,
+                    points: vec![
+                        Vec3::new(28.0, 0.5, 0.0),
+                        Vec3::new(10.0, 0.0, 0.0),
+                        Vec3::new(-10.0, 0.0, 0.0),
+                        Vec3::new(-28.0, 0.0, 0.0),
+                    ],
+                },
+                barracks_destroyed: false,
+                team: 2,
+                mesh: "assets/generated/dire_minion.glb".to_string(),
+                color: "red".to_string(),
+            },
+            LaneConfig {
+                lane: Lane::Bot,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Bot,
+                    points: vec![
+                        Vec3::new(28.0, 0.5, -20.0),
+                        Vec3::new(10.0, 0.0, -20.0),
+                        Vec3::new(-10.0, 0.0, -20.0),
+                        Vec3::new(-28.0, 0.0, -20.0),
+                    ],
+                },
+                barracks_destroyed: false,
+                team: 2,
+                mesh: "assets/generated/dire_minion.glb".to_string(),
+                color: "red".to_string(),
             },
         ];
 
@@ -473,6 +535,7 @@ fn apply_hero_template(world: &mut World, entity: Entity, hero_name: &str) {
     world.insert(entity, euca_gameplay::Health::new(def.health));
     world.insert(entity, euca_gameplay::Mana::new(def.mana, 5.0));
     world.insert(entity, euca_gameplay::Gold::new(def.gold));
+    world.insert(entity, euca_gameplay::HeroEconomy::new());
     world.insert(entity, euca_gameplay::Level::new(1));
     world.insert(entity, euca_gameplay::BaseStats(def.base_stats.clone()));
     world.insert(entity, euca_gameplay::StatGrowth(def.growth.clone()));
@@ -940,6 +1003,9 @@ impl DotaClientApp {
 
         // Economy & abilities
         euca_gameplay::gold_on_kill_system(&mut self.world);
+        euca_gameplay::economy_death_system(&mut self.world);
+        euca_gameplay::passive_income_system(&mut self.world, dt);
+        euca_gameplay::buyback_cooldown_system(&mut self.world, dt);
         euca_gameplay::xp_on_kill_system(&mut self.world);
         euca_gameplay::ability_tick_system(&mut self.world, dt);
         euca_gameplay::use_ability_system(&mut self.world);
@@ -1164,11 +1230,84 @@ fn moba_subsystems_tick(world: &mut World, dt: f32) {
     euca_gameplay::tick_fortification(&mut moba.fort_t1, dt);
     euca_gameplay::tick_fortification(&mut moba.fort_t2, dt);
 
-    // ── 9. Creep wave spawner tick ───────────────────────────────────
-    let _wave_events = moba.wave_spawner.tick(dt);
-    // Wave events are consumed by the existing timer-rule minion system
-    // in the level JSON. The spawner here tracks wave state for future
-    // integration with the creep_wave module's composition logic.
+    // ── 9. Creep wave spawner — spawn entities from wave events ──────
+    let game_time_minutes = world
+        .resource::<GameState>()
+        .map(|gs| gs.elapsed / 60.0)
+        .unwrap_or(0.0);
+
+    let wave_events = moba.wave_spawner.tick(dt);
+    for event in &wave_events {
+        let spawn_pos = event.waypoints.first().copied().unwrap_or(Vec3::ZERO);
+
+        // March direction: from first waypoint toward last.
+        let march_dir = if event.waypoints.len() >= 2 {
+            let last = event.waypoints.last().unwrap();
+            (*last - spawn_pos).normalize()
+        } else if event.team == 1 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(-1.0, 0.0, 0.0)
+        };
+
+        let creep_scale = Vec3::new(0.4, 0.4, 0.4);
+        let z_spacing = 1.0_f32;
+        let z_offset_base = -z_spacing * (event.composition.len() as f32 - 1.0) / 2.0;
+
+        for (i, &creep_type) in event.composition.iter().enumerate() {
+            let stats = euca_gameplay::creep_stats(creep_type);
+            let bounty = euca_gameplay::creep_bounty(creep_type, game_time_minutes);
+            let z_offset = z_offset_base + z_spacing * i as f32;
+
+            let mut transform = Transform::from_translation(Vec3::new(
+                spawn_pos.x,
+                spawn_pos.y,
+                spawn_pos.z + z_offset,
+            ));
+            transform.scale = creep_scale;
+
+            let entity = world.spawn(LocalTransform(transform));
+            world.insert(entity, GlobalTransform::default());
+            world.insert(entity, euca_gameplay::Health::new(stats.hp));
+            world.insert(entity, euca_gameplay::Team(event.team));
+            world.insert(entity, euca_gameplay::EntityRole::Minion);
+            world.insert(entity, euca_gameplay::GoldBounty(bounty as i32));
+
+            let mut combat = euca_gameplay::AutoCombat::new();
+            combat.damage = stats.damage;
+            combat.speed = 3.0;
+            world.insert(entity, combat);
+
+            world.insert(entity, euca_physics::Velocity::default());
+            world.insert(
+                entity,
+                euca_physics::PhysicsBody {
+                    body_type: euca_physics::RigidBodyType::Kinematic,
+                },
+            );
+            world.insert(entity, euca_gameplay::MarchDirection(march_dir));
+
+            // Emit RuleSpawnEvent so the rendering layer attaches visuals.
+            if let Some(events) = world.resource_mut::<Events>() {
+                events.send(euca_gameplay::RuleSpawnEvent {
+                    entity,
+                    mesh: event.mesh.clone(),
+                    color: Some(event.color.clone()),
+                    scale: Some([creep_scale.x, creep_scale.y, creep_scale.z]),
+                });
+            }
+        }
+
+        if !event.composition.is_empty() {
+            log::info!(
+                "Wave {} spawned {} creeps for {:?} lane (team {})",
+                event.wave_number,
+                event.composition.len(),
+                event.lane,
+                event.team
+            );
+        }
+    }
 
     // Return the state to the world.
     world.insert_resource(moba);
@@ -1453,9 +1592,11 @@ fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQua
     }
 
     // ── Gold display (bottom-left) ──
+    // Prefer HeroEconomy wallet total; fall back to legacy Gold component.
     let gold = world
-        .get::<euca_gameplay::Gold>(hero)
-        .map(|g| g.0)
+        .get::<euca_gameplay::HeroEconomy>(hero)
+        .map(|e| e.wallet.total() as i32)
+        .or_else(|| world.get::<euca_gameplay::Gold>(hero).map(|g| g.0))
         .unwrap_or(0);
     // Gold bar: width proportional to gold (max display 5000)
     let gold_bar_w = (gold as f32 / 5000.0).clamp(0.0, 1.0) * 150.0;

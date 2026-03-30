@@ -308,6 +308,10 @@ impl GameApp {
         }
 
         euca_gameplay::gold_on_kill_system(&mut self.world);
+        euca_gameplay::economy_death_system(&mut self.world);
+        euca_gameplay::passive_income_system(&mut self.world, dt);
+        euca_gameplay::buyback_cooldown_system(&mut self.world, dt);
+        euca_gameplay::wave_spawn_system(&mut self.world, dt);
         euca_gameplay::xp_on_kill_system(&mut self.world);
         euca_gameplay::ability_tick_system(&mut self.world, dt);
         euca_gameplay::use_ability_system(&mut self.world);

@@ -13,7 +13,7 @@ use crate::attributes::{
     AttributeGrowth, BaseAttributes, HeroAttributes, HeroTimings, PrimaryAttribute,
 };
 use crate::combat::{AutoCombat, EntityRole};
-use crate::economy::Gold;
+use crate::economy::{Gold, HeroEconomy};
 use crate::health::Health;
 use crate::inventory::Inventory;
 use crate::leveling::Level;
@@ -106,6 +106,7 @@ pub fn spawn_hero(world: &mut World, def: &HeroDef) -> Entity {
     world.insert(entity, Health::new(def.health));
     world.insert(entity, Mana::new(def.mana, 5.0));
     world.insert(entity, Gold::new(def.gold));
+    world.insert(entity, HeroEconomy::new());
     world.insert(entity, Level::new(1));
     world.insert(entity, Inventory::new(6));
     world.insert(entity, EntityRole::Hero);
@@ -216,6 +217,10 @@ mod tests {
         // Mana
         let mana = world.get::<Mana>(entity).unwrap();
         assert_eq!(mana.max, 300.0);
+
+        // HeroEconomy
+        let econ = world.get::<HeroEconomy>(entity).unwrap();
+        assert_eq!(econ.wallet.total(), crate::economy::STARTING_GOLD);
 
         // Inventory
         let inv = world.get::<Inventory>(entity).unwrap();

@@ -13,9 +13,11 @@
 //! Pure functions: `creep_stats`, `wave_composition`, `can_deny`,
 //! `denial_xp`, `last_hit_gold`.
 
+use euca_ecs::{Events, World};
 use euca_math::Vec3;
 
 use crate::economy::CreepType;
+use crate::rules::RuleSpawnEvent;
 
 // ── Creep stats ──
 
@@ -223,6 +225,12 @@ pub struct LaneConfig {
     pub waypoints: LaneWaypoints,
     /// Whether the enemy barracks for this lane has been destroyed.
     pub barracks_destroyed: bool,
+    /// Team that owns this lane's creeps (1 = Radiant, 2 = Dire).
+    pub team: u8,
+    /// Mesh path for creeps spawned in this lane (e.g. "assets/generated/radiant_minion.glb").
+    pub mesh: String,
+    /// Material color name for creeps (e.g. "cyan", "red").
+    pub color: String,
 }
 
 /// Event emitted when a wave should be spawned.
@@ -234,6 +242,14 @@ pub struct SpawnWaveEvent {
     pub wave_number: u32,
     /// The creep types to spawn in this wave.
     pub composition: Vec<CreepType>,
+    /// Team that owns these creeps.
+    pub team: u8,
+    /// Mesh path for these creeps.
+    pub mesh: String,
+    /// Material color name.
+    pub color: String,
+    /// Waypoints for marching.
+    pub waypoints: Vec<Vec3>,
 }
 
 /// Manages periodic creep wave spawning across all lanes.
@@ -285,10 +301,123 @@ impl WaveSpawner {
                     lane: lane_cfg.lane,
                     wave_number: self.wave_number,
                     composition,
+                    team: lane_cfg.team,
+                    mesh: lane_cfg.mesh.clone(),
+                    color: lane_cfg.color.clone(),
+                    waypoints: lane_cfg.waypoints.points.clone(),
                 }
             })
             .collect()
     }
+}
+
+// ── ECS system ──
+
+/// Tick the `WaveSpawner` resource and create creep entities for each
+/// triggered wave. Emits `RuleSpawnEvent` for each creep so the rendering
+/// layer can attach mesh/material.
+///
+/// Creep entities get: Health, Team, AutoCombat, MarchDirection,
+/// GoldBounty, EntityRole::Minion, Velocity, PhysicsBody, and transforms.
+pub fn wave_spawn_system(world: &mut World, dt: f32) {
+    // Take the spawner out of the world to avoid borrow conflicts.
+    let mut spawner = match world.remove_resource::<WaveSpawner>() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let game_time_minutes = world
+        .resource::<crate::game_state::GameState>()
+        .map(|gs| gs.elapsed / 60.0)
+        .unwrap_or(0.0);
+
+    let wave_events = spawner.tick(dt);
+
+    for event in &wave_events {
+        let spawn_pos = event.waypoints.first().copied().unwrap_or(Vec3::ZERO);
+
+        // March direction: from first waypoint toward last.
+        let march_dir = if event.waypoints.len() >= 2 {
+            let last = event.waypoints.last().unwrap();
+            (*last - spawn_pos).normalize()
+        } else {
+            // Default: team 1 marches +X, team 2 marches -X.
+            if event.team == 1 {
+                Vec3::new(1.0, 0.0, 0.0)
+            } else {
+                Vec3::new(-1.0, 0.0, 0.0)
+            }
+        };
+
+        let creep_scale = Vec3::new(0.4, 0.4, 0.4);
+        let z_spacing = 1.0_f32;
+        let z_offset_base = -z_spacing * (event.composition.len() as f32 - 1.0) / 2.0;
+
+        for (i, &creep_type) in event.composition.iter().enumerate() {
+            let stats = creep_stats(creep_type);
+            let bounty = crate::economy::creep_bounty(creep_type, game_time_minutes);
+            let z_offset = z_offset_base + z_spacing * i as f32;
+
+            let mut transform = euca_math::Transform::from_translation(Vec3::new(
+                spawn_pos.x,
+                spawn_pos.y,
+                spawn_pos.z + z_offset,
+            ));
+            transform.scale = creep_scale;
+
+            let entity = world.spawn(euca_scene::LocalTransform(transform));
+            world.insert(entity, euca_scene::GlobalTransform::default());
+            world.insert(entity, crate::health::Health::new(stats.hp));
+            world.insert(entity, crate::teams::Team(event.team));
+            world.insert(entity, crate::combat::EntityRole::Minion);
+            world.insert(entity, crate::economy::GoldBounty(bounty as i32));
+
+            let mut combat = crate::combat::AutoCombat::new();
+            combat.damage = stats.damage;
+            combat.speed = 3.0;
+            world.insert(entity, combat);
+
+            world.insert(entity, euca_physics::Velocity::default());
+            world.insert(
+                entity,
+                euca_physics::PhysicsBody {
+                    body_type: euca_physics::RigidBodyType::Kinematic,
+                },
+            );
+            world.insert(entity, crate::combat::MarchDirection(march_dir));
+
+            // Emit RuleSpawnEvent so the rendering layer attaches visuals.
+            if let Some(events) = world.resource_mut::<Events>() {
+                events.send(RuleSpawnEvent {
+                    entity,
+                    mesh: event.mesh.clone(),
+                    color: Some(event.color.clone()),
+                    scale: Some([creep_scale.x, creep_scale.y, creep_scale.z]),
+                });
+            }
+
+            log::debug!(
+                "Wave {} spawned {:?} creep (team {}) at ({:.0}, {:.0}, {:.0})",
+                event.wave_number,
+                creep_type,
+                event.team,
+                spawn_pos.x,
+                spawn_pos.y,
+                spawn_pos.z + z_offset
+            );
+        }
+
+        log::info!(
+            "Wave {} spawned {} creeps for {:?} lane (team {})",
+            event.wave_number,
+            event.composition.len(),
+            event.lane,
+            event.team
+        );
+    }
+
+    // Put the spawner back.
+    world.insert_resource(spawner);
 }
 
 // ── Tests ──
@@ -311,6 +440,9 @@ mod tests {
             lane,
             waypoints: default_waypoints(lane),
             barracks_destroyed: false,
+            team: 1,
+            mesh: "cube".to_string(),
+            color: "cyan".to_string(),
         }
     }
 
@@ -545,6 +677,9 @@ mod tests {
                 lane: Lane::Mid,
                 waypoints: default_waypoints(Lane::Mid),
                 barracks_destroyed: true,
+                team: 1,
+                mesh: "cube".to_string(),
+                color: "cyan".to_string(),
             },
             default_lane_config(Lane::Top),
         ]);
