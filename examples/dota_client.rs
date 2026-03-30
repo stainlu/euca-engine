@@ -1137,6 +1137,7 @@ impl DotaClientApp {
         // Unlocked after level loading completes (in load_level).
         world.insert_resource(MobaCamera {
             locked: true,
+            center: Vec3::new(-28.0, 0.0, -28.0), // Radiant base — hero spawn
             ..MobaCamera::default()
         });
         world.insert_resource(ViewportSize::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32));
