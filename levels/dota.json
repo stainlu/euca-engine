@@ -29,6 +29,8 @@
     {"mesh": "assets/generated/dire_tower.glb", "position": [20, 0.5, -20], "color": "red", "health": 1600, "team": 2, "role": "tower", "combat": true, "combat_style": "stationary", "combat_range": 7, "combat_damage": 60, "combat_cooldown": 1.0, "physics_body": "Static", "gold_bounty": 200, "xp_bounty": 150},
     {"mesh": "assets/generated/dire_tower.glb", "position": [10, 0.5, -20], "color": "red", "health": 1600, "team": 2, "role": "tower", "combat": true, "combat_style": "stationary", "combat_range": 7, "combat_damage": 60, "combat_cooldown": 1.0, "physics_body": "Static", "gold_bounty": 200, "xp_bounty": 150},
 
+    {"mesh": "sphere", "position": [0, 0.5, 15], "scale": [2.0, 2.0, 2.0], "color": "purple", "health": 6000, "team": 0, "physics_body": "Kinematic", "combat": true, "combat_damage": 75, "combat_range": 3, "combat_cooldown": 1.5, "combat_style": "stationary", "role": "structure", "gold_bounty": 200, "xp_bounty": 400},
+
     {"position": [-28, 0.1, 0], "spawn_point": 1},
     {"position": [28, 0.1, 0], "spawn_point": 2},
 

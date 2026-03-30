@@ -335,6 +335,394 @@ pub fn roshan_slam_tick(slam: &mut RoshanSlam, dt: f32) -> bool {
     false
 }
 
+// ── ECS integration ─────────────────────────────────────────────────────────
+
+use euca_ecs::{Entity, Events, Query, World};
+
+use crate::combat::EntityRole;
+use crate::health::{Dead, DeathEvent, Health};
+
+/// Roshan pit spawn position (matches levels/dota.json).
+const ROSHAN_PIT_POSITION: [f32; 3] = [0.0, 0.5, 15.0];
+
+/// Pickup collection radius — heroes within this distance auto-collect drops.
+const PICKUP_RADIUS: f32 = 2.0;
+
+/// World resource that tracks the Roshan boss lifecycle: respawn timer,
+/// Aegis duration, current entity, and game time scaling.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RoshanManager {
+    /// Core Roshan state (HP, kill count, respawn timer, etc.).
+    pub roshan: Roshan,
+    /// The ECS entity representing the live Roshan boss. `None` while dead.
+    pub entity: Option<Entity>,
+    /// Active Aegis (if one has been dropped and not yet consumed/expired).
+    pub aegis: Option<Aegis>,
+    /// Current game time in minutes — used for stat scaling on respawn.
+    pub game_time_minutes: f32,
+}
+
+impl RoshanManager {
+    /// Create a new manager, spawning Roshan with stats scaled to the current game time.
+    pub fn new(game_time_minutes: f32) -> Self {
+        Self {
+            roshan: spawn_roshan(game_time_minutes),
+            entity: None,
+            aegis: None,
+            game_time_minutes,
+        }
+    }
+}
+
+/// Marker component: this hero is carrying the Aegis of the Immortal.
+#[derive(Clone, Debug)]
+pub struct AegisHolder;
+
+/// Marker component: this entity is a pickup dropped by Roshan (Aegis or Cheese).
+#[derive(Clone, Debug)]
+pub enum RoshanPickup {
+    /// Aegis pickup — first hero to walk over it gains `AegisHolder`.
+    Aegis,
+    /// Cheese pickup — first hero to walk over it gets healed.
+    Cheese,
+}
+
+/// Timer for Aegis resurrection delay (5 seconds between death and revive).
+#[derive(Clone, Debug)]
+pub struct AegisResurrectTimer {
+    pub remaining: f32,
+}
+
+/// Roshan lifecycle system — runs every frame.
+///
+/// Responsibilities:
+/// 1. Track game time for stat scaling.
+/// 2. Detect Roshan entity death (via `Dead` marker) and process drops.
+/// 3. Tick respawn timer while Roshan is dead.
+/// 4. Respawn Roshan with scaled stats when the timer completes.
+/// 5. Tick Aegis expiry timer.
+/// 6. Handle pickup collection (heroes walking over Aegis/Cheese).
+pub fn roshan_system(world: &mut World, dt: f32) {
+    // Read game time from GameState if available.
+    let game_time = world
+        .resource::<crate::game_state::GameState>()
+        .map(|gs| gs.elapsed / 60.0)
+        .unwrap_or(0.0);
+
+    // Extract manager state (we need mutable world access for entity operations).
+    let mut mgr = match world.resource::<RoshanManager>().cloned() {
+        Some(m) => m,
+        None => return,
+    };
+    mgr.game_time_minutes = game_time;
+
+    // ── 1. Detect Roshan death ──────────────────────────────────────────
+    if let Some(rosh_entity) = mgr.entity {
+        let is_dead = world.get::<Dead>(rosh_entity).is_some();
+        if is_dead && mgr.roshan.alive {
+            // Roshan just died — process drops.
+            let drops = roshan_dies(&mut mgr.roshan);
+            let drop_pos = world
+                .get::<euca_scene::LocalTransform>(rosh_entity)
+                .map(|lt| lt.0.translation)
+                .unwrap_or(euca_math::Vec3::new(
+                    ROSHAN_PIT_POSITION[0],
+                    ROSHAN_PIT_POSITION[1],
+                    ROSHAN_PIT_POSITION[2],
+                ));
+
+            // Distribute gold bounty to the killer's team.
+            let killer_team = world
+                .resource::<Events>()
+                .and_then(|events| {
+                    events
+                        .read::<DeathEvent>()
+                        .find(|de| de.entity == rosh_entity)
+                        .and_then(|de| de.killer)
+                })
+                .and_then(|killer| world.get::<crate::teams::Team>(killer).map(|t| t.0));
+
+            if let Some(team) = killer_team {
+                let gold_per_hero = drops.gold_bounty as i32;
+                let heroes: Vec<Entity> = {
+                    let q = Query::<(Entity, &crate::teams::Team, &EntityRole)>::new(world);
+                    q.iter()
+                        .filter(|(_, t, r)| t.0 == team && **r == EntityRole::Hero)
+                        .map(|(e, _, _)| e)
+                        .collect()
+                };
+                for hero in heroes {
+                    if let Some(gold) = world.get_mut::<crate::economy::Gold>(hero) {
+                        gold.0 += gold_per_hero;
+                    }
+                }
+            }
+
+            // Spawn Aegis pickup.
+            if drops.aegis {
+                let aegis = new_aegis();
+                mgr.aegis = Some(aegis);
+                spawn_pickup(world, drop_pos, RoshanPickup::Aegis);
+            }
+
+            // Spawn Cheese pickup on 2nd+ kill.
+            if drops.cheese {
+                spawn_pickup(world, drop_pos, RoshanPickup::Cheese);
+            }
+
+            // Remove the dead Roshan entity so it doesn't linger.
+            world.despawn(rosh_entity);
+            mgr.entity = None;
+
+            log::info!(
+                "Roshan killed (kill #{}) — drops: aegis={}, cheese={}, refresher={}",
+                mgr.roshan.kill_count,
+                drops.aegis,
+                drops.cheese,
+                drops.refresher_shard,
+            );
+        }
+    }
+
+    // ── 2. Tick respawn timer ───────────────────────────────────────────
+    if !mgr.roshan.alive && mgr.entity.is_none() {
+        let ready = tick_roshan(&mut mgr.roshan, dt);
+        if ready {
+            respawn_roshan(&mut mgr.roshan, mgr.game_time_minutes);
+            let entity = spawn_roshan_entity(world, &mgr.roshan);
+            mgr.entity = Some(entity);
+            log::info!(
+                "Roshan respawned (HP={}, armor={}, damage={})",
+                mgr.roshan.max_hp,
+                mgr.roshan.armor,
+                mgr.roshan.damage,
+            );
+        }
+    }
+
+    // ── 3. Tick Aegis expiry ────────────────────────────────────────────
+    if let Some(ref mut aegis) = mgr.aegis
+        && !aegis.consumed
+    {
+        let expired = tick_aegis(aegis, dt);
+        if expired {
+            // Remove AegisHolder from the carrier.
+            if let Some(holder_id) = aegis.holder {
+                let holder_entity = find_entity_by_index(world, holder_id);
+                if let Some(e) = holder_entity {
+                    world.remove::<AegisHolder>(e);
+                }
+            }
+            mgr.aegis = None;
+            log::info!("Aegis expired (5 minutes elapsed)");
+        }
+    }
+
+    // ── 4. Handle pickup collection ─────────────────────────────────────
+    collect_roshan_pickups(world, &mut mgr);
+
+    // Write manager state back.
+    if let Some(res) = world.resource_mut::<RoshanManager>() {
+        *res = mgr;
+    }
+}
+
+/// Aegis resurrection system — intercepts hero deaths.
+///
+/// When a hero with `AegisHolder` dies:
+/// 1. Start a 5-second resurrection timer (`AegisResurrectTimer`).
+/// 2. After the timer completes, revive the hero at full HP/mana.
+/// 3. Remove the Aegis.
+pub fn aegis_system(world: &mut World, dt: f32) {
+    // ── Phase 1: Detect deaths of Aegis holders ─────────────────────────
+    let death_events: Vec<DeathEvent> = world
+        .resource::<Events>()
+        .map(|e| e.read::<DeathEvent>().cloned().collect())
+        .unwrap_or_default();
+
+    for death in &death_events {
+        if world.get::<AegisHolder>(death.entity).is_some() {
+            // Start resurrection timer instead of normal respawn.
+            world.insert(
+                death.entity,
+                AegisResurrectTimer {
+                    remaining: AEGIS_RESURRECT_DELAY,
+                },
+            );
+            // Remove AegisHolder — single use.
+            world.remove::<AegisHolder>(death.entity);
+
+            // Mark Aegis as consumed in the manager.
+            if let Some(mgr) = world.resource_mut::<RoshanManager>()
+                && let Some(ref mut aegis) = mgr.aegis
+            {
+                aegis.consumed = true;
+            }
+
+            log::info!(
+                "Aegis triggered on entity {} — resurrection in {} seconds",
+                death.entity,
+                AEGIS_RESURRECT_DELAY,
+            );
+        }
+    }
+
+    // ── Phase 2: Tick resurrection timers ────────────────────────────────
+    let timers: Vec<Entity> = {
+        let q = Query::<(Entity, &AegisResurrectTimer)>::new(world);
+        q.iter().map(|(e, _)| e).collect()
+    };
+
+    for entity in timers {
+        let ready = if let Some(timer) = world.get_mut::<AegisResurrectTimer>(entity) {
+            timer.remaining -= dt;
+            timer.remaining <= 0.0
+        } else {
+            false
+        };
+
+        if ready {
+            // Revive at full HP.
+            if let Some(health) = world.get_mut::<Health>(entity) {
+                health.current = health.max;
+            }
+            // Restore full mana.
+            if let Some(mana) = world.get_mut::<crate::abilities::Mana>(entity) {
+                mana.current = mana.max;
+            }
+            // Remove Dead marker and resurrection timer.
+            world.remove::<Dead>(entity);
+            world.remove::<AegisResurrectTimer>(entity);
+            // Also remove any pending RespawnTimer so normal respawn doesn't conflict.
+            world.remove::<crate::teams::RespawnTimer>(entity);
+
+            log::info!("Entity {} resurrected by Aegis", entity);
+        }
+    }
+}
+
+// ── Internal helpers ────────────────────────────────────────────────────────
+
+/// Spawn a Roshan ECS entity with the given stats.
+fn spawn_roshan_entity(world: &mut World, roshan: &Roshan) -> Entity {
+    let pos = euca_math::Vec3::new(
+        ROSHAN_PIT_POSITION[0],
+        ROSHAN_PIT_POSITION[1],
+        ROSHAN_PIT_POSITION[2],
+    );
+    let mut transform = euca_math::Transform::from_translation(pos);
+    transform.scale = euca_math::Vec3::new(2.0, 2.0, 2.0);
+
+    let entity = world.spawn(euca_scene::LocalTransform(transform));
+    world.insert(entity, euca_scene::GlobalTransform::default());
+    world.insert(entity, Health::new(roshan.max_hp));
+    world.insert(entity, crate::teams::Team(0)); // Neutral team
+    world.insert(entity, EntityRole::Structure); // Use structure role (stationary boss)
+    world.insert(
+        entity,
+        euca_physics::PhysicsBody {
+            body_type: euca_physics::RigidBodyType::Kinematic,
+        },
+    );
+
+    let mut combat = crate::combat::AutoCombat::new();
+    combat.damage = roshan.damage;
+    combat.range = 3.0;
+    combat.cooldown = 1.5;
+    combat.attack_style = crate::combat::AttackStyle::Stationary;
+    combat.speed = 0.0;
+    world.insert(entity, combat);
+
+    world.insert(entity, crate::economy::GoldBounty(200));
+    world.insert(entity, crate::leveling::XpBounty(400));
+
+    entity
+}
+
+/// Spawn a pickup entity at the given position.
+fn spawn_pickup(world: &mut World, pos: euca_math::Vec3, pickup: RoshanPickup) {
+    let mut transform = euca_math::Transform::from_translation(pos);
+    transform.scale = euca_math::Vec3::new(0.5, 0.5, 0.5);
+
+    let entity = world.spawn(euca_scene::LocalTransform(transform));
+    world.insert(entity, euca_scene::GlobalTransform::default());
+    world.insert(entity, pickup);
+}
+
+/// Collect pickups near heroes.
+fn collect_roshan_pickups(world: &mut World, mgr: &mut RoshanManager) {
+    // Gather pickup positions and entities.
+    let pickups: Vec<(Entity, euca_math::Vec3, RoshanPickup)> = {
+        let q = Query::<(Entity, &euca_scene::LocalTransform, &RoshanPickup)>::new(world);
+        q.iter()
+            .map(|(e, lt, p)| (e, lt.0.translation, p.clone()))
+            .collect()
+    };
+
+    if pickups.is_empty() {
+        return;
+    }
+
+    // Gather hero positions.
+    let heroes: Vec<(Entity, euca_math::Vec3)> = {
+        let q = Query::<(Entity, &euca_scene::LocalTransform, &EntityRole)>::new(world);
+        q.iter()
+            .filter(|(e, _, r)| **r == EntityRole::Hero && world.get::<Dead>(*e).is_none())
+            .map(|(e, lt, _)| (e, lt.0.translation))
+            .collect()
+    };
+
+    let mut to_despawn = Vec::new();
+
+    for (pickup_entity, pickup_pos, pickup_type) in &pickups {
+        for (hero_entity, hero_pos) in &heroes {
+            let dx = hero_pos.x - pickup_pos.x;
+            let dz = hero_pos.z - pickup_pos.z;
+            let dist_sq = dx * dx + dz * dz;
+
+            if dist_sq <= PICKUP_RADIUS * PICKUP_RADIUS {
+                match pickup_type {
+                    RoshanPickup::Aegis => {
+                        world.insert(*hero_entity, AegisHolder);
+                        if let Some(ref mut aegis) = mgr.aegis {
+                            pick_up_aegis(aegis, hero_entity.index() as u64);
+                        }
+                        to_despawn.push(*pickup_entity);
+                        log::info!("Hero {} picked up Aegis", hero_entity);
+                    }
+                    RoshanPickup::Cheese => {
+                        // Instant HP + mana restore.
+                        let cheese = new_cheese();
+                        let (hp_heal, mana_heal) = use_cheese(&cheese);
+                        if let Some(health) = world.get_mut::<Health>(*hero_entity) {
+                            health.current = (health.current + hp_heal).min(health.max);
+                        }
+                        if let Some(mana) = world.get_mut::<crate::abilities::Mana>(*hero_entity) {
+                            mana.current = (mana.current + mana_heal).min(mana.max);
+                        }
+                        to_despawn.push(*pickup_entity);
+                        log::info!(
+                            "Hero {} picked up Cheese (+{hp_heal} HP, +{mana_heal} mana)",
+                            hero_entity
+                        );
+                    }
+                }
+                break; // One hero collects this pickup.
+            }
+        }
+    }
+
+    for entity in to_despawn {
+        world.despawn(entity);
+    }
+}
+
+/// Find an ECS entity by its raw index. Used to map Aegis holder IDs back to entities.
+fn find_entity_by_index(world: &World, index: u64) -> Option<Entity> {
+    let q = Query::<Entity>::new(world);
+    q.iter().find(|e| e.index() as u64 == index)
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

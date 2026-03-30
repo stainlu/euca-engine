@@ -139,6 +139,7 @@ impl GameApp {
             ("cyan", Material::new([0.0, 0.9, 0.9, 1.0], 0.0, 0.4)),
             ("magenta", Material::new([0.9, 0.0, 0.9, 1.0], 0.0, 0.4)),
             ("orange", Material::new([1.0, 0.5, 0.0, 1.0], 0.0, 0.4)),
+            ("purple", Material::new([0.5, 0.0, 0.8, 1.0], 0.0, 0.4)),
         ];
         let mut materials = std::collections::HashMap::new();
         let mut blue = None;
@@ -276,6 +277,10 @@ impl GameApp {
             euca_gameplay::respawn_system(&mut self.world, dt);
         }
         euca_gameplay::corpse_cleanup_system(&mut self.world, dt);
+
+        // Roshan lifecycle + Aegis resurrection
+        euca_gameplay::roshan_system(&mut self.world, dt);
+        euca_gameplay::aegis_system(&mut self.world, dt);
 
         // Attach visuals to rule-spawned entities
         let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = self
