@@ -74,67 +74,66 @@ impl DotaMobaState {
         let vision_t1 = VisionMap::new(1, 128, 128, 1.0);
         let vision_t2 = VisionMap::new(2, 128, 128, 1.0);
 
-        // Six-lane wave spawner: 3 lanes x 2 teams (Radiant + Dire).
+        // Six-lane wave spawner: 3 L-shaped lanes x 2 teams (Radiant + Dire).
         let lanes = vec![
-            // Radiant lanes (team 1) — march left-to-right.
+            // Radiant lanes (team 1) — L-shaped paths from bottom-left base.
             LaneConfig {
                 lane: Lane::Top,
                 waypoints: LaneWaypoints {
                     lane: Lane::Top,
                     points: vec![
-                        Vec3::new(-28.0, 0.5, 20.0),
-                        Vec3::new(-10.0, 0.0, 20.0),
-                        Vec3::new(10.0, 0.0, 20.0),
-                        Vec3::new(28.0, 0.0, 20.0),
-                    ],
-                },
-                barracks_destroyed: false,
-                team: 1,
-                mesh: "assets/generated/radiant_minion.glb".to_string(),
-                color: "cyan".to_string(),
-            },
-            LaneConfig {
-                lane: Lane::Mid,
-                waypoints: LaneWaypoints {
-                    lane: Lane::Mid,
-                    points: vec![
-                        Vec3::new(-28.0, 0.5, 0.0),
-                        Vec3::new(-10.0, 0.0, 0.0),
-                        Vec3::new(10.0, 0.0, 0.0),
-                        Vec3::new(28.0, 0.0, 0.0),
-                    ],
-                },
-                barracks_destroyed: false,
-                team: 1,
-                mesh: "assets/generated/radiant_minion.glb".to_string(),
-                color: "cyan".to_string(),
-            },
-            LaneConfig {
-                lane: Lane::Bot,
-                waypoints: LaneWaypoints {
-                    lane: Lane::Bot,
-                    points: vec![
-                        Vec3::new(-28.0, 0.5, -20.0),
-                        Vec3::new(-10.0, 0.0, -20.0),
-                        Vec3::new(10.0, 0.0, -20.0),
-                        Vec3::new(28.0, 0.0, -20.0),
-                    ],
-                },
-                barracks_destroyed: false,
-                team: 1,
-                mesh: "assets/generated/radiant_minion.glb".to_string(),
-                color: "cyan".to_string(),
-            },
-            // Dire lanes (team 2) — march right-to-left.
-            LaneConfig {
-                lane: Lane::Top,
-                waypoints: LaneWaypoints {
-                    lane: Lane::Top,
-                    points: vec![
-                        Vec3::new(28.0, 0.5, 20.0),
-                        Vec3::new(10.0, 0.0, 20.0),
-                        Vec3::new(-10.0, 0.0, 20.0),
+                        Vec3::new(-28.0, 0.0, -15.0),
                         Vec3::new(-28.0, 0.0, 20.0),
+                        Vec3::new(28.0, 0.0, 20.0),
+                        Vec3::new(28.0, 0.0, 15.0),
+                    ],
+                },
+                barracks_destroyed: false,
+                team: 1,
+                mesh: "assets/generated/radiant_minion.glb".to_string(),
+                color: "cyan".to_string(),
+            },
+            LaneConfig {
+                lane: Lane::Mid,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Mid,
+                    points: vec![
+                        Vec3::new(-28.0, 0.0, -15.0),
+                        Vec3::new(0.0, 0.0, 0.0),
+                        Vec3::new(28.0, 0.0, 15.0),
+                    ],
+                },
+                barracks_destroyed: false,
+                team: 1,
+                mesh: "assets/generated/radiant_minion.glb".to_string(),
+                color: "cyan".to_string(),
+            },
+            LaneConfig {
+                lane: Lane::Bot,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Bot,
+                    points: vec![
+                        Vec3::new(-28.0, 0.0, -15.0),
+                        Vec3::new(-28.0, 0.0, -20.0),
+                        Vec3::new(28.0, 0.0, -20.0),
+                        Vec3::new(28.0, 0.0, 15.0),
+                    ],
+                },
+                barracks_destroyed: false,
+                team: 1,
+                mesh: "assets/generated/radiant_minion.glb".to_string(),
+                color: "cyan".to_string(),
+            },
+            // Dire lanes (team 2) — L-shaped paths from top-right base (reverse of Radiant).
+            LaneConfig {
+                lane: Lane::Top,
+                waypoints: LaneWaypoints {
+                    lane: Lane::Top,
+                    points: vec![
+                        Vec3::new(28.0, 0.0, 15.0),
+                        Vec3::new(28.0, 0.0, 20.0),
+                        Vec3::new(-28.0, 0.0, 20.0),
+                        Vec3::new(-28.0, 0.0, -15.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -147,10 +146,9 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Mid,
                     points: vec![
-                        Vec3::new(28.0, 0.5, 0.0),
-                        Vec3::new(10.0, 0.0, 0.0),
-                        Vec3::new(-10.0, 0.0, 0.0),
-                        Vec3::new(-28.0, 0.0, 0.0),
+                        Vec3::new(28.0, 0.0, 15.0),
+                        Vec3::new(0.0, 0.0, 0.0),
+                        Vec3::new(-28.0, 0.0, -15.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -163,10 +161,10 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Bot,
                     points: vec![
-                        Vec3::new(28.0, 0.5, -20.0),
-                        Vec3::new(10.0, 0.0, -20.0),
-                        Vec3::new(-10.0, 0.0, -20.0),
+                        Vec3::new(28.0, 0.0, 15.0),
+                        Vec3::new(28.0, 0.0, -20.0),
                         Vec3::new(-28.0, 0.0, -20.0),
+                        Vec3::new(-28.0, 0.0, -15.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -665,27 +663,33 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
         ..Default::default()
     });
 
-    // Tree lines between lanes — defines MOBA map geography
+    // Trees in jungle areas between L-shaped lanes — defines MOBA map geography
     spawn_tree_lines(world, cube, tree_mat);
 }
 
-/// Spawn tree entities between the 3 lanes to define map geography.
-/// Trees are placed in the gaps: between top lane (z=20) and mid (z=0),
-/// and between mid (z=0) and bot lane (z=-20), plus jungle flanks.
+/// Spawn tree entities in the jungle areas between L-shaped lanes.
+/// Lanes form an L-pattern: top lane (left edge + top edge), mid (diagonal),
+/// bot lane (bottom edge + right edge). Trees fill the interior jungle.
 fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandle) {
-    // Tree zones: (x_min, x_max, z_min, z_max) — areas between lanes
+    // Fill the full map area with trees, but skip lane corridors.
+    // The jungle zones are the two triangular interior areas between lanes.
     let zones: &[(f32, f32, f32, f32)] = &[
-        // Between top and mid lanes (z=6..14)
-        (-28.0, 28.0, 6.0, 14.0),
-        // Between mid and bot lanes (z=-14..-6)
-        (-28.0, 28.0, -14.0, -6.0),
-        // Top flank (above top lane)
-        (-28.0, 28.0, 24.0, 28.0),
-        // Bot flank (below bot lane)
-        (-28.0, 28.0, -28.0, -24.0),
+        // Upper-left jungle (between top lane and mid lane)
+        (-24.0, 8.0, 4.0, 16.0),
+        // Lower-right jungle (between mid lane and bot lane)
+        (-8.0, 24.0, -16.0, -4.0),
+        // Top-left corner trees
+        (-28.0, -24.0, 24.0, 28.0),
+        // Bottom-right corner trees
+        (24.0, 28.0, -28.0, -24.0),
+        // Far top-right corner (behind Dire base)
+        (20.0, 28.0, 24.0, 28.0),
+        // Far bottom-left corner (behind Radiant base)
+        (-28.0, -20.0, -28.0, -24.0),
     ];
 
     let spacing = 3.0f32;
+    let lane_half_width = 3.0f32;
     let mut seed: u32 = 42;
 
     for &(x_min, x_max, z_min, z_max) in zones {
@@ -704,10 +708,18 @@ fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandl
                 let px = x + ox;
                 let pz = z + oz;
 
-                // Skip trees on lane paths (z≈20, z≈0, z≈-20, ±3 wide)
-                let on_lane =
-                    (pz.abs() < 3.0) || ((pz - 20.0).abs() < 3.0) || ((pz + 20.0).abs() < 3.0);
-                if !on_lane {
+                // Skip trees on L-shaped lane paths:
+                // Top lane: left edge (x≈-28, z>-15) + top edge (z≈20, x>-28)
+                let on_top = ((px + 28.0).abs() < lane_half_width && pz > -15.0)
+                    || ((pz - 20.0).abs() < lane_half_width && px > -28.0);
+                // Mid lane: diagonal from (-28,-15) to (28,15) — slope z/x ≈ 30/56
+                let mid_z_at_x = (px + 28.0) * 30.0 / 56.0 - 15.0;
+                let on_mid = (pz - mid_z_at_x).abs() < lane_half_width;
+                // Bot lane: bottom edge (z≈-20, x<28) + right edge (x≈28, z<15)
+                let on_bot = ((pz + 20.0).abs() < lane_half_width && px < 28.0)
+                    || ((px - 28.0).abs() < lane_half_width && pz < 15.0);
+
+                if !on_top && !on_mid && !on_bot {
                     let pos = Vec3::new(px, scale * 0.5, pz);
                     let mut xform = Transform::from_translation(pos);
                     xform.scale = Vec3::new(0.8, scale, 0.8);
@@ -1786,16 +1798,74 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
         (map_x + u * map_size, map_y + (1.0 - v) * map_size)
     };
 
-    // Draw lane paths as thin horizontal rectangles
-    for lane_z in [20.0f32, 0.0, -20.0] {
-        let (lx, ly) = to_minimap(world_min_x, lane_z);
-        let (rx, _) = to_minimap(world_max_x, lane_z);
+    // Draw L-shaped lane paths on minimap.
+    let lane_color = [0.3, 0.25, 0.15, 0.6]; // dirt-colored lane
+    let lane_w = 2.0f32;
+
+    // Top lane: left edge (x=-28, from z=-15 to z=20) + top edge (z=20, from x=-28 to x=28)
+    {
+        let (lx, ly_top) = to_minimap(-28.0, 20.0);
+        let (_, ly_bot) = to_minimap(-28.0, -15.0);
+        quads.push(UiQuad {
+            x: lx - 1.0,
+            y: ly_top,
+            w: lane_w,
+            h: ly_bot - ly_top,
+            color: lane_color,
+        });
+        let (rx, _) = to_minimap(28.0, 20.0);
+        quads.push(UiQuad {
+            x: lx,
+            y: ly_top - 1.0,
+            w: rx - lx,
+            h: lane_w,
+            color: lane_color,
+        });
+    }
+    // Mid lane: diagonal approximated as a thin strip from (-28,-15) to (28,15).
+    // Draw several small quads along the diagonal.
+    {
+        let steps = 20;
+        for i in 0..steps {
+            let t0 = i as f32 / steps as f32;
+            let t1 = (i + 1) as f32 / steps as f32;
+            let x0 = -28.0 + t0 * 56.0;
+            let z0 = -15.0 + t0 * 30.0;
+            let x1 = -28.0 + t1 * 56.0;
+            let z1 = -15.0 + t1 * 30.0;
+            let (sx, sy) = to_minimap(x0, z0);
+            let (ex, ey) = to_minimap(x1, z1);
+            let dx = ex - sx;
+            let dy = ey - sy;
+            let len = (dx * dx + dy * dy).sqrt().max(1.0);
+            quads.push(UiQuad {
+                x: sx,
+                y: sy.min(ey) - 0.5,
+                w: len,
+                h: lane_w,
+                color: lane_color,
+            });
+        }
+    }
+    // Bot lane: bottom edge (z=-20, from x=-28 to x=28) + right edge (x=28, from z=-20 to z=15)
+    {
+        let (lx, ly) = to_minimap(-28.0, -20.0);
+        let (rx, _) = to_minimap(28.0, -20.0);
         quads.push(UiQuad {
             x: lx,
             y: ly - 1.0,
             w: rx - lx,
-            h: 2.0,
-            color: [0.3, 0.25, 0.15, 0.6], // dirt-colored lane
+            h: lane_w,
+            color: lane_color,
+        });
+        let (_, ry_top) = to_minimap(28.0, 15.0);
+        let (rx2, ry_bot) = to_minimap(28.0, -20.0);
+        quads.push(UiQuad {
+            x: rx2 - 1.0,
+            y: ry_top,
+            w: lane_w,
+            h: ry_bot - ry_top,
+            color: lane_color,
         });
     }
 
