@@ -1304,8 +1304,18 @@ impl DotaClientApp {
         // edge-pan speed * huge_delta drifts the camera hundreds of units.
         self.world.resource_mut::<Time>().unwrap().update();
 
-        // Unlock camera now that loading is complete — enables edge-pan.
+        // Set camera to player hero position and unlock for edge-pan.
+        let hero_pos = {
+            let q = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(&self.world);
+            q.iter().next().and_then(|(e, _)| {
+                self.world.get::<euca_scene::LocalTransform>(e)
+                    .map(|lt| lt.0.translation)
+            })
+        };
         if let Some(cam) = self.world.resource_mut::<MobaCamera>() {
+            if let Some(pos) = hero_pos {
+                cam.center = pos;
+            }
             cam.locked = false;
         }
     }
