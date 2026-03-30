@@ -1331,6 +1331,7 @@ impl DotaClientApp {
             let vh = gpu.surface_config.height as f32;
             let mut ui_quads = build_health_bar_quads(&self.world, &vp, vw, vh);
             ui_quads.extend(build_hud_quads(&self.world, vw, vh));
+            ui_quads.extend(build_top_bar_quads(&self.world, vw, vh));
             ui_quads.extend(build_minimap_quads(&self.world, vw, vh));
             if let Some(ui) = self.ui_overlay.as_mut() {
                 ui.render(&*gpu, &mut encoder, &view, &ui_quads, vw, vh);
@@ -2038,7 +2039,9 @@ fn build_health_bar_quads(
     quads
 }
 
-/// Build HUD quads: ability cooldowns, gold, level display.
+/// Build the full Dota 2-style HUD: bottom panel with portrait, HP/mana bars,
+/// ability slots (Q/W/E/R) with cooldowns and hotkey labels, item slots (3x2),
+/// gold counter, level/XP indicator.
 fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQuad> {
     let mut quads = Vec::new();
 
@@ -2052,150 +2055,545 @@ fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQua
         None => return quads,
     };
 
-    // ── Ability bar (bottom-center) ──
-    let ability_bar_y = viewport_h - 60.0;
-    let slot_size = 50.0;
-    let gap = 8.0;
-    let total_w = slot_size * 4.0 + gap * 3.0;
-    let start_x = (viewport_w - total_w) * 0.5;
+    // ── Layout constants ──
+    let panel_h = viewport_h * 0.15; // bottom 15% of screen
+    let panel_y = viewport_h - panel_h;
+    let panel_w = viewport_w * 0.72; // centered panel width
+    let panel_x = (viewport_w - panel_w) * 0.5;
 
-    let abilities = world.get::<euca_gameplay::AbilitySet>(hero);
-    let _slot_labels = ["Q", "W", "E", "R"];
+    let portrait_size = panel_h - 16.0; // square portrait area
+    let bar_region_w = panel_w * 0.28; // HP/mana bar region width
+    let ability_slot_size = (panel_h - 24.0) * 0.85; // ability square size
+    let ability_gap = 6.0;
+    let item_slot_size = (panel_h - 30.0) * 0.42; // smaller item squares
+    let item_gap = 4.0;
 
-    for i in 0..4u32 {
-        let x = start_x + (slot_size + gap) * i as f32;
+    // ── 1. Dark background panel ──
+    quads.push(UiQuad {
+        x: panel_x,
+        y: panel_y,
+        w: panel_w,
+        h: panel_h,
+        color: [0.08, 0.08, 0.1, 0.9],
+    });
 
-        // Slot background
+    // Thin top border for the panel
+    quads.push(UiQuad {
+        x: panel_x,
+        y: panel_y,
+        w: panel_w,
+        h: 2.0,
+        color: [0.25, 0.25, 0.3, 0.8],
+    });
+
+    // ── 2. Portrait area (left side of panel) ──
+    let portrait_x = panel_x + 8.0;
+    let portrait_y = panel_y + 8.0;
+    let team = world
+        .get::<euca_gameplay::Team>(hero)
+        .map(|t| t.0)
+        .unwrap_or(1);
+
+    // Portrait border (team-colored)
+    let portrait_border_color = if team == 1 {
+        [0.1, 0.6, 0.6, 0.8] // Radiant: cyan
+    } else {
+        [0.6, 0.15, 0.1, 0.8] // Dire: red
+    };
+    quads.push(UiQuad {
+        x: portrait_x - 2.0,
+        y: portrait_y - 2.0,
+        w: portrait_size + 4.0,
+        h: portrait_size + 4.0,
+        color: portrait_border_color,
+    });
+
+    // Portrait fill (dark with team-tinted color to represent hero)
+    let portrait_fill = if team == 1 {
+        [0.08, 0.18, 0.22, 0.95] // Radiant: dark teal
+    } else {
+        [0.22, 0.08, 0.06, 0.95] // Dire: dark crimson
+    };
+    quads.push(UiQuad {
+        x: portrait_x,
+        y: portrait_y,
+        w: portrait_size,
+        h: portrait_size,
+        color: portrait_fill,
+    });
+
+    // Portrait inner detail — a smaller brighter square to suggest a face
+    let inner_margin = portrait_size * 0.2;
+    quads.push(UiQuad {
+        x: portrait_x + inner_margin,
+        y: portrait_y + inner_margin * 0.6,
+        w: portrait_size - inner_margin * 2.0,
+        h: portrait_size - inner_margin * 1.5,
+        color: if team == 1 {
+            [0.12, 0.3, 0.35, 0.7]
+        } else {
+            [0.35, 0.12, 0.1, 0.7]
+        },
+    });
+
+    // ── 3. HP Bar (thick, 20px) ──
+    let bars_x = portrait_x + portrait_size + 12.0;
+    let hp_bar_h = 20.0;
+    let hp_bar_y = panel_y + 10.0;
+
+    // HP background
+    quads.push(UiQuad {
+        x: bars_x,
+        y: hp_bar_y,
+        w: bar_region_w,
+        h: hp_bar_h,
+        color: [0.12, 0.04, 0.04, 0.85],
+    });
+
+    // HP fill
+    if let Some(health) = world.get::<euca_gameplay::Health>(hero) {
+        let fill = (health.current / health.max).clamp(0.0, 1.0);
         quads.push(UiQuad {
-            x,
-            y: ability_bar_y,
-            w: slot_size,
-            h: slot_size,
-            color: [0.15, 0.15, 0.2, 0.85],
+            x: bars_x,
+            y: hp_bar_y,
+            w: bar_region_w * fill,
+            h: hp_bar_h,
+            color: [0.15, 0.78, 0.22, 0.92],
         });
 
-        // Cooldown overlay (darken when on cooldown)
-        if let Some(ability_set) = abilities {
-            let slot = match i {
-                0 => euca_gameplay::AbilitySlot::Q,
-                1 => euca_gameplay::AbilitySlot::W,
-                2 => euca_gameplay::AbilitySlot::E,
-                _ => euca_gameplay::AbilitySlot::R,
-            };
-            if let Some(ability) = ability_set.get(slot) {
-                if ability.cooldown_remaining > 0.0 {
-                    let cd_frac = (ability.cooldown_remaining / ability.cooldown).clamp(0.0, 1.0);
-                    quads.push(UiQuad {
-                        x,
-                        y: ability_bar_y,
-                        w: slot_size,
-                        h: slot_size * cd_frac,
-                        color: [0.0, 0.0, 0.0, 0.6], // dark overlay for cooldown portion
-                    });
-                } else {
-                    // Ready indicator: bright border at bottom
-                    quads.push(UiQuad {
-                        x,
-                        y: ability_bar_y + slot_size - 3.0,
-                        w: slot_size,
-                        h: 3.0,
-                        color: [0.3, 0.8, 1.0, 0.9], // cyan ready indicator
-                    });
-                }
+        // HP bar tick marks (segmented look, every 250 HP)
+        if health.max > 0.0 {
+            let segment_hp = 250.0;
+            let num_segments = (health.max / segment_hp).floor() as u32;
+            for s in 1..num_segments {
+                let tick_x = bars_x + (s as f32 * segment_hp / health.max) * bar_region_w;
+                quads.push(UiQuad {
+                    x: tick_x,
+                    y: hp_bar_y,
+                    w: 1.0,
+                    h: hp_bar_h,
+                    color: [0.0, 0.0, 0.0, 0.35],
+                });
             }
         }
     }
 
-    // ── Gold display (bottom-left) ──
-    // Prefer HeroEconomy wallet total; fall back to legacy Gold component.
-    let gold = world
-        .get::<euca_gameplay::HeroEconomy>(hero)
-        .map(|e| e.wallet.total() as i32)
-        .or_else(|| world.get::<euca_gameplay::Gold>(hero).map(|g| g.0))
-        .unwrap_or(0);
-    // Gold bar: width proportional to gold (max display 5000)
-    let gold_bar_w = (gold as f32 / 5000.0).clamp(0.0, 1.0) * 150.0;
+    // ── 4. Mana Bar (15px, below HP) ──
+    let mana_bar_h = 15.0;
+    let mana_bar_y = hp_bar_y + hp_bar_h + 4.0;
+
+    // Mana background
     quads.push(UiQuad {
-        x: 20.0,
-        y: viewport_h - 30.0,
-        w: 150.0,
-        h: 20.0,
-        color: [0.15, 0.15, 0.15, 0.7],
-    });
-    quads.push(UiQuad {
-        x: 20.0,
-        y: viewport_h - 30.0,
-        w: gold_bar_w,
-        h: 20.0,
-        color: [1.0, 0.84, 0.0, 0.9], // gold color
+        x: bars_x,
+        y: mana_bar_y,
+        w: bar_region_w,
+        h: mana_bar_h,
+        color: [0.04, 0.04, 0.14, 0.85],
     });
 
-    // ── Hero health/mana bars (bottom-center, above abilities) ──
-    if let Some(health) = world.get::<euca_gameplay::Health>(hero) {
-        let bar_w = total_w;
-        let bar_h = 10.0;
-        let bar_x = start_x;
-        let bar_y = ability_bar_y - bar_h - 4.0;
-        let fill = (health.current / health.max).clamp(0.0, 1.0);
-
-        // HP background
-        quads.push(UiQuad {
-            x: bar_x,
-            y: bar_y,
-            w: bar_w,
-            h: bar_h,
-            color: [0.15, 0.05, 0.05, 0.8],
-        });
-        // HP fill
-        quads.push(UiQuad {
-            x: bar_x,
-            y: bar_y,
-            w: bar_w * fill,
-            h: bar_h,
-            color: [0.1, 0.8, 0.1, 0.9],
-        });
-    }
-
+    // Mana fill
     if let Some(mana) = world.get::<euca_gameplay::Mana>(hero) {
-        let bar_w = total_w;
-        let bar_h = 8.0;
-        let bar_x = start_x;
-        let bar_y = ability_bar_y - 10.0 - bar_h - 8.0;
         let fill = if mana.max > 0.0 {
             (mana.current / mana.max).clamp(0.0, 1.0)
         } else {
             0.0
         };
-
-        // Mana background
         quads.push(UiQuad {
-            x: bar_x,
-            y: bar_y,
-            w: bar_w,
-            h: bar_h,
-            color: [0.05, 0.05, 0.15, 0.8],
-        });
-        // Mana fill
-        quads.push(UiQuad {
-            x: bar_x,
-            y: bar_y,
-            w: bar_w * fill,
-            h: bar_h,
-            color: [0.2, 0.4, 1.0, 0.9],
+            x: bars_x,
+            y: mana_bar_y,
+            w: bar_region_w * fill,
+            h: mana_bar_h,
+            color: [0.2, 0.38, 0.95, 0.92],
         });
     }
 
-    // ── Day/night indicator (top-right) ──
-    if let Some(moba) = world.resource::<DotaMobaState>() {
-        let indicator_size = 20.0;
-        let ix = viewport_w - indicator_size - 20.0;
-        let iy = 20.0;
+    // ── 5. Ability Slots (Q/W/E/R) ──
+    let abilities_x = bars_x + bar_region_w + 16.0;
+    let abilities_y = panel_y + (panel_h - ability_slot_size) * 0.5;
 
-        // Day = bright yellow circle, Night = dark blue circle
+    let abilities = world.get::<euca_gameplay::AbilitySet>(hero);
+    // Hotkey colors: Q=blue, W=cyan, E=green, R=yellow
+    let hotkey_colors: [[f32; 4]; 4] = [
+        [0.3, 0.5, 1.0, 0.9],  // Q: blue
+        [0.2, 0.85, 0.9, 0.9], // W: cyan
+        [0.3, 0.85, 0.3, 0.9], // E: green
+        [0.95, 0.8, 0.2, 0.9], // R: yellow/gold
+    ];
+
+    for i in 0..4u32 {
+        let slot_x = abilities_x + (ability_slot_size + ability_gap) * i as f32;
+
+        // Slot background
+        quads.push(UiQuad {
+            x: slot_x,
+            y: abilities_y,
+            w: ability_slot_size,
+            h: ability_slot_size,
+            color: [0.15, 0.15, 0.18, 0.9],
+        });
+
+        let slot_enum = match i {
+            0 => euca_gameplay::AbilitySlot::Q,
+            1 => euca_gameplay::AbilitySlot::W,
+            2 => euca_gameplay::AbilitySlot::E,
+            _ => euca_gameplay::AbilitySlot::R,
+        };
+
+        if let Some(ability_set) = abilities {
+            if let Some(ability) = ability_set.get(slot_enum) {
+                if ability.cooldown_remaining > 0.0 {
+                    // On cooldown: dark overlay + clock sweep effect (fill from bottom)
+                    let cd_frac = (ability.cooldown_remaining / ability.cooldown).clamp(0.0, 1.0);
+                    let cd_h = ability_slot_size * cd_frac;
+                    quads.push(UiQuad {
+                        x: slot_x,
+                        y: abilities_y + (ability_slot_size - cd_h),
+                        w: ability_slot_size,
+                        h: cd_h,
+                        color: [0.0, 0.0, 0.0, 0.65],
+                    });
+                } else {
+                    // Ready: bright border around the entire slot
+                    let bw = 2.0;
+                    // Top
+                    quads.push(UiQuad {
+                        x: slot_x,
+                        y: abilities_y,
+                        w: ability_slot_size,
+                        h: bw,
+                        color: [0.3, 0.8, 1.0, 0.8],
+                    });
+                    // Bottom
+                    quads.push(UiQuad {
+                        x: slot_x,
+                        y: abilities_y + ability_slot_size - bw,
+                        w: ability_slot_size,
+                        h: bw,
+                        color: [0.3, 0.8, 1.0, 0.8],
+                    });
+                    // Left
+                    quads.push(UiQuad {
+                        x: slot_x,
+                        y: abilities_y + bw,
+                        w: bw,
+                        h: ability_slot_size - bw * 2.0,
+                        color: [0.3, 0.8, 1.0, 0.8],
+                    });
+                    // Right
+                    quads.push(UiQuad {
+                        x: slot_x + ability_slot_size - bw,
+                        y: abilities_y + bw,
+                        w: bw,
+                        h: ability_slot_size - bw * 2.0,
+                        color: [0.3, 0.8, 1.0, 0.8],
+                    });
+                }
+            }
+        }
+
+        // Hotkey label: small colored indicator in top-left corner
+        let label_size = 10.0;
+        quads.push(UiQuad {
+            x: slot_x + 2.0,
+            y: abilities_y + 2.0,
+            w: label_size,
+            h: label_size,
+            color: hotkey_colors[i as usize],
+        });
+    }
+
+    // ── 6. Item Slots (3x2 grid) ──
+    let items_x = abilities_x + (ability_slot_size + ability_gap) * 4.0 + 16.0;
+    let items_y = panel_y + (panel_h - (item_slot_size * 2.0 + item_gap)) * 0.5;
+
+    let inventory = world.get::<euca_gameplay::Inventory>(hero);
+
+    for row in 0..2u32 {
+        for col in 0..3u32 {
+            let slot_idx = (row * 3 + col) as usize;
+            let ix = items_x + (item_slot_size + item_gap) * col as f32;
+            let iy = items_y + (item_slot_size + item_gap) * row as f32;
+
+            let has_item = inventory
+                .as_ref()
+                .and_then(|inv| inv.slots.get(slot_idx).and_then(|s| s.as_ref()))
+                .is_some();
+
+            let slot_color = if has_item {
+                [0.18, 0.18, 0.22, 0.85] // filled: slightly brighter
+            } else {
+                [0.1, 0.1, 0.12, 0.7] // empty: dark
+            };
+
+            quads.push(UiQuad {
+                x: ix,
+                y: iy,
+                w: item_slot_size,
+                h: item_slot_size,
+                color: slot_color,
+            });
+
+            // Filled item: inner colored indicator
+            if has_item {
+                let inset = item_slot_size * 0.2;
+                quads.push(UiQuad {
+                    x: ix + inset,
+                    y: iy + inset,
+                    w: item_slot_size - inset * 2.0,
+                    h: item_slot_size - inset * 2.0,
+                    color: [0.35, 0.3, 0.2, 0.6],
+                });
+            }
+        }
+    }
+
+    // ── 7. Gold counter (right side of panel) ──
+    let gold = world
+        .get::<euca_gameplay::HeroEconomy>(hero)
+        .map(|e| e.wallet.total() as i32)
+        .or_else(|| world.get::<euca_gameplay::Gold>(hero).map(|g| g.0))
+        .unwrap_or(0);
+
+    let gold_area_x = items_x + (item_slot_size + item_gap) * 3.0 + 12.0;
+    let gold_area_w = 80.0;
+    let gold_bar_h = 20.0;
+    let gold_y = panel_y + 10.0;
+
+    // Gold background
+    quads.push(UiQuad {
+        x: gold_area_x,
+        y: gold_y,
+        w: gold_area_w,
+        h: gold_bar_h,
+        color: [0.12, 0.12, 0.1, 0.8],
+    });
+
+    // Gold fill: width proportional to gold (max display 5000)
+    let gold_fill = (gold as f32 / 5000.0).clamp(0.0, 1.0) * gold_area_w;
+    quads.push(UiQuad {
+        x: gold_area_x,
+        y: gold_y,
+        w: gold_fill,
+        h: gold_bar_h,
+        color: [1.0, 0.84, 0.0, 0.9],
+    });
+
+    // Gold icon indicator (small bright square)
+    quads.push(UiQuad {
+        x: gold_area_x + 2.0,
+        y: gold_y + 2.0,
+        w: 8.0,
+        h: 8.0,
+        color: [1.0, 0.92, 0.3, 1.0],
+    });
+
+    // ── 8. Level / XP indicator (below gold) ──
+    let level = world
+        .get::<euca_gameplay::Level>(hero)
+        .map(|l| (l.level, l.xp, l.xp_to_next))
+        .unwrap_or((1, 0, 180));
+    let (hero_level, hero_xp, hero_xp_next) = level;
+
+    let level_y = gold_y + gold_bar_h + 8.0;
+
+    // Level square — size encodes level number visually
+    let level_box_size = 28.0;
+    quads.push(UiQuad {
+        x: gold_area_x,
+        y: level_y,
+        w: level_box_size,
+        h: level_box_size,
+        color: [0.12, 0.12, 0.15, 0.9],
+    });
+
+    // Level fill — brighter interior proportional to level/18
+    let level_fill_size = level_box_size * (hero_level as f32 / 18.0).clamp(0.0, 1.0);
+    quads.push(UiQuad {
+        x: gold_area_x + (level_box_size - level_fill_size) * 0.5,
+        y: level_y + (level_box_size - level_fill_size) * 0.5,
+        w: level_fill_size,
+        h: level_fill_size,
+        color: [0.3, 0.7, 1.0, 0.85],
+    });
+
+    // XP bar underneath level box
+    let xp_bar_w = gold_area_w;
+    let xp_bar_h = 6.0;
+    let xp_bar_y = level_y + level_box_size + 4.0;
+    let xp_fill = if hero_xp_next > 0 {
+        (hero_xp as f32 / hero_xp_next as f32).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    // XP background
+    quads.push(UiQuad {
+        x: gold_area_x,
+        y: xp_bar_y,
+        w: xp_bar_w,
+        h: xp_bar_h,
+        color: [0.1, 0.1, 0.12, 0.8],
+    });
+
+    // XP fill (purple)
+    quads.push(UiQuad {
+        x: gold_area_x,
+        y: xp_bar_y,
+        w: xp_bar_w * xp_fill,
+        h: xp_bar_h,
+        color: [0.6, 0.3, 0.9, 0.85],
+    });
+
+    quads
+}
+
+/// Build top bar quads: game clock (center), team scores (left/right), day/night indicator.
+fn build_top_bar_quads(world: &World, viewport_w: f32, _viewport_h: f32) -> Vec<UiQuad> {
+    let mut quads = Vec::new();
+
+    let top_bar_h = 32.0;
+    let top_bar_w = viewport_w * 0.4;
+    let top_bar_x = (viewport_w - top_bar_w) * 0.5;
+
+    // ── Top bar background ──
+    quads.push(UiQuad {
+        x: top_bar_x,
+        y: 0.0,
+        w: top_bar_w,
+        h: top_bar_h,
+        color: [0.06, 0.06, 0.08, 0.85],
+    });
+
+    // Bottom edge highlight
+    quads.push(UiQuad {
+        x: top_bar_x,
+        y: top_bar_h - 1.0,
+        w: top_bar_w,
+        h: 1.0,
+        color: [0.25, 0.25, 0.3, 0.6],
+    });
+
+    // ── Game clock (center of top bar) ──
+    // Show elapsed time as a proportional fill bar (clock visualization)
+    let elapsed = world
+        .resource::<GameState>()
+        .map(|gs| gs.elapsed)
+        .unwrap_or(0.0);
+    let total_seconds = elapsed as u32;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+
+    // Clock background (center)
+    let clock_w = 80.0;
+    let clock_h = 22.0;
+    let clock_x = (viewport_w - clock_w) * 0.5;
+    let clock_y = (top_bar_h - clock_h) * 0.5;
+
+    quads.push(UiQuad {
+        x: clock_x,
+        y: clock_y,
+        w: clock_w,
+        h: clock_h,
+        color: [0.1, 0.1, 0.12, 0.9],
+    });
+
+    // Clock progress bar — fills proportionally within each minute
+    let minute_progress = seconds as f32 / 60.0;
+    quads.push(UiQuad {
+        x: clock_x,
+        y: clock_y,
+        w: clock_w * minute_progress,
+        h: clock_h,
+        color: [0.2, 0.2, 0.25, 0.6],
+    });
+
+    // Minute counter — series of small pips, one per minute elapsed (max 60)
+    let pip_size = 3.0;
+    let pip_y = clock_y + clock_h + 2.0;
+    let max_pips = minutes.min(20) as usize; // show up to 20 minute pips
+    let pip_start_x = (viewport_w - max_pips as f32 * (pip_size + 1.0)) * 0.5;
+    for p in 0..max_pips {
+        quads.push(UiQuad {
+            x: pip_start_x + p as f32 * (pip_size + 1.0),
+            y: pip_y,
+            w: pip_size,
+            h: pip_size,
+            color: [0.5, 0.5, 0.55, 0.7],
+        });
+    }
+
+    // ── Team scores ──
+    // Count kills per team by summing individual hero scores
+    let (radiant_kills, dire_kills) = {
+        let gs = world.resource::<GameState>();
+        let q = Query::<(Entity, &euca_gameplay::Team)>::new(world);
+        let mut r_kills = 0i32;
+        let mut d_kills = 0i32;
+        if let Some(state) = gs {
+            for (entity, t) in q.iter() {
+                let score = state.scores.get(&entity.index()).copied().unwrap_or(0);
+                match t.0 {
+                    1 => r_kills += score,
+                    2 => d_kills += score,
+                    _ => {}
+                }
+            }
+        }
+        (r_kills, d_kills)
+    };
+
+    // Radiant score (left of clock) — green
+    let score_w = 50.0;
+    let score_h = 22.0;
+    let radiant_score_x = clock_x - score_w - 12.0;
+    let score_y = (top_bar_h - score_h) * 0.5;
+
+    quads.push(UiQuad {
+        x: radiant_score_x,
+        y: score_y,
+        w: score_w,
+        h: score_h,
+        color: [0.06, 0.15, 0.08, 0.9],
+    });
+    // Score fill (proportional indicator, 1 kill = 5px, capped at score_w)
+    let r_fill = (radiant_kills as f32 * 5.0).clamp(0.0, score_w);
+    quads.push(UiQuad {
+        x: radiant_score_x,
+        y: score_y,
+        w: r_fill,
+        h: score_h,
+        color: [0.15, 0.7, 0.25, 0.6],
+    });
+
+    // Dire score (right of clock) — red
+    let dire_score_x = clock_x + clock_w + 12.0;
+
+    quads.push(UiQuad {
+        x: dire_score_x,
+        y: score_y,
+        w: score_w,
+        h: score_h,
+        color: [0.15, 0.06, 0.06, 0.9],
+    });
+    let d_fill = (dire_kills as f32 * 5.0).clamp(0.0, score_w);
+    quads.push(UiQuad {
+        x: dire_score_x + score_w - d_fill,
+        y: score_y,
+        w: d_fill,
+        h: score_h,
+        color: [0.7, 0.15, 0.12, 0.6],
+    });
+
+    // ── Day/night indicator (right end of top bar) ──
+    if let Some(moba) = world.resource::<DotaMobaState>() {
+        let indicator_size = 18.0;
+        let ix = top_bar_x + top_bar_w - indicator_size - 8.0;
+        let iy = (top_bar_h - indicator_size) * 0.5;
+
         let color = if moba.day_night.is_day() {
-            [1.0, 0.9, 0.3, 0.9] // sun yellow
+            [1.0, 0.9, 0.3, 0.9] // day: sun yellow
         } else {
-            [0.15, 0.15, 0.5, 0.9] // moon blue
+            [0.15, 0.15, 0.5, 0.9] // night: moon blue
         };
         quads.push(UiQuad {
             x: ix,
@@ -2203,34 +2601,6 @@ fn build_hud_quads(world: &World, viewport_w: f32, viewport_h: f32) -> Vec<UiQua
             w: indicator_size,
             h: indicator_size,
             color,
-        });
-
-        // Ward count bar (below day/night indicator) — shows observer wards remaining
-        let ward_bar_y = iy + indicator_size + 8.0;
-        let ward_bar_w = 60.0;
-        let ward_bar_h = 8.0;
-
-        // Background
-        quads.push(UiQuad {
-            x: ix - (ward_bar_w - indicator_size),
-            y: ward_bar_y,
-            w: ward_bar_w,
-            h: ward_bar_h,
-            color: [0.1, 0.1, 0.1, 0.7],
-        });
-
-        // Fill: proportion of observer wards in stock (player team = 1)
-        let obs_fill = if moba.ward_stock_t1.observer_max > 0 {
-            moba.ward_stock_t1.observer_count as f32 / moba.ward_stock_t1.observer_max as f32
-        } else {
-            0.0
-        };
-        quads.push(UiQuad {
-            x: ix - (ward_bar_w - indicator_size),
-            y: ward_bar_y,
-            w: ward_bar_w * obs_fill,
-            h: ward_bar_h,
-            color: [0.3, 0.9, 0.3, 0.8], // green for observer wards
         });
     }
 
