@@ -633,10 +633,35 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
         &Material::new([0.15, 0.5, 0.1, 1.0], 0.0, 0.6), // dark green, matte
     );
 
+    // Procedural creature meshes — used as fallback when GLB assets are missing.
+    let roshan_mesh = renderer.upload_mesh(gpu, &Mesh::roshan());
+    let wolf_mesh = renderer.upload_mesh(gpu, &Mesh::wolf());
+    let troll_mesh = renderer.upload_mesh(gpu, &Mesh::troll());
+
+    // Creature materials
+    let roshan_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.35, 0.2, 0.4, 1.0], 0.0, 0.5), // dark purple-gray
+    );
+    let wolf_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.3, 0.35, 0.25, 1.0], 0.0, 0.6), // dark gray-green
+    );
+    let troll_mat = renderer.upload_material(
+        gpu,
+        &Material::new([0.35, 0.3, 0.2, 1.0], 0.0, 0.6), // brown-green
+    );
+    materials.insert("roshan".to_string(), roshan_mat);
+    materials.insert("wolf".to_string(), wolf_mat);
+    materials.insert("troll".to_string(), troll_mat);
+
     let mut meshes = HashMap::new();
     meshes.insert("cube".to_string(), cube);
     meshes.insert("sphere".to_string(), sphere);
     meshes.insert("plane".to_string(), plane);
+    meshes.insert("roshan_boss".to_string(), roshan_mesh);
+    meshes.insert("neutral_wolf".to_string(), wolf_mesh);
+    meshes.insert("neutral_troll".to_string(), troll_mesh);
 
     // Pre-generate procedural creep meshes: 3 types x 2 teams = 6 meshes.
     // Each type has a distinct silhouette; both teams share geometry but
