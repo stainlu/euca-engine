@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use euca_core::Time;
 use euca_ecs::{Entity, Events, Query, World};
 use euca_gameplay::camera::{MobaCamera, ScreenSize};
+use euca_gameplay::combat_math::DamageType;
 use euca_gameplay::creep_wave::{Lane, LaneConfig, LaneWaypoints, WaveSpawner};
 use euca_gameplay::player_input::ViewportSize;
 use euca_gameplay::{
@@ -28,6 +29,52 @@ use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{WindowAttributes, WindowId};
+
+// ── Visual Effects ───────────────────────────────────────────────────────────
+
+/// What kind of visual effect to display.
+#[derive(Clone, Debug)]
+enum VfxKind {
+    /// A sphere that lerps from `from` to `to` over its lifetime, then despawns.
+    Projectile {
+        from: Vec3,
+        to: Vec3,
+        color: [f32; 4],
+    },
+    /// A flat disc that expands from 0 to `max_radius` over its lifetime, then fades.
+    AreaCircle {
+        center: Vec3,
+        max_radius: f32,
+        color: [f32; 4],
+    },
+    /// A small sphere that rises upward and fades.
+    FloatingRise { origin: Vec3, color: [f32; 4] },
+    /// A brief flash at a position (melee hit).
+    MeleeSlash { position: Vec3 },
+}
+
+/// Component attached to VFX entities to drive their animation.
+#[derive(Clone, Debug)]
+struct VisualEffect {
+    kind: VfxKind,
+    /// Total time this effect should live (seconds).
+    lifetime: f32,
+    /// Time elapsed since spawn.
+    elapsed: f32,
+}
+
+/// Pre-uploaded GPU handles for VFX meshes and materials.
+#[derive(Clone)]
+struct VfxAssets {
+    sphere_mesh: MeshHandle,
+    disc_mesh: MeshHandle,
+    mat_white: MaterialHandle,
+    mat_yellow: MaterialHandle,
+    mat_red: MaterialHandle,
+    mat_green: MaterialHandle,
+    mat_blue: MaterialHandle,
+    mat_cyan: MaterialHandle,
+}
 
 // ── MOBA gameplay state (fog, items, roshan, wards, waves) ──────────────────
 
@@ -201,6 +248,75 @@ impl DotaMobaState {
             fort_t2: Fortification::default(),
             wave_spawner: WaveSpawner::new(lanes),
             item_states: HashMap::new(),
+        }
+    }
+}
+
+// ── Floating combat text & kill feed ─────────────────────────────────────────
+
+/// A single floating text indicator (damage number, gold/XP gain).
+struct FloatingText {
+    /// Screen position (pixels) at spawn time.
+    screen_x: f32,
+    screen_y: f32,
+    /// Width of the damage bar (proportional to the amount).
+    bar_width: f32,
+    /// RGBA color including alpha.
+    color: [f32; 4],
+    /// Total lifetime in seconds.
+    lifetime: f32,
+    /// Elapsed time since spawn.
+    elapsed: f32,
+}
+
+/// World resource: all active floating text indicators.
+struct FloatingTexts {
+    entries: Vec<FloatingText>,
+}
+
+impl FloatingTexts {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+}
+
+/// A single kill feed entry (top-right corner).
+struct KillFeedEntry {
+    /// Bar widths representing killer and victim (sized by role importance).
+    killer_color: [f32; 4],
+    victim_color: [f32; 4],
+    /// Total lifetime in seconds.
+    lifetime: f32,
+    /// Elapsed time since spawn.
+    elapsed: f32,
+}
+
+/// World resource: kill feed displayed in the top-right corner.
+struct KillFeed {
+    entries: Vec<KillFeedEntry>,
+}
+
+impl KillFeed {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+}
+
+/// Tracks previous frame gold/XP values to detect gains for popup display.
+struct GoldXpTracker {
+    prev_gold: i32,
+    prev_xp: u32,
+}
+
+impl GoldXpTracker {
+    fn new() -> Self {
+        Self {
+            prev_gold: 0,
+            prev_xp: 0,
         }
     }
 }
@@ -700,6 +816,24 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
 
     // Trees in jungle areas between L-shaped lanes — defines MOBA map geography
     spawn_tree_lines(world, tree_mesh, tree_mat);
+
+    // VFX assets — small sphere for projectiles, flat disc for area effects.
+    // Materials are bright emissive-style (low roughness, full saturation).
+    let vfx_sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.2, 8, 16));
+    let vfx_disc = renderer.upload_mesh(gpu, &Mesh::disc(1.0, 24));
+    let mut vfx_mat =
+        |color: [f32; 4]| renderer.upload_material(gpu, &Material::new(color, 0.0, 0.2));
+
+    world.insert_resource(VfxAssets {
+        sphere_mesh: vfx_sphere,
+        disc_mesh: vfx_disc,
+        mat_white: vfx_mat([1.0, 1.0, 1.0, 1.0]),
+        mat_yellow: vfx_mat([1.0, 0.9, 0.2, 1.0]),
+        mat_red: vfx_mat([1.0, 0.2, 0.1, 1.0]),
+        mat_green: vfx_mat([0.2, 1.0, 0.3, 1.0]),
+        mat_blue: vfx_mat([0.3, 0.5, 1.0, 1.0]),
+        mat_cyan: vfx_mat([0.2, 0.9, 1.0, 1.0]),
+    });
 }
 
 // ── MOBA terrain generation ────────────────────────────────────────────────
@@ -1007,6 +1141,11 @@ impl DotaClientApp {
         // Initialize DotA MOBA gameplay state (fog, wards, roshan, waves, items)
         world.insert_resource(DotaMobaState::new());
 
+        // Floating combat text and kill feed
+        world.insert_resource(FloatingTexts::new());
+        world.insert_resource(KillFeed::new());
+        world.insert_resource(GoldXpTracker::new());
+
         Self {
             world,
             initialized: false,
@@ -1269,6 +1408,10 @@ impl DotaClientApp {
         euca_gameplay::ability_tick_system(&mut self.world, dt);
         euca_gameplay::use_ability_system(&mut self.world);
 
+        // Visual effects: spawn VFX from combat/ability events, then animate.
+        vfx_spawn_system(&mut self.world);
+        vfx_tick_system(&mut self.world, dt);
+
         // ── MOBA subsystems (fog, CC, items, roshan, wards, waves) ───────
         moba_subsystems_tick(&mut self.world, dt);
 
@@ -1278,6 +1421,13 @@ impl DotaClientApp {
 
         // Visibility
         euca_gameplay::visibility_system(&mut self.world);
+
+        // Harvest combat events for floating text and kill feed (before events.update clears them)
+        harvest_damage_events(&mut self.world);
+        harvest_death_events(&mut self.world);
+        harvest_gold_xp_changes(&mut self.world);
+        tick_floating_texts(&mut self.world, dt);
+        tick_kill_feed(&mut self.world, dt);
 
         // Tick events and world
         if let Some(events) = self.world.resource_mut::<Events>() {
@@ -1373,6 +1523,8 @@ impl DotaClientApp {
             ui_quads.extend(build_hud_quads(&self.world, vw, vh));
             ui_quads.extend(build_top_bar_quads(&self.world, vw, vh));
             ui_quads.extend(build_minimap_quads(&self.world, vw, vh));
+            ui_quads.extend(build_floating_text_quads(&self.world));
+            ui_quads.extend(build_kill_feed_quads(&self.world, vw));
             if let Some(ui) = self.ui_overlay.as_mut() {
                 ui.render(&*gpu, &mut encoder, &view, &ui_quads, vw, vh);
             }
@@ -1670,6 +1822,343 @@ fn tick_respawn_animations(world: &mut World, dt: f32) {
 fn collect_dead_entities(world: &World) -> HashSet<Entity> {
     let query = Query::<(Entity, &euca_gameplay::Dead)>::new(world);
     query.iter().map(|(e, _)| e).collect()
+}
+
+// ── Visual Effect Systems ────────────────────────────────────────────────────
+
+/// Scan for combat `DamageEvent`s and `UseAbilityEvent`s emitted this frame
+/// and spawn corresponding `VisualEffect` entities with meshes and materials.
+fn vfx_spawn_system(world: &mut World) {
+    let Some(vfx) = world.resource::<VfxAssets>().cloned() else {
+        return;
+    };
+
+    // ── 1. Combat damage VFX (auto-attack projectiles / melee flashes) ──────
+
+    let damage_events: Vec<euca_gameplay::DamageEvent> = world
+        .resource::<Events>()
+        .map(|e| e.read::<euca_gameplay::DamageEvent>().cloned().collect())
+        .unwrap_or_default();
+
+    for dmg in &damage_events {
+        let Some(source) = dmg.source else {
+            continue;
+        };
+        // Determine source and target positions.
+        let source_pos = world
+            .get::<LocalTransform>(source)
+            .map(|lt| lt.0.translation);
+        let target_pos = world
+            .get::<LocalTransform>(dmg.target)
+            .map(|lt| lt.0.translation);
+        let (Some(src_pos), Some(tgt_pos)) = (source_pos, target_pos) else {
+            continue;
+        };
+
+        // Decide VFX based on attacker properties.
+        let attack_style = world
+            .get::<euca_gameplay::AutoCombat>(source)
+            .map(|ac| ac.attack_style);
+        let attack_range = world
+            .get::<euca_gameplay::AutoCombat>(source)
+            .map(|ac| ac.range)
+            .unwrap_or(1.5);
+
+        let is_ranged =
+            attack_style == Some(euca_gameplay::AttackStyle::Stationary) || attack_range > 3.0;
+
+        if is_ranged {
+            // Ranged attack or tower: flying projectile sphere.
+            let team = world
+                .get::<euca_gameplay::Team>(source)
+                .map(|t| t.0)
+                .unwrap_or(0);
+            let color = if team == 1 {
+                [0.2, 0.9, 1.0, 1.0] // Radiant: cyan
+            } else {
+                [1.0, 0.3, 0.1, 1.0] // Dire: red-orange
+            };
+
+            let dist = (tgt_pos - src_pos).length().max(0.1);
+            let speed = 20.0; // units/sec — fast enough to feel snappy
+            let lifetime = dist / speed;
+
+            spawn_vfx_entity(
+                world,
+                &vfx,
+                VisualEffect {
+                    kind: VfxKind::Projectile {
+                        from: Vec3::new(src_pos.x, src_pos.y + 1.0, src_pos.z),
+                        to: Vec3::new(tgt_pos.x, tgt_pos.y + 0.5, tgt_pos.z),
+                        color,
+                    },
+                    lifetime,
+                    elapsed: 0.0,
+                },
+            );
+        } else {
+            // Melee attack: brief flash at target.
+            spawn_vfx_entity(
+                world,
+                &vfx,
+                VisualEffect {
+                    kind: VfxKind::MeleeSlash { position: tgt_pos },
+                    lifetime: 0.2,
+                    elapsed: 0.0,
+                },
+            );
+        }
+    }
+
+    // ── 2. Ability VFX ──────────────────────────────────────────────────────
+
+    let ability_events: Vec<euca_gameplay::UseAbilityEvent> = world
+        .resource::<Events>()
+        .map(|e| {
+            e.read::<euca_gameplay::UseAbilityEvent>()
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for evt in &ability_events {
+        let caster_pos = world
+            .get::<LocalTransform>(evt.entity)
+            .map(|lt| lt.0.translation)
+            .unwrap_or(Vec3::ZERO);
+        let caster_rotation = world
+            .get::<LocalTransform>(evt.entity)
+            .map(|lt| lt.0.rotation)
+            .unwrap_or(euca_math::Quat::IDENTITY);
+
+        // Look up the ability effect for this slot.
+        let effect = world
+            .get::<euca_gameplay::AbilitySet>(evt.entity)
+            .and_then(|set| set.get(evt.slot).map(|a| a.effect.clone()));
+        let Some(effect) = effect else { continue };
+
+        // Walk the effect tree and spawn VFX for visual-worthy effects.
+        spawn_ability_vfx(world, &vfx, &effect, caster_pos, caster_rotation);
+    }
+}
+
+/// Recursively walk an `AbilityEffect` tree and spawn VFX for visual effects.
+fn spawn_ability_vfx(
+    world: &mut World,
+    vfx: &VfxAssets,
+    effect: &AbilityEffect,
+    caster_pos: Vec3,
+    caster_rotation: euca_math::Quat,
+) {
+    match effect {
+        AbilityEffect::AreaDamage { radius, .. } => {
+            spawn_vfx_entity(
+                world,
+                vfx,
+                VisualEffect {
+                    kind: VfxKind::AreaCircle {
+                        center: caster_pos,
+                        max_radius: *radius,
+                        color: [1.0, 0.4, 0.1, 0.7], // fiery orange
+                    },
+                    lifetime: 0.5,
+                    elapsed: 0.0,
+                },
+            );
+        }
+        AbilityEffect::Heal { .. } => {
+            spawn_vfx_entity(
+                world,
+                vfx,
+                VisualEffect {
+                    kind: VfxKind::FloatingRise {
+                        origin: caster_pos,
+                        color: [0.2, 1.0, 0.3, 1.0], // green
+                    },
+                    lifetime: 0.8,
+                    elapsed: 0.0,
+                },
+            );
+        }
+        AbilityEffect::SpawnProjectile { speed, range, .. } => {
+            // Compute facing direction from rotation.
+            let forward = caster_rotation * Vec3::new(0.0, 0.0, 1.0);
+            let from = Vec3::new(caster_pos.x, caster_pos.y + 1.0, caster_pos.z);
+            let to = from + forward * *range;
+            let lifetime = if *speed > 0.0 { *range / *speed } else { 1.0 };
+            spawn_vfx_entity(
+                world,
+                vfx,
+                VisualEffect {
+                    kind: VfxKind::Projectile {
+                        from,
+                        to,
+                        color: [0.3, 0.5, 1.0, 1.0], // blue ability projectile
+                    },
+                    lifetime,
+                    elapsed: 0.0,
+                },
+            );
+        }
+        AbilityEffect::Chain(effects) => {
+            for sub in effects {
+                spawn_ability_vfx(world, vfx, sub, caster_pos, caster_rotation);
+            }
+        }
+        // Other effects (Dash, ApplyEffect, ApplyCc, etc.) don't need VFX.
+        _ => {}
+    }
+}
+
+/// Spawn a VFX entity with the correct mesh, material, and transform.
+fn spawn_vfx_entity(world: &mut World, vfx: &VfxAssets, effect: VisualEffect) {
+    let (initial_pos, mesh, material, initial_scale) = match &effect.kind {
+        VfxKind::Projectile { from, color, .. } => {
+            let mat = vfx_material_for_color(vfx, color);
+            (*from, vfx.sphere_mesh, mat, Vec3::new(1.0, 1.0, 1.0))
+        }
+        VfxKind::AreaCircle { center, color, .. } => {
+            let mat = vfx_material_for_color(vfx, color);
+            // Start at zero scale; tick system will expand it.
+            let pos = Vec3::new(center.x, center.y + 0.1, center.z);
+            (pos, vfx.disc_mesh, mat, Vec3::new(0.01, 1.0, 0.01))
+        }
+        VfxKind::FloatingRise { origin, color } => {
+            let mat = vfx_material_for_color(vfx, color);
+            (*origin, vfx.sphere_mesh, mat, Vec3::new(0.5, 0.5, 0.5))
+        }
+        VfxKind::MeleeSlash { position } => {
+            let pos = Vec3::new(position.x, position.y + 0.5, position.z);
+            (
+                pos,
+                vfx.sphere_mesh,
+                vfx.mat_white,
+                Vec3::new(0.8, 0.8, 0.8),
+            )
+        }
+    };
+
+    let mut transform = Transform::from_translation(initial_pos);
+    transform.scale = initial_scale;
+
+    let entity = world.spawn(LocalTransform(transform));
+    world.insert(entity, GlobalTransform(transform));
+    world.insert(entity, MeshRenderer { mesh });
+    world.insert(entity, MaterialRef { handle: material });
+    world.insert(entity, effect);
+}
+
+/// Pick the closest pre-uploaded VFX material based on dominant color channel.
+fn vfx_material_for_color(vfx: &VfxAssets, color: &[f32; 4]) -> MaterialHandle {
+    let [r, g, b, _] = *color;
+    // Simple heuristic: pick by dominant channel.
+    if g > r && g > b {
+        vfx.mat_green
+    } else if b > r && b > g {
+        vfx.mat_blue
+    } else if r > 0.8 && g > 0.6 {
+        vfx.mat_yellow
+    } else if r > g && r > b {
+        vfx.mat_red
+    } else if g > 0.5 && b > 0.5 {
+        vfx.mat_cyan
+    } else {
+        vfx.mat_white
+    }
+}
+
+/// Advance all active `VisualEffect` entities: update positions/scales and
+/// despawn completed effects.
+fn vfx_tick_system(world: &mut World, dt: f32) {
+    // Collect all VFX entities and their current state.
+    let vfx_entities: Vec<(Entity, VisualEffect)> = {
+        let query = Query::<(Entity, &VisualEffect)>::new(world);
+        query.iter().map(|(e, v)| (e, v.clone())).collect()
+    };
+
+    let mut to_despawn: Vec<Entity> = Vec::new();
+
+    for (entity, mut effect) in vfx_entities {
+        effect.elapsed += dt;
+        let t = (effect.elapsed / effect.lifetime).clamp(0.0, 1.0);
+
+        if effect.elapsed >= effect.lifetime {
+            to_despawn.push(entity);
+            continue;
+        }
+
+        match &effect.kind {
+            VfxKind::Projectile { from, to, .. } => {
+                // Lerp position from start to end.
+                let pos = Vec3::new(
+                    from.x + (to.x - from.x) * t,
+                    from.y + (to.y - from.y) * t,
+                    from.z + (to.z - from.z) * t,
+                );
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = pos;
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = pos;
+                }
+            }
+            VfxKind::AreaCircle {
+                center, max_radius, ..
+            } => {
+                // Expand disc from 0 to max_radius.
+                let scale = t * max_radius;
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = Vec3::new(center.x, center.y + 0.1, center.z);
+                    lt.0.scale = Vec3::new(scale, 1.0, scale);
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = Vec3::new(center.x, center.y + 0.1, center.z);
+                    gt.0.scale = Vec3::new(scale, 1.0, scale);
+                }
+            }
+            VfxKind::FloatingRise { origin, .. } => {
+                // Rise 2 units over lifetime.
+                let rise = t * 2.0;
+                let pos = Vec3::new(origin.x, origin.y + rise, origin.z);
+                // Shrink as it rises (fade effect via scale).
+                let s = 0.5 * (1.0 - t * 0.7);
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = pos;
+                    lt.0.scale = Vec3::new(s, s, s);
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = pos;
+                    gt.0.scale = Vec3::new(s, s, s);
+                }
+            }
+            VfxKind::MeleeSlash { position } => {
+                // Flash: scale up quickly then shrink.
+                let scale = if t < 0.3 {
+                    0.8 + t * 3.0 // expand to ~1.7
+                } else {
+                    1.7 * (1.0 - (t - 0.3) / 0.7) // shrink back to 0
+                };
+                let pos = Vec3::new(position.x, position.y + 0.5, position.z);
+                if let Some(lt) = world.get_mut::<LocalTransform>(entity) {
+                    lt.0.translation = pos;
+                    lt.0.scale = Vec3::new(scale, scale, scale);
+                }
+                if let Some(gt) = world.get_mut::<GlobalTransform>(entity) {
+                    gt.0.translation = pos;
+                    gt.0.scale = Vec3::new(scale, scale, scale);
+                }
+            }
+        }
+
+        // Write back elapsed time.
+        if let Some(ve) = world.get_mut::<VisualEffect>(entity) {
+            ve.elapsed = effect.elapsed;
+        }
+    }
+
+    for entity in to_despawn {
+        world.despawn(entity);
+    }
 }
 
 /// Collect draw commands for all renderable entities, applying death/respawn
@@ -2820,6 +3309,388 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
             w: dot_size,
             h: dot_size,
             color: dot_color,
+        });
+    }
+
+    quads
+}
+
+// ── Floating combat text & kill feed systems ────────────────────────────────
+
+/// Damage bar width: proportional to damage amount.
+/// 100 damage = 60px wide. Clamped to [20, 120].
+fn damage_bar_width(amount: f32) -> f32 {
+    (amount * 0.6).clamp(20.0, 120.0)
+}
+
+/// Color for a damage type.
+fn damage_color(damage_type: DamageType) -> [f32; 4] {
+    match damage_type {
+        DamageType::Physical => [1.0, 0.2, 0.2, 1.0],
+        DamageType::Magical => [0.3, 0.5, 1.0, 1.0],
+        DamageType::Pure | DamageType::HpRemoval => [1.0, 1.0, 1.0, 1.0],
+    }
+}
+
+/// Read DamageEvents and create floating text entries at the target's screen position.
+fn harvest_damage_events(world: &mut World) {
+    let camera = match world.resource::<Camera>() {
+        Some(c) => c.clone(),
+        None => return,
+    };
+
+    let events: Vec<euca_gameplay::DamageEvent> = world
+        .resource::<Events>()
+        .map(|e| e.read::<euca_gameplay::DamageEvent>().cloned().collect())
+        .unwrap_or_default();
+
+    if events.is_empty() {
+        return;
+    }
+
+    // Get viewport dimensions from screen size resource.
+    let (vw, vh) = world
+        .resource::<ScreenSize>()
+        .map(|s| (s.width, s.height))
+        .unwrap_or((WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32));
+
+    let aspect = if vh > 0.0 { vw / vh } else { 16.0 / 9.0 };
+    let vp = camera.view_projection_matrix(aspect);
+
+    let mut new_entries = Vec::new();
+
+    for event in &events {
+        // Get target's world position.
+        let world_pos = match world.get::<GlobalTransform>(event.target) {
+            Some(gt) => gt.0.translation,
+            None => continue,
+        };
+
+        // Project to screen space.
+        let clip = vp * euca_math::Vec4::new(world_pos.x, world_pos.y + 1.5, world_pos.z, 1.0);
+        if clip.w <= 0.0 {
+            continue;
+        }
+
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        let screen_x = (ndc_x + 1.0) * 0.5 * vw;
+        let screen_y = (1.0 - ndc_y) * 0.5 * vh;
+
+        new_entries.push(FloatingText {
+            screen_x,
+            screen_y,
+            bar_width: damage_bar_width(event.amount),
+            color: damage_color(event.damage_type),
+            lifetime: 1.5,
+            elapsed: 0.0,
+        });
+    }
+
+    if let Some(texts) = world.resource_mut::<FloatingTexts>() {
+        texts.entries.extend(new_entries);
+    }
+}
+
+/// Read DeathEvents and create kill feed entries.
+fn harvest_death_events(world: &mut World) {
+    let events: Vec<euca_gameplay::DeathEvent> = world
+        .resource::<Events>()
+        .map(|e| e.read::<euca_gameplay::DeathEvent>().cloned().collect())
+        .unwrap_or_default();
+
+    if events.is_empty() {
+        return;
+    }
+
+    let player_team = {
+        let pq = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(world);
+        pq.iter()
+            .next()
+            .and_then(|(e, _)| world.get::<euca_gameplay::Team>(e).map(|t| t.0))
+            .unwrap_or(1)
+    };
+
+    let mut new_entries = Vec::new();
+
+    for event in &events {
+        let victim_team = world
+            .get::<euca_gameplay::Team>(event.entity)
+            .map(|t| t.0)
+            .unwrap_or(0);
+
+        let killer_team = event
+            .killer
+            .and_then(|k| world.get::<euca_gameplay::Team>(k).map(|t| t.0))
+            .unwrap_or(0);
+
+        // Killer color: green if ally kill, red if enemy kill, gray if neutral/unknown.
+        let killer_color = if killer_team == player_team {
+            [0.1, 0.9, 0.1, 1.0]
+        } else if killer_team != 0 {
+            [0.9, 0.1, 0.1, 1.0]
+        } else {
+            [0.5, 0.5, 0.5, 1.0]
+        };
+
+        // Victim color: same logic inverted.
+        let victim_color = if victim_team == player_team {
+            [0.1, 0.9, 0.1, 1.0]
+        } else if victim_team != 0 {
+            [0.9, 0.1, 0.1, 1.0]
+        } else {
+            [0.5, 0.5, 0.5, 1.0]
+        };
+
+        new_entries.push(KillFeedEntry {
+            killer_color,
+            victim_color,
+            lifetime: 5.0,
+            elapsed: 0.0,
+        });
+    }
+
+    if let Some(feed) = world.resource_mut::<KillFeed>() {
+        feed.entries.extend(new_entries);
+    }
+}
+
+/// Detect gold/XP changes on the player hero and spawn floating popups.
+fn harvest_gold_xp_changes(world: &mut World) {
+    let hero = {
+        let pq = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(world);
+        match pq.iter().next() {
+            Some((e, _)) => e,
+            None => return,
+        }
+    };
+
+    // Current gold (prefer HeroEconomy wallet, fall back to Gold component).
+    let current_gold = world
+        .get::<euca_gameplay::HeroEconomy>(hero)
+        .map(|e| e.wallet.total() as i32)
+        .or_else(|| world.get::<euca_gameplay::Gold>(hero).map(|g| g.0))
+        .unwrap_or(0);
+
+    let current_xp = world
+        .get::<euca_gameplay::Level>(hero)
+        .map(|l| l.xp)
+        .unwrap_or(0);
+
+    let (prev_gold, prev_xp) = match world.resource::<GoldXpTracker>() {
+        Some(t) => (t.prev_gold, t.prev_xp),
+        None => return,
+    };
+
+    // Get hero screen position for popup placement.
+    let camera = match world.resource::<Camera>() {
+        Some(c) => c.clone(),
+        None => return,
+    };
+    let (vw, vh) = world
+        .resource::<ScreenSize>()
+        .map(|s| (s.width, s.height))
+        .unwrap_or((WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32));
+    let aspect = if vh > 0.0 { vw / vh } else { 16.0 / 9.0 };
+    let vp = camera.view_projection_matrix(aspect);
+
+    let hero_pos = world
+        .get::<GlobalTransform>(hero)
+        .map(|gt| gt.0.translation)
+        .unwrap_or(Vec3::ZERO);
+
+    let clip = vp * euca_math::Vec4::new(hero_pos.x, hero_pos.y + 2.0, hero_pos.z, 1.0);
+    let (screen_x, screen_y) = if clip.w > 0.0 {
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        ((ndc_x + 1.0) * 0.5 * vw, (1.0 - ndc_y) * 0.5 * vh)
+    } else {
+        return;
+    };
+
+    let mut new_entries = Vec::new();
+
+    // Gold gain popup (yellow).
+    let gold_diff = current_gold - prev_gold;
+    if gold_diff > 0 {
+        new_entries.push(FloatingText {
+            screen_x: screen_x + 30.0,
+            screen_y,
+            bar_width: (gold_diff as f32 * 0.3).clamp(15.0, 80.0),
+            color: [1.0, 0.84, 0.0, 1.0],
+            lifetime: 1.5,
+            elapsed: 0.0,
+        });
+    }
+
+    // XP gain popup (purple).
+    if current_xp > prev_xp {
+        let xp_diff = current_xp - prev_xp;
+        new_entries.push(FloatingText {
+            screen_x: screen_x - 30.0,
+            screen_y,
+            bar_width: (xp_diff as f32 * 0.3).clamp(15.0, 80.0),
+            color: [0.6, 0.2, 0.9, 1.0],
+            lifetime: 1.5,
+            elapsed: 0.0,
+        });
+    }
+
+    if let Some(texts) = world.resource_mut::<FloatingTexts>() {
+        texts.entries.extend(new_entries);
+    }
+
+    // Update tracker for next frame.
+    if let Some(tracker) = world.resource_mut::<GoldXpTracker>() {
+        tracker.prev_gold = current_gold;
+        tracker.prev_xp = current_xp;
+    }
+}
+
+/// Tick all floating texts: advance elapsed, remove expired.
+fn tick_floating_texts(world: &mut World, dt: f32) {
+    if let Some(texts) = world.resource_mut::<FloatingTexts>() {
+        for entry in &mut texts.entries {
+            entry.elapsed += dt;
+        }
+        texts.entries.retain(|e| e.elapsed < e.lifetime);
+    }
+}
+
+/// Tick all kill feed entries: advance elapsed, remove expired.
+fn tick_kill_feed(world: &mut World, dt: f32) {
+    if let Some(feed) = world.resource_mut::<KillFeed>() {
+        for entry in &mut feed.entries {
+            entry.elapsed += dt;
+        }
+        feed.entries.retain(|e| e.elapsed < e.lifetime);
+    }
+}
+
+/// Build UI quads for floating damage/gold/XP indicators.
+fn build_floating_text_quads(world: &World) -> Vec<UiQuad> {
+    let mut quads = Vec::new();
+
+    let texts = match world.resource::<FloatingTexts>() {
+        Some(t) => t,
+        None => return quads,
+    };
+
+    for entry in &texts.entries {
+        let progress = (entry.elapsed / entry.lifetime).clamp(0.0, 1.0);
+
+        // Rise upward: 40px over the lifetime.
+        let y = entry.screen_y - progress * 40.0;
+        let x = entry.screen_x - entry.bar_width * 0.5;
+
+        // Fade out: full alpha for the first 60%, then linear fade.
+        let alpha = if progress < 0.6 {
+            entry.color[3]
+        } else {
+            entry.color[3] * (1.0 - (progress - 0.6) / 0.4)
+        };
+
+        let bar_h = 6.0;
+
+        // Damage bar with fading alpha.
+        quads.push(UiQuad {
+            x,
+            y,
+            w: entry.bar_width,
+            h: bar_h,
+            color: [entry.color[0], entry.color[1], entry.color[2], alpha],
+        });
+    }
+
+    quads
+}
+
+/// Build UI quads for the kill feed (top-right corner).
+fn build_kill_feed_quads(world: &World, viewport_w: f32) -> Vec<UiQuad> {
+    let mut quads = Vec::new();
+
+    let feed = match world.resource::<KillFeed>() {
+        Some(f) => f,
+        None => return quads,
+    };
+
+    let entry_h = 14.0;
+    let entry_gap = 4.0;
+    let margin_right = 20.0;
+    let margin_top = 50.0; // below day/night indicator
+    let killer_bar_w = 30.0;
+    let skull_w = 10.0;
+    let victim_bar_w = 30.0;
+    let total_w = killer_bar_w + skull_w + victim_bar_w + 8.0; // 8px internal gaps
+
+    // Show newest entries first (most recent at top).
+    for (i, entry) in feed.entries.iter().rev().enumerate() {
+        if i >= 8 {
+            break; // Show at most 8 entries
+        }
+
+        let progress = (entry.elapsed / entry.lifetime).clamp(0.0, 1.0);
+        let alpha = if progress < 0.7 {
+            0.9
+        } else {
+            0.9 * (1.0 - (progress - 0.7) / 0.3)
+        };
+
+        let y = margin_top + (entry_h + entry_gap) * i as f32;
+        let x = viewport_w - margin_right - total_w;
+
+        // Background.
+        quads.push(UiQuad {
+            x: x - 2.0,
+            y: y - 1.0,
+            w: total_w + 4.0,
+            h: entry_h + 2.0,
+            color: [0.0, 0.0, 0.0, 0.4 * alpha],
+        });
+
+        // Killer team bar.
+        quads.push(UiQuad {
+            x,
+            y,
+            w: killer_bar_w,
+            h: entry_h,
+            color: [
+                entry.killer_color[0],
+                entry.killer_color[1],
+                entry.killer_color[2],
+                alpha,
+            ],
+        });
+
+        // Skull/separator (white cross).
+        let skull_x = x + killer_bar_w + 4.0;
+        quads.push(UiQuad {
+            x: skull_x,
+            y: y + 3.0,
+            w: skull_w,
+            h: entry_h - 6.0,
+            color: [0.9, 0.9, 0.9, alpha],
+        });
+        quads.push(UiQuad {
+            x: skull_x + 2.0,
+            y: y + 1.0,
+            w: skull_w - 4.0,
+            h: entry_h - 2.0,
+            color: [0.9, 0.9, 0.9, alpha],
+        });
+
+        // Victim team bar.
+        quads.push(UiQuad {
+            x: skull_x + skull_w + 4.0,
+            y,
+            w: victim_bar_w,
+            h: entry_h,
+            color: [
+                entry.victim_color[0],
+                entry.victim_color[1],
+                entry.victim_color[2],
+                alpha,
+            ],
         });
     }
 

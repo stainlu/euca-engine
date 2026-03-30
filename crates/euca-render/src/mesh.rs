@@ -232,6 +232,48 @@ impl Mesh {
         Self { vertices, indices }
     }
 
+    /// Create a flat disc (filled circle) on the XZ plane centered at origin.
+    ///
+    /// `radius` is the disc radius; `segments` controls smoothness (more = rounder).
+    pub fn disc(radius: f32, segments: u32) -> Self {
+        let segments = segments.max(3);
+        let mut vertices = Vec::with_capacity(segments as usize + 1);
+        let mut indices = Vec::with_capacity(segments as usize * 3);
+
+        let normal = [0.0, 1.0, 0.0];
+        let tangent = [1.0, 0.0, 0.0];
+
+        // Center vertex
+        vertices.push(Vertex {
+            position: [0.0, 0.0, 0.0],
+            normal,
+            tangent,
+            uv: [0.5, 0.5],
+        });
+
+        // Ring vertices
+        for i in 0..segments {
+            let angle = 2.0 * std::f32::consts::PI * i as f32 / segments as f32;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius;
+            vertices.push(Vertex {
+                position: [x, 0.0, z],
+                normal,
+                tangent,
+                uv: [0.5 + 0.5 * angle.cos(), 0.5 + 0.5 * angle.sin()],
+            });
+        }
+
+        // Triangle fan from center
+        for i in 0..segments {
+            indices.push(0);
+            indices.push(1 + i);
+            indices.push(1 + (i + 1) % segments);
+        }
+
+        Self { vertices, indices }
+    }
+
     /// Create a cylinder along the Y axis with given radius and height.
     pub fn cylinder(radius: f32, height: f32, sectors: u32) -> Self {
         let mut vertices = Vec::new();
