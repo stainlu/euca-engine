@@ -258,6 +258,7 @@ impl GameApp {
         euca_gameplay::trigger_system(&mut self.world);
         euca_gameplay::ai_system(&mut self.world, dt);
         euca_gameplay::player_input::player_input_system(&mut self.world);
+        euca_gameplay::cc_tick_system(&mut self.world, dt);
         euca_gameplay::player::player_command_system(&mut self.world, dt);
         euca_gameplay::auto_combat_system(&mut self.world, dt);
         euca_gameplay::game_state_system(&mut self.world, dt);

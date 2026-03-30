@@ -17,6 +17,7 @@ fn facing_rotation(dir: Vec3) -> Quat {
 
 use crate::abilities::AbilitySlot;
 use crate::combat::AutoCombat;
+use crate::crowd_control::CcState;
 use crate::health::{DamageEvent, Health};
 
 /// Marker component that identifies the player's hero entity.
@@ -140,6 +141,13 @@ pub fn player_command_system(world: &mut World, dt: f32) {
             None => continue,
         };
 
+        // Check crowd control restrictions before executing commands.
+        let (can_move, can_attack, can_cast) = if let Some(cc) = world.get::<CcState>(entity) {
+            (cc.can_move(), cc.can_attack(), cc.can_cast())
+        } else {
+            (true, true, true)
+        };
+
         // Read this entity's position and combat stats.
         let my_pos = world
             .get::<LocalTransform>(entity)
@@ -148,8 +156,22 @@ pub fn player_command_system(world: &mut World, dt: f32) {
 
         let combat = world.get::<AutoCombat>(entity).copied();
 
-        // Step 2: Execute the current command.
+        // Step 2: Execute the current command, respecting CC restrictions.
         match current {
+            PlayerCommand::MoveTo(_) if !can_move => {
+                // CC prevents movement — stop in place, keep command for when CC expires.
+                velocity_updates.push((entity, Vec3::ZERO));
+                continue;
+            }
+            PlayerCommand::AttackTarget(_) if !can_attack && !can_move => {
+                // CC prevents both attack and movement — stop in place, keep command.
+                velocity_updates.push((entity, Vec3::ZERO));
+                continue;
+            }
+            PlayerCommand::UseAbility { .. } if !can_cast => {
+                // CC prevents ability usage — skip, keep command for when CC expires.
+                continue;
+            }
             PlayerCommand::MoveTo(target) => {
                 // Use XZ-only distance — hero Y may differ from ground target Y.
                 let diff_xz = Vec3::new(target.x - my_pos.x, 0.0, target.z - my_pos.z);
@@ -199,9 +221,9 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                 }
 
                 if dist <= ac.range {
-                    // In attack range — deal damage if cooldown ready.
+                    // In attack range — deal damage if cooldown ready and not disarmed.
                     velocity_updates.push((entity, Vec3::ZERO));
-                    if ac.elapsed >= ac.cooldown {
+                    if can_attack && ac.elapsed >= ac.cooldown {
                         damage_events.push(DamageEvent::new(
                             target_entity,
                             ac.damage,
@@ -209,11 +231,14 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                         ));
                         cooldown_resets.push(entity);
                     }
-                } else {
+                } else if can_move {
                     // Move toward target on XZ plane.
                     let dir = diff_xz.normalize();
                     velocity_updates
                         .push((entity, Vec3::new(dir.x * ac.speed, 0.0, dir.z * ac.speed)));
+                } else {
+                    // CC prevents movement — stand in place, keep command.
+                    velocity_updates.push((entity, Vec3::ZERO));
                 }
             }
 
@@ -232,7 +257,9 @@ pub fn player_command_system(world: &mut World, dt: f32) {
                 velocity_updates.push((entity, Vec3::ZERO));
 
                 // Auto-attack nearest enemy in attack range (stationary behavior).
-                if let Some(ac) = combat
+                // Skip if CC prevents attacks.
+                if can_attack
+                    && let Some(ac) = combat
                     && ac.elapsed >= ac.cooldown
                 {
                     let my_team = world.get::<crate::teams::Team>(entity).map(|t| t.0);

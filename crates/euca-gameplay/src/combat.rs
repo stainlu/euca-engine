@@ -10,6 +10,7 @@ use euca_math::Vec3;
 use euca_physics::Velocity;
 use euca_scene::{LocalTransform, SpatialIndex};
 
+use crate::crowd_control::CcState;
 use crate::health::{DamageEvent, Dead, Health};
 use crate::player::PlayerHero;
 use crate::teams::Team;
@@ -299,6 +300,19 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             continue;
         }
 
+        // Check crowd control restrictions.
+        let (can_move, can_attack) = if let Some(cc) = world.get::<CcState>(entity) {
+            (cc.can_move(), cc.can_attack())
+        } else {
+            (true, true)
+        };
+
+        // Fully disabled (can't move or attack) — stop in place, skip combat logic.
+        if !can_move && !can_attack {
+            velocity_updates.push((entity, Vec3::ZERO));
+            continue;
+        }
+
         let combat = match world.get::<AutoCombat>(entity) {
             Some(c) => *c,
             None => continue,
@@ -424,13 +438,14 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
         // --- Step 4: Act on target ---
         if let Some((target, target_pos, dist)) = current_target {
             if dist <= combat.range {
-                // In attack range — deal damage if cooldown ready
-                if combat.elapsed >= combat.cooldown {
+                // In attack range — deal damage if cooldown ready and not disabled.
+                if can_attack && combat.elapsed >= combat.cooldown {
                     damage_events.push(DamageEvent::new(target, combat.damage, Some(entity)));
                     cooldown_resets.push(entity);
                 }
                 velocity_updates.push((entity, Vec3::ZERO));
-            } else if combat.attack_style == AttackStyle::Stationary {
+            } else if combat.attack_style == AttackStyle::Stationary || !can_move {
+                // Stationary units or movement-disabled units stay in place.
                 velocity_updates.push((entity, Vec3::ZERO));
             } else {
                 // Chase target
@@ -442,12 +457,16 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
             }
         } else {
             // --- Step 5: No target — march toward enemy base ---
-            if let Some(march) = world.get::<MarchDirection>(entity) {
-                let dir = march.0;
-                velocity_updates.push((
-                    entity,
-                    Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed),
-                ));
+            if can_move {
+                if let Some(march) = world.get::<MarchDirection>(entity) {
+                    let dir = march.0;
+                    velocity_updates.push((
+                        entity,
+                        Vec3::new(dir.x * combat.speed, 0.0, dir.z * combat.speed),
+                    ));
+                } else {
+                    velocity_updates.push((entity, Vec3::ZERO));
+                }
             } else {
                 velocity_updates.push((entity, Vec3::ZERO));
             }

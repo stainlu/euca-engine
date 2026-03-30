@@ -10,6 +10,7 @@ use euca_scene::LocalTransform;
 use serde::{Deserialize, Serialize};
 
 use crate::combat::Projectile;
+use crate::crowd_control::{CcState, CcType, CrowdControl, DispelType};
 use crate::health::DamageEvent;
 use crate::teams::Team;
 
@@ -48,6 +49,16 @@ pub enum AbilityEffect {
         tag: String,
         modifiers: Vec<(String, String, f64)>,
         duration: f32,
+    },
+    /// Apply a crowd control effect to the target entity.
+    ///
+    /// When used inside an `AreaEffect`, the CC is applied to each affected entity.
+    /// When used standalone, it targets the caster (combine with `AreaEffect` or
+    /// `Chain` with a projectile for targeted CC).
+    ApplyCc {
+        cc_type: CcType,
+        duration: f32,
+        dispel: DispelType,
     },
     /// Apply an inner effect to all entities within radius (recursive).
     AreaEffect {
@@ -507,6 +518,10 @@ enum EffectAction {
         damage: f32,
     },
     InsertAppliedEffect(Entity, AppliedEffect),
+    ApplyCrowdControl {
+        target: Entity,
+        cc: CrowdControl,
+    },
 }
 
 /// Context needed to resolve an effect. Passed by value to avoid
@@ -625,6 +640,23 @@ fn resolve_effect(
             ));
         }
 
+        AbilityEffect::ApplyCc {
+            cc_type,
+            duration,
+            dispel,
+        } => {
+            actions.push(EffectAction::ApplyCrowdControl {
+                target: ctx.caster,
+                cc: CrowdControl {
+                    cc_type: cc_type.clone(),
+                    duration: *duration,
+                    remaining: *duration,
+                    source_entity: Some(ctx.caster.index() as u64),
+                    dispel_type: *dispel,
+                },
+            });
+        }
+
         AbilityEffect::AreaEffect { radius, effect } => {
             // Find all entities (except caster) within radius.
             let targets: Vec<(Entity, Vec3, euca_math::Quat)> = {
@@ -709,6 +741,12 @@ fn apply_actions(world: &mut World, actions: Vec<EffectAction>) {
             }
             EffectAction::InsertAppliedEffect(entity, applied) => {
                 world.insert(entity, applied);
+            }
+            EffectAction::ApplyCrowdControl { target, cc } => {
+                if let Some(cc_state) = world.get_mut::<CcState>(target) {
+                    cc_state.apply_cc(cc);
+                }
+                // Entities without CcState are unaffected — no-op.
             }
         }
     }

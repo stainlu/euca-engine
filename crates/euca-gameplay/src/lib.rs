@@ -121,6 +121,22 @@ pub use cleanup::{CorpseTimer, corpse_cleanup_system};
 pub use crowd_control::{
     CcState, CcType, CrowdControl, DisableFlags, DispelType, SpellImmunity, StatusResistance,
 };
+
+/// Tick crowd control durations and spell immunity for all entities with [`CcState`].
+///
+/// Run this **before** `player_command_system` and `auto_combat_system` each frame
+/// so that CC queries reflect up-to-date state.
+pub fn cc_tick_system(world: &mut euca_ecs::World, dt: f32) {
+    let entities: Vec<euca_ecs::Entity> = {
+        let query = euca_ecs::Query::<(euca_ecs::Entity, &CcState)>::new(world);
+        query.iter().map(|(e, _)| e).collect()
+    };
+    for entity in entities {
+        if let Some(cc) = world.get_mut::<CcState>(entity) {
+            cc.remove_expired(dt);
+        }
+    }
+}
 pub use economy::{
     BUYBACK_COOLDOWN, BuybackState, CreepType, EconomyError, Gold, GoldBounty, GoldWallet,
     HeroEconomy, PASSIVE_GOLD_PER_SECOND, STARTING_GOLD, apply_death_penalty, assist_gold,

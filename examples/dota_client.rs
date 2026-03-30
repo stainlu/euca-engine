@@ -300,10 +300,20 @@ fn define_heroes() -> HeroRegistry {
                 name: "Frostbite".into(),
                 cooldown: 9.0,
                 mana_cost: 115.0,
-                effect: AbilityEffect::Damage {
-                    amount: 150.0,
-                    category: "magical".into(),
-                },
+                effect: AbilityEffect::Chain(vec![
+                    AbilityEffect::Damage {
+                        amount: 150.0,
+                        category: "magical".into(),
+                    },
+                    AbilityEffect::AreaEffect {
+                        radius: 6.0,
+                        effect: Box::new(AbilityEffect::ApplyCc {
+                            cc_type: euca_gameplay::CcType::Root,
+                            duration: 1.5,
+                            dispel: euca_gameplay::DispelType::BasicDispel,
+                        }),
+                    },
+                ]),
             },
             AbilityDef {
                 slot: AbilitySlot::R,
@@ -369,13 +379,23 @@ fn define_heroes() -> HeroRegistry {
                 name: "Storm Hammer".into(),
                 cooldown: 13.0,
                 mana_cost: 140.0,
-                effect: AbilityEffect::SpawnProjectile {
-                    speed: 12.0,
-                    range: 8.0,
-                    width: 0.5,
-                    damage: 100.0,
-                    category: "magical".into(),
-                },
+                effect: AbilityEffect::Chain(vec![
+                    AbilityEffect::SpawnProjectile {
+                        speed: 12.0,
+                        range: 8.0,
+                        width: 0.5,
+                        damage: 100.0,
+                        category: "magical".into(),
+                    },
+                    AbilityEffect::AreaEffect {
+                        radius: 3.0,
+                        effect: Box::new(AbilityEffect::ApplyCc {
+                            cc_type: euca_gameplay::CcType::Stun,
+                            duration: 1.4,
+                            dispel: euca_gameplay::DispelType::StrongDispel,
+                        }),
+                    },
+                ]),
             },
             AbilityDef {
                 slot: AbilitySlot::W,
@@ -826,6 +846,7 @@ impl DotaClientApp {
 
         // Player input -> commands -> execution
         euca_gameplay::player_input_system(&mut self.world);
+        euca_gameplay::cc_tick_system(&mut self.world, dt);
         euca_gameplay::player::player_command_system(&mut self.world, dt);
 
         // Stat pipeline
