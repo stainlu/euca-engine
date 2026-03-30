@@ -160,8 +160,9 @@ pub use tower_aggro::{TowerAggroOverride, tower_aggro_system};
 
 pub use attributes::{
     AttributeGrowth as AttrGrowth, BaseAttributes, ComputedAttributes, DerivedStats,
-    HeroAttributes, HeroTimings, PrimaryAttribute, attack_interval, compute_attributes,
-    derive_stats, total_armor, total_attack_speed, total_damage, total_hp, total_mana, turn_time,
+    HeroAttributes, HeroTimings, PrimaryAttribute, attack_interval, attribute_update_system,
+    compute_attributes, derive_stats, total_armor, total_attack_speed, total_damage, total_hp,
+    total_mana, turn_time,
 };
 
 pub use building::{

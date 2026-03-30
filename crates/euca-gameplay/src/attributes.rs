@@ -4,7 +4,12 @@
 //! per level and convert to combat stats. One attribute is "primary" and
 //! also grants bonus attack damage.
 
+use euca_ecs::{Entity, Query, World};
 use serde::{Deserialize, Serialize};
+
+use crate::combat::AutoCombat;
+use crate::health::Health;
+use crate::leveling::Level;
 
 // ── Enums ──
 
@@ -224,6 +229,65 @@ pub fn turn_time(current_facing: f32, target_angle: f32, turn_rate: f32) -> f32 
         delta = std::f32::consts::TAU - delta;
     }
     delta / turn_rate
+}
+
+// ── Systems ──
+
+/// Per-tick system that recomputes attribute-derived stats for every entity
+/// that has `HeroAttributes` and `Level`.
+///
+/// For each qualifying entity:
+/// 1. Compute current attributes from `base + growth * (level - 1)`.
+/// 2. Derive bonus stats (HP, armor, damage, attack speed, mana).
+/// 3. Update `Health.max` and `AutoCombat.damage` with the new totals.
+///
+/// The system stores a `DerivedStats` component on each entity as a cache
+/// of what was last applied. On each tick it undoes the previous bonus and
+/// applies the current one, so level-ups propagate automatically without
+/// drift.
+///
+/// Entities without `HeroAttributes` are silently skipped, preserving
+/// backward compatibility with legacy heroes.
+pub fn attribute_update_system(world: &mut World) {
+    // Read phase: collect entities that have HeroAttributes + Level.
+    let entities: Vec<(Entity, HeroAttributes, u32)> = {
+        let query = Query::<(Entity, &HeroAttributes, &Level)>::new(world);
+        query
+            .iter()
+            .map(|(e, attrs, lvl)| (e, attrs.clone(), lvl.level))
+            .collect()
+    };
+
+    // Write phase: update Health and AutoCombat from derived stats.
+    for (entity, attrs, level) in entities {
+        let computed = compute_attributes(&attrs.base, &attrs.growth, level);
+        let derived = derive_stats(&computed, attrs.primary);
+
+        // Read the previously applied bonus (defaults to zero on first tick).
+        let prev = world
+            .get::<DerivedStats>(entity)
+            .copied()
+            .unwrap_or_default();
+
+        if let Some(health) = world.get_mut::<Health>(entity) {
+            // Undo previous attribute bonus, apply current.
+            let base_hp = health.max - prev.bonus_hp;
+            health.max = base_hp + derived.bonus_hp;
+
+            // Clamp current HP to new max (e.g. if max decreased).
+            if health.current > health.max {
+                health.current = health.max;
+            }
+        }
+
+        if let Some(combat) = world.get_mut::<AutoCombat>(entity) {
+            let base_damage = combat.damage - prev.bonus_damage;
+            combat.damage = base_damage + derived.bonus_damage;
+        }
+
+        // Cache the derived stats so next tick can undo them.
+        world.insert(entity, derived);
+    }
 }
 
 #[cfg(test)]
