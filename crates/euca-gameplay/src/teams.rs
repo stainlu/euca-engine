@@ -8,8 +8,8 @@ use euca_math::Vec3;
 use euca_scene::LocalTransform;
 
 use crate::cleanup::CorpseTimer;
-use crate::combat::EntityRole;
-use crate::health::{Dead, DeathEvent, Health};
+use crate::combat::{CurrentTarget, EntityRole};
+use crate::health::{Dead, DeathEvent, Health, LastAttacker};
 
 /// Which team this entity belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,9 +82,13 @@ pub fn respawn_system(world: &mut World, dt: f32) {
         if let Some(health) = world.get_mut::<Health>(entity) {
             health.current = health.max;
         }
-        // Remove Dead and RespawnTimer
+        // Remove Dead, RespawnTimer, and stale combat state so that
+        // enemies don't continue attacking this entity based on pre-death
+        // targeting, and damage attribution doesn't carry across lives.
         world.remove::<Dead>(entity);
         world.remove::<RespawnTimer>(entity);
+        world.remove::<CurrentTarget>(entity);
+        world.remove::<LastAttacker>(entity);
     }
 }
 

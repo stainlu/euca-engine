@@ -286,6 +286,24 @@ impl Default for AutoCombat {
 /// 4. If CurrentTarget exists -> chase or attack.
 /// 5. If no target at all -> march in MarchDirection (or stop).
 pub fn auto_combat_system(world: &mut World, dt: f32) {
+    // ── Pre-pass: clear CurrentTarget when the target entity is Dead ──
+    // This must happen BEFORE the main combat loop so that no entity
+    // wastes a tick chasing or attacking a dead target. It covers all
+    // entities with a CurrentTarget, not just fighters (handles edge
+    // cases where the target lacks AutoCombat, e.g. structures).
+    {
+        let stale: Vec<Entity> = {
+            let q = Query::<(Entity, &CurrentTarget)>::new(world);
+            q.iter()
+                .filter(|(_, ct)| world.get::<Dead>(ct.0).is_some())
+                .map(|(e, _)| e)
+                .collect()
+        };
+        for entity in stale {
+            world.remove::<CurrentTarget>(entity);
+        }
+    }
+
     // Collect all combat entities: position, team, alive, role
     let fighters: Vec<(Entity, Vec3, u8, bool, EntityRole)> = {
         let query = Query::<(Entity, &LocalTransform, &Team, &Health)>::new(world);

@@ -75,6 +75,10 @@ impl DotaMobaState {
         let vision_t2 = VisionMap::new(2, 128, 128, 1.0);
 
         // Six-lane wave spawner: 3 L-shaped lanes x 2 teams (Radiant + Dire).
+        // Radiant base = bottom-left (-28,-28), Dire base = top-right (28,28).
+        // Top lane: UP left edge, then RIGHT along top.
+        // Mid lane: diagonal from base to base.
+        // Bot lane: RIGHT along bottom, then UP right edge.
         let lanes = vec![
             // Radiant lanes (team 1) — L-shaped paths from bottom-left base.
             LaneConfig {
@@ -82,10 +86,9 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Top,
                     points: vec![
-                        Vec3::new(-28.0, 0.0, -15.0),
-                        Vec3::new(-28.0, 0.0, 20.0),
-                        Vec3::new(28.0, 0.0, 20.0),
-                        Vec3::new(28.0, 0.0, 15.0),
+                        Vec3::new(-28.0, 0.0, -25.0),
+                        Vec3::new(-28.0, 0.0, 25.0),
+                        Vec3::new(28.0, 0.0, 25.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -98,9 +101,9 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Mid,
                     points: vec![
-                        Vec3::new(-28.0, 0.0, -15.0),
+                        Vec3::new(-25.0, 0.0, -25.0),
                         Vec3::new(0.0, 0.0, 0.0),
-                        Vec3::new(28.0, 0.0, 15.0),
+                        Vec3::new(25.0, 0.0, 25.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -113,10 +116,9 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Bot,
                     points: vec![
-                        Vec3::new(-28.0, 0.0, -15.0),
-                        Vec3::new(-28.0, 0.0, -20.0),
-                        Vec3::new(28.0, 0.0, -20.0),
-                        Vec3::new(28.0, 0.0, 15.0),
+                        Vec3::new(-28.0, 0.0, -25.0),
+                        Vec3::new(25.0, 0.0, -28.0),
+                        Vec3::new(28.0, 0.0, 25.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -130,10 +132,9 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Top,
                     points: vec![
-                        Vec3::new(28.0, 0.0, 15.0),
-                        Vec3::new(28.0, 0.0, 20.0),
-                        Vec3::new(-28.0, 0.0, 20.0),
-                        Vec3::new(-28.0, 0.0, -15.0),
+                        Vec3::new(28.0, 0.0, 25.0),
+                        Vec3::new(-28.0, 0.0, 25.0),
+                        Vec3::new(-28.0, 0.0, -25.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -146,9 +147,9 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Mid,
                     points: vec![
-                        Vec3::new(28.0, 0.0, 15.0),
+                        Vec3::new(25.0, 0.0, 25.0),
                         Vec3::new(0.0, 0.0, 0.0),
-                        Vec3::new(-28.0, 0.0, -15.0),
+                        Vec3::new(-25.0, 0.0, -25.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -161,10 +162,9 @@ impl DotaMobaState {
                 waypoints: LaneWaypoints {
                     lane: Lane::Bot,
                     points: vec![
-                        Vec3::new(28.0, 0.0, 15.0),
-                        Vec3::new(28.0, 0.0, -20.0),
-                        Vec3::new(-28.0, 0.0, -20.0),
-                        Vec3::new(-28.0, 0.0, -15.0),
+                        Vec3::new(28.0, 0.0, 25.0),
+                        Vec3::new(25.0, 0.0, -28.0),
+                        Vec3::new(-28.0, 0.0, -25.0),
                     ],
                 },
                 barracks_destroyed: false,
@@ -668,20 +668,17 @@ fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Rend
 }
 
 /// Spawn tree entities in the jungle areas between L-shaped lanes.
-/// Lanes form an L-pattern: top lane (left edge + top edge), mid (diagonal),
-/// bot lane (bottom edge + right edge). Trees fill the interior jungle.
+/// DotA 2 layout: top lane (left edge + top edge), mid (diagonal from
+/// bottom-left to top-right), bot lane (bottom edge + right edge).
+/// Trees fill the interior jungle between lanes.
 fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandle) {
     // Fill the full map area with trees, but skip lane corridors.
     // The jungle zones are the two triangular interior areas between lanes.
     let zones: &[(f32, f32, f32, f32)] = &[
-        // Upper-left jungle (between top lane and mid lane)
-        (-24.0, 8.0, 4.0, 16.0),
-        // Lower-right jungle (between mid lane and bot lane)
-        (-8.0, 24.0, -16.0, -4.0),
-        // Top-left corner trees
-        (-28.0, -24.0, 24.0, 28.0),
-        // Bottom-right corner trees
-        (24.0, 28.0, -28.0, -24.0),
+        // Upper-left jungle (between top lane and mid lane, Radiant side)
+        (-24.0, 8.0, 4.0, 20.0),
+        // Lower-right jungle (between mid lane and bot lane, Dire side)
+        (-8.0, 24.0, -20.0, -4.0),
         // Far top-right corner (behind Dire base)
         (20.0, 28.0, 24.0, 28.0),
         // Far bottom-left corner (behind Radiant base)
@@ -709,15 +706,15 @@ fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandl
                 let pz = z + oz;
 
                 // Skip trees on L-shaped lane paths:
-                // Top lane: left edge (x≈-28, z>-15) + top edge (z≈20, x>-28)
-                let on_top = ((px + 28.0).abs() < lane_half_width && pz > -15.0)
-                    || ((pz - 20.0).abs() < lane_half_width && px > -28.0);
-                // Mid lane: diagonal from (-28,-15) to (28,15) — slope z/x ≈ 30/56
-                let mid_z_at_x = (px + 28.0) * 30.0 / 56.0 - 15.0;
+                // Top lane: left edge (x=-28, z from -25 to 25) + top edge (z=25, x from -28 to 28)
+                let on_top = ((px + 28.0).abs() < lane_half_width && pz > -25.0)
+                    || ((pz - 25.0).abs() < lane_half_width && px > -28.0);
+                // Mid lane: diagonal from (-25,-25) to (25,25) — slope = 1
+                let mid_z_at_x = px;
                 let on_mid = (pz - mid_z_at_x).abs() < lane_half_width;
-                // Bot lane: bottom edge (z≈-20, x<28) + right edge (x≈28, z<15)
-                let on_bot = ((pz + 20.0).abs() < lane_half_width && px < 28.0)
-                    || ((px - 28.0).abs() < lane_half_width && pz < 15.0);
+                // Bot lane: bottom edge (z=-28, x from -28 to 25) + right edge (x=28, z from -28 to 25)
+                let on_bot = ((pz + 28.0).abs() < lane_half_width && px < 25.0)
+                    || ((px - 28.0).abs() < lane_half_width && pz < 25.0);
 
                 if !on_top && !on_mid && !on_bot {
                     let pos = Vec3::new(px, scale * 0.5, pz);
@@ -759,7 +756,10 @@ impl DotaClientApp {
     fn new() -> Self {
         let mut world = World::new();
         world.insert_resource(Time::new());
-        world.insert_resource(Camera::new(Vec3::new(0.0, 40.0, 30.0), Vec3::ZERO));
+        world.insert_resource(Camera::new(
+            Vec3::new(-28.0, 40.0, -10.0),
+            Vec3::new(-28.0, 0.0, -28.0),
+        ));
         world.insert_resource(PhysicsConfig::new());
         world.insert_resource(AmbientLight {
             color: [1.0, 1.0, 1.0],
@@ -930,8 +930,8 @@ impl DotaClientApp {
         // Build navmesh for pathfinding
         if self.world.resource::<euca_nav::NavMesh>().is_none() {
             let config = euca_nav::GridConfig {
-                min: [-35.0, -25.0],
-                max: [35.0, 25.0],
+                min: [-35.0, -35.0],
+                max: [35.0, 35.0],
                 cell_size: 0.5,
                 ground_y: 0.0,
             };
@@ -1793,11 +1793,11 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
         color: [0.05, 0.1, 0.05, 0.9],
     });
 
-    // Lane lines on minimap (3 horizontal lines at z=20, 0, -20)
-    let world_min_x = -35.0f32;
-    let world_max_x = 35.0f32;
-    let world_min_z = -25.0f32;
-    let world_max_z = 25.0f32;
+    // Lane lines on minimap — DotA 2 L-shaped layout
+    let world_min_x = -30.0f32;
+    let world_max_x = 30.0f32;
+    let world_min_z = -30.0f32;
+    let world_max_z = 30.0f32;
 
     let to_minimap = |wx: f32, wz: f32| -> (f32, f32) {
         let u = (wx - world_min_x) / (world_max_x - world_min_x);
@@ -1809,10 +1809,10 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
     let lane_color = [0.3, 0.25, 0.15, 0.6]; // dirt-colored lane
     let lane_w = 2.0f32;
 
-    // Top lane: left edge (x=-28, from z=-15 to z=20) + top edge (z=20, from x=-28 to x=28)
+    // Top lane: left edge (x=-28, from z=-25 to z=25) + top edge (z=25, from x=-28 to x=28)
     {
-        let (lx, ly_top) = to_minimap(-28.0, 20.0);
-        let (_, ly_bot) = to_minimap(-28.0, -15.0);
+        let (lx, ly_top) = to_minimap(-28.0, 25.0);
+        let (_, ly_bot) = to_minimap(-28.0, -25.0);
         quads.push(UiQuad {
             x: lx - 1.0,
             y: ly_top,
@@ -1820,7 +1820,7 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
             h: ly_bot - ly_top,
             color: lane_color,
         });
-        let (rx, _) = to_minimap(28.0, 20.0);
+        let (rx, _) = to_minimap(28.0, 25.0);
         quads.push(UiQuad {
             x: lx,
             y: ly_top - 1.0,
@@ -1829,17 +1829,17 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
             color: lane_color,
         });
     }
-    // Mid lane: diagonal approximated as a thin strip from (-28,-15) to (28,15).
+    // Mid lane: diagonal from (-25,-25) to (25,25) — slope = 1.
     // Draw several small quads along the diagonal.
     {
         let steps = 20;
         for i in 0..steps {
             let t0 = i as f32 / steps as f32;
             let t1 = (i + 1) as f32 / steps as f32;
-            let x0 = -28.0 + t0 * 56.0;
-            let z0 = -15.0 + t0 * 30.0;
-            let x1 = -28.0 + t1 * 56.0;
-            let z1 = -15.0 + t1 * 30.0;
+            let x0 = -25.0 + t0 * 50.0;
+            let z0 = -25.0 + t0 * 50.0;
+            let x1 = -25.0 + t1 * 50.0;
+            let z1 = -25.0 + t1 * 50.0;
             let (sx, sy) = to_minimap(x0, z0);
             let (ex, ey) = to_minimap(x1, z1);
             let dx = ex - sx;
@@ -1854,10 +1854,10 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
             });
         }
     }
-    // Bot lane: bottom edge (z=-20, from x=-28 to x=28) + right edge (x=28, from z=-20 to z=15)
+    // Bot lane: bottom edge (z=-28, from x=-28 to x=25) + right edge (x=28, from z=-28 to z=25)
     {
-        let (lx, ly) = to_minimap(-28.0, -20.0);
-        let (rx, _) = to_minimap(28.0, -20.0);
+        let (lx, ly) = to_minimap(-28.0, -28.0);
+        let (rx, _) = to_minimap(25.0, -28.0);
         quads.push(UiQuad {
             x: lx,
             y: ly - 1.0,
@@ -1865,8 +1865,8 @@ fn build_minimap_quads(world: &World, _viewport_w: f32, viewport_h: f32) -> Vec<
             h: lane_w,
             color: lane_color,
         });
-        let (_, ry_top) = to_minimap(28.0, 15.0);
-        let (rx2, ry_bot) = to_minimap(28.0, -20.0);
+        let (_, ry_top) = to_minimap(28.0, 25.0);
+        let (rx2, ry_bot) = to_minimap(28.0, -28.0);
         quads.push(UiQuad {
             x: rx2 - 1.0,
             y: ry_top,
