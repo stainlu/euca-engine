@@ -264,6 +264,23 @@ pub fn is_file_path_mesh(name: &str) -> bool {
     name.contains('/') || name.contains('\\') || name.ends_with(".glb") || name.ends_with(".gltf")
 }
 
+/// Map a missing GLB file path to a procedural mesh name in `DefaultAssets`.
+///
+/// Extracts the filename stem and maps known asset names to their procedural
+/// equivalents (e.g., "roshan.glb" -> "roshan_boss", "neutral_wolf.glb" ->
+/// "neutral_wolf"). Returns `None` if no mapping exists.
+fn glb_procedural_fallback(path: &str) -> Option<String> {
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())?;
+    match stem {
+        "roshan" => Some("roshan_boss".to_string()),
+        "neutral_wolf" => Some("neutral_wolf".to_string()),
+        "neutral_troll" => Some("neutral_troll".to_string()),
+        _ => None,
+    }
+}
+
 /// Result of resolving a mesh name in the spawn handler.
 pub(crate) enum MeshResolution {
     /// Already uploaded — use this handle immediately.
@@ -306,7 +323,21 @@ pub(crate) fn resolve_mesh(
     }
 
     // 4. Verify the file exists before attempting to load.
+    //    If the file is missing, try a procedural fallback based on the filename
+    //    stem (e.g., "assets/generated/roshan.glb" -> "roshan_boss",
+    //    "assets/generated/neutral_wolf.glb" -> "neutral_wolf").
     if !std::path::Path::new(mesh_name).exists() {
+        if let Some(fallback) = glb_procedural_fallback(mesh_name)
+            && let Some(assets) = w.resource::<DefaultAssets>().cloned()
+            && let Some(handle) = assets.mesh(&fallback)
+        {
+            log::info!(
+                "GLB '{}' not found, using procedural fallback '{}'",
+                mesh_name,
+                fallback,
+            );
+            return MeshResolution::Ready(handle);
+        }
         return MeshResolution::LoadError(format!("File not found: {mesh_name}"));
     }
 
@@ -902,5 +933,59 @@ mod tests {
     fn pending_mesh_upload_default_is_empty() {
         let pending = PendingMeshUpload::default();
         assert!(pending.queue.is_empty());
+    }
+
+    #[test]
+    fn glb_procedural_fallback_known_mappings() {
+        assert_eq!(
+            glb_procedural_fallback("assets/generated/roshan.glb"),
+            Some("roshan_boss".to_string())
+        );
+        assert_eq!(
+            glb_procedural_fallback("assets/generated/neutral_wolf.glb"),
+            Some("neutral_wolf".to_string())
+        );
+        assert_eq!(
+            glb_procedural_fallback("assets/generated/neutral_troll.glb"),
+            Some("neutral_troll".to_string())
+        );
+    }
+
+    #[test]
+    fn glb_procedural_fallback_unknown_returns_none() {
+        assert_eq!(
+            glb_procedural_fallback("assets/generated/hero_sven.glb"),
+            None
+        );
+        assert_eq!(glb_procedural_fallback("random_model.glb"), None);
+    }
+
+    #[test]
+    fn resolve_mesh_falls_back_to_procedural_when_glb_missing() {
+        let mut world = World::new();
+        let mut meshes = std::collections::HashMap::new();
+        meshes.insert("roshan_boss".to_string(), MeshHandle(99));
+        let materials = std::collections::HashMap::new();
+        world.insert_resource(DefaultAssets {
+            meshes,
+            materials,
+            default_material: euca_render::MaterialHandle(0),
+        });
+
+        let entity = world.spawn(());
+        // "assets/generated/roshan.glb" doesn't exist on disk, so resolve_mesh
+        // should fall back to the "roshan_boss" procedural mesh.
+        match resolve_mesh(&mut world, entity, "assets/generated/roshan.glb") {
+            MeshResolution::Ready(h) => assert_eq!(h, MeshHandle(99)),
+            other => panic!(
+                "Expected Ready with fallback, got {:?}",
+                match other {
+                    MeshResolution::Pending => "Pending",
+                    MeshResolution::NotFound => "NotFound",
+                    MeshResolution::LoadError(e) => &*Box::leak(e.into_boxed_str()),
+                    _ => "Ready",
+                }
+            ),
+        }
     }
 }

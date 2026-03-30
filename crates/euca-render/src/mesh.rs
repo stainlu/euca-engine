@@ -452,13 +452,13 @@ impl Mesh {
     /// is centred above it. All geometry lives in a single vertex/index buffer
     /// so one draw call renders the whole tree.
     ///
-    /// * `trunk_radius`  – radius of the cylinder trunk (default 0.15)
-    /// * `trunk_height`  – height of the trunk cylinder (default 1.5)
-    /// * `trunk_sectors` – number of sides on the cylinder (default 8)
-    /// * `canopy_radius` – radius of the canopy sphere (default 0.6)
-    /// * `canopy_centre_y` – Y position of the canopy centre (default 1.8)
-    /// * `canopy_stacks` – sphere latitude segments (default 8)
-    /// * `canopy_sectors` – sphere longitude segments (default 16)
+    /// * `trunk_radius`  -- radius of the cylinder trunk (default 0.15)
+    /// * `trunk_height`  -- height of the trunk cylinder (default 1.5)
+    /// * `trunk_sectors` -- number of sides on the cylinder (default 8)
+    /// * `canopy_radius` -- radius of the canopy sphere (default 0.6)
+    /// * `canopy_centre_y` -- Y position of the canopy centre (default 1.8)
+    /// * `canopy_stacks` -- sphere latitude segments (default 8)
+    /// * `canopy_sectors` -- sphere longitude segments (default 16)
     pub fn tree(
         trunk_radius: f32,
         trunk_height: f32,
@@ -490,6 +490,172 @@ impl Mesh {
     /// Convenience wrapper with sensible defaults for a MOBA-style tree.
     pub fn tree_default() -> Self {
         Self::tree(0.15, 1.5, 8, 0.6, 1.8, 8, 16)
+    }
+
+    // ── Offset builders & multi-part combiner ──────────────────────────────
+
+    /// Create a box at the given offset, with dimensions `(w, h, d)`.
+    pub fn offset_box(w: f32, h: f32, d: f32, offset: [f32; 3]) -> Self {
+        let mut m = Self::cube();
+        for v in &mut m.vertices {
+            v.position[0] = v.position[0] * w + offset[0];
+            v.position[1] = v.position[1] * h + offset[1];
+            v.position[2] = v.position[2] * d + offset[2];
+        }
+        m
+    }
+
+    /// Create a sphere at the given offset.
+    pub fn offset_sphere(radius: f32, stacks: u32, sectors: u32, offset: [f32; 3]) -> Self {
+        let mut m = Self::sphere(radius, stacks, sectors);
+        for v in &mut m.vertices {
+            v.position[0] += offset[0];
+            v.position[1] += offset[1];
+            v.position[2] += offset[2];
+        }
+        m
+    }
+
+    /// Create a cone at the given offset with an optional rotation (euler angles in radians: pitch, yaw, roll).
+    pub fn offset_cone(
+        radius: f32,
+        height: f32,
+        sectors: u32,
+        offset: [f32; 3],
+        rotation: Option<[f32; 3]>,
+    ) -> Self {
+        let mut m = Self::cone(radius, height, sectors);
+        if let Some([pitch, yaw, roll]) = rotation {
+            let (sp, cp) = (pitch.sin(), pitch.cos());
+            let (sy, cy) = (yaw.sin(), yaw.cos());
+            let (sr, cr) = (roll.sin(), roll.cos());
+            // Rotation matrix: Ry * Rx * Rz
+            let r00 = cy * cr + sy * sp * sr;
+            let r01 = -cy * sr + sy * sp * cr;
+            let r02 = sy * cp;
+            let r10 = cp * sr;
+            let r11 = cp * cr;
+            let r12 = -sp;
+            let r20 = -sy * cr + cy * sp * sr;
+            let r21 = sy * sr + cy * sp * cr;
+            let r22 = cy * cp;
+            for v in &mut m.vertices {
+                let [x, y, z] = v.position;
+                v.position = [
+                    r00 * x + r01 * y + r02 * z,
+                    r10 * x + r11 * y + r12 * z,
+                    r20 * x + r21 * y + r22 * z,
+                ];
+                let [nx, ny, nz] = v.normal;
+                v.normal = [
+                    r00 * nx + r01 * ny + r02 * nz,
+                    r10 * nx + r11 * ny + r12 * nz,
+                    r20 * nx + r21 * ny + r22 * nz,
+                ];
+                let [tx, ty, tz] = v.tangent;
+                v.tangent = [
+                    r00 * tx + r01 * ty + r02 * tz,
+                    r10 * tx + r11 * ty + r12 * tz,
+                    r20 * tx + r21 * ty + r22 * tz,
+                ];
+            }
+        }
+        for v in &mut m.vertices {
+            v.position[0] += offset[0];
+            v.position[1] += offset[1];
+            v.position[2] += offset[2];
+        }
+        m
+    }
+
+    /// Combine multiple meshes into a single mesh, merging vertex and index buffers.
+    pub fn combine(parts: Vec<Self>) -> Self {
+        let total_verts: usize = parts.iter().map(|p| p.vertices.len()).sum();
+        let total_indices: usize = parts.iter().map(|p| p.indices.len()).sum();
+        let mut vertices = Vec::with_capacity(total_verts);
+        let mut indices = Vec::with_capacity(total_indices);
+        for part in parts {
+            let base = vertices.len() as u32;
+            vertices.extend(part.vertices);
+            indices.extend(part.indices.iter().map(|i| i + base));
+        }
+        Self { vertices, indices }
+    }
+
+    // ── Procedural creature meshes ───────────────────────────────────────
+
+    /// Procedural Roshan boss model: large body sphere, head, two horns, two arms.
+    /// Total height ~2.5 units, width ~2 units. Centered at origin, resting on Y=0.
+    pub fn roshan() -> Self {
+        let segs = 12;
+        // Body: large sphere, center at Y=1.0 (radius 1.0, bottom at Y=0)
+        let body = Self::offset_sphere(1.0, segs, segs * 2, [0.0, 1.0, 0.0]);
+        // Head: smaller sphere in front, center at Y=1.8, Z=-0.8
+        let head = Self::offset_sphere(0.5, segs, segs * 2, [0.0, 1.8, -0.8]);
+        // Left horn: cone angled outward-left, from head
+        let horn_l = Self::offset_cone(
+            0.15,
+            0.8,
+            8,
+            [-0.3, 2.2, -0.9],
+            Some([0.0, 0.0, 0.5]), // tilt outward left
+        );
+        // Right horn: cone angled outward-right
+        let horn_r = Self::offset_cone(
+            0.15,
+            0.8,
+            8,
+            [0.3, 2.2, -0.9],
+            Some([0.0, 0.0, -0.5]), // tilt outward right
+        );
+        // Left arm
+        let arm_l = Self::offset_box(0.15, 0.6, 0.2, [-1.0, 0.8, 0.0]);
+        // Right arm
+        let arm_r = Self::offset_box(0.15, 0.6, 0.2, [1.0, 0.8, 0.0]);
+
+        Self::combine(vec![body, head, horn_l, horn_r, arm_l, arm_r])
+    }
+
+    /// Procedural wolf model: horizontal body, head, 4 legs.
+    /// Medium quadruped beast. Centered at origin, resting on Y=0.
+    pub fn wolf() -> Self {
+        let segs = 8;
+        // Body: horizontal box, center at Y=0.3
+        let body = Self::offset_box(0.4, 0.25, 0.6, [0.0, 0.3, 0.0]);
+        // Head: small sphere at front
+        let head = Self::offset_sphere(0.12, segs, segs * 2, [0.0, 0.38, -0.4]);
+        // Front-left leg
+        let fl = Self::offset_box(0.06, 0.18, 0.06, [-0.14, 0.09, -0.2]);
+        // Front-right leg
+        let fr = Self::offset_box(0.06, 0.18, 0.06, [0.14, 0.09, -0.2]);
+        // Back-left leg
+        let bl = Self::offset_box(0.06, 0.18, 0.06, [-0.14, 0.09, 0.2]);
+        // Back-right leg
+        let br = Self::offset_box(0.06, 0.18, 0.06, [0.14, 0.09, 0.2]);
+
+        Self::combine(vec![body, head, fl, fr, bl, br])
+    }
+
+    /// Procedural troll model: upright body, head, two arms, club in one hand.
+    /// Bipedal monster. Centered at origin, resting on Y=0.
+    pub fn troll() -> Self {
+        let segs = 8;
+        // Body: upright box, center at Y=0.35
+        let body = Self::offset_box(0.25, 0.5, 0.2, [0.0, 0.35, 0.0]);
+        // Head: sphere on top
+        let head = Self::offset_sphere(0.15, segs, segs * 2, [0.0, 0.7, 0.0]);
+        // Left arm
+        let arm_l = Self::offset_box(0.08, 0.35, 0.08, [-0.22, 0.35, 0.0]);
+        // Right arm
+        let arm_r = Self::offset_box(0.08, 0.35, 0.08, [0.22, 0.35, 0.0]);
+        // Club in right hand: long thin box extending down and forward
+        let club = Self::offset_box(0.05, 0.45, 0.05, [0.28, 0.15, -0.1]);
+        // Left leg
+        let leg_l = Self::offset_box(0.08, 0.2, 0.08, [-0.08, 0.1, 0.0]);
+        // Right leg
+        let leg_r = Self::offset_box(0.08, 0.2, 0.08, [0.08, 0.1, 0.0]);
+
+        Self::combine(vec![body, head, arm_l, arm_r, club, leg_l, leg_r])
     }
 }
 
@@ -568,5 +734,65 @@ mod tests {
         a.merge(&b);
         assert_eq!(a.vertices.len(), a_verts + b_verts);
         assert_eq!(a.indices.len(), a_indices + b_indices);
+    }
+
+    #[test]
+    fn offset_box_applies_offset() {
+        let m = Mesh::offset_box(1.0, 1.0, 1.0, [5.0, 0.0, 0.0]);
+        // All vertices should be centered around x=5
+        let avg_x: f32 =
+            m.vertices.iter().map(|v| v.position[0]).sum::<f32>() / m.vertices.len() as f32;
+        assert!(
+            (avg_x - 5.0).abs() < 0.01,
+            "avg_x should be ~5.0, got {avg_x}"
+        );
+    }
+
+    #[test]
+    fn combine_merges_meshes() {
+        let a = Mesh::cube();
+        let b = Mesh::cube();
+        let a_verts = a.vertices.len();
+        let a_indices = a.indices.len();
+        let combined = Mesh::combine(vec![a, b]);
+        assert_eq!(combined.vertices.len(), a_verts * 2);
+        assert_eq!(combined.indices.len(), a_indices * 2);
+        // Second mesh's indices should be offset by the first mesh's vertex count.
+        assert!(combined.indices[a_indices] >= a_verts as u32);
+    }
+
+    #[test]
+    fn roshan_mesh_is_nonempty() {
+        let m = Mesh::roshan();
+        assert!(m.vertices.len() > 50, "Roshan should have many vertices");
+        assert!(!m.indices.is_empty());
+    }
+
+    #[test]
+    fn wolf_mesh_is_nonempty() {
+        let m = Mesh::wolf();
+        assert!(m.vertices.len() > 30, "Wolf should have multiple parts");
+        assert!(!m.indices.is_empty());
+    }
+
+    #[test]
+    fn troll_mesh_is_nonempty() {
+        let m = Mesh::troll();
+        assert!(m.vertices.len() > 30, "Troll should have multiple parts");
+        assert!(!m.indices.is_empty());
+    }
+
+    #[test]
+    fn roshan_rests_on_ground() {
+        let m = Mesh::roshan();
+        let min_y = m
+            .vertices
+            .iter()
+            .map(|v| v.position[1])
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            min_y >= -0.1,
+            "Roshan should rest on or above ground (Y=0), min_y={min_y}"
+        );
     }
 }
