@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Euca Poker</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+/* ── Login screen ── */
+#login {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    gap: 16px;
+}
+#login h1 { font-size: 2.5rem; color: #e94560; margin-bottom: 8px; }
+#login input, #login button {
+    font-size: 1.1rem; padding: 10px 20px; border-radius: 8px; border: none;
+}
+#login input { background: #16213e; color: #fff; width: 250px; }
+#login button {
+    background: #e94560; color: #fff; cursor: pointer; font-weight: bold;
+}
+#login button:hover { background: #c73550; }
+
+/* ── Game screen ── */
+#game { display: none; width: 100vw; height: 100vh; position: relative; }
+
+/* Table */
+#table {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 700px; height: 400px;
+    background: radial-gradient(ellipse, #2d6a4f, #1b4332);
+    border-radius: 200px;
+    border: 12px solid #5c3a1e;
+    box-shadow: 0 0 60px rgba(0,0,0,0.6);
+}
+
+/* Community cards */
+#community {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex; gap: 8px;
+}
+
+/* Pot display */
+#pot-display {
+    position: absolute;
+    top: 35%; left: 50%;
+    transform: translateX(-50%);
+    font-size: 1.2rem; font-weight: bold;
+    color: #ffd700;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
+/* Phase indicator */
+#phase-display {
+    position: absolute;
+    top: 20px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 1rem;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+/* Player seats (positioned via JS) */
+.player-seat {
+    position: absolute;
+    width: 130px;
+    text-align: center;
+    transform: translate(-50%, -50%);
+}
+.player-seat .name {
+    font-weight: bold; font-size: 0.85rem;
+    color: #e0e0e0;
+    margin-bottom: 4px;
+}
+.player-seat .chips {
+    font-size: 0.75rem; color: #ffd700;
+}
+.player-seat .bet {
+    font-size: 0.7rem; color: #aaa;
+    margin-top: 2px;
+}
+.player-seat .cards {
+    display: flex; gap: 4px; justify-content: center;
+    margin-top: 4px;
+}
+.player-seat.folded { opacity: 0.4; }
+.player-seat.active { }
+.player-seat.active .name { color: #e94560; }
+.player-seat.dealer .name::after {
+    content: ' D';
+    color: #ffd700;
+    font-size: 0.7rem;
+}
+
+/* Card */
+.card {
+    width: 45px; height: 65px;
+    background: #fff;
+    border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: bold;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    color: #333;
+}
+.card.red { color: #d32f2f; }
+.card.back {
+    background: linear-gradient(135deg, #1a237e, #283593);
+    color: transparent;
+}
+
+/* Your hole cards */
+#your-cards {
+    position: absolute;
+    bottom: 120px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 8px;
+}
+#your-cards .card { width: 60px; height: 85px; font-size: 1.1rem; }
+
+/* Action bar */
+#actions {
+    position: absolute;
+    bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center;
+}
+#actions button {
+    padding: 10px 24px;
+    font-size: 1rem; font-weight: bold;
+    border: none; border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+#actions button:disabled {
+    opacity: 0.3; cursor: not-allowed;
+}
+#btn-fold { background: #555; color: #fff; }
+#btn-fold:hover:not(:disabled) { background: #777; }
+#btn-check { background: #2196f3; color: #fff; }
+#btn-check:hover:not(:disabled) { background: #42a5f5; }
+#btn-call { background: #4caf50; color: #fff; }
+#btn-call:hover:not(:disabled) { background: #66bb6a; }
+#btn-raise { background: #e94560; color: #fff; }
+#btn-raise:hover:not(:disabled) { background: #ff6b81; }
+#raise-input {
+    width: 80px; padding: 8px;
+    font-size: 1rem; border-radius: 8px; border: none;
+    background: #16213e; color: #fff; text-align: center;
+}
+
+/* Status bar */
+#status {
+    position: absolute;
+    bottom: 70px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.85rem; color: #888;
+}
+
+/* Winner overlay */
+#winner-overlay {
+    display: none;
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.85);
+    padding: 24px 40px;
+    border-radius: 12px;
+    text-align: center;
+    z-index: 10;
+    font-size: 1.2rem;
+}
+#winner-overlay .winner-name { color: #ffd700; font-weight: bold; font-size: 1.5rem; }
+#winner-overlay .winner-hand { color: #aaa; margin-top: 4px; }
+#winner-overlay .winner-amount { color: #4caf50; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login">
+    <h1>Euca Poker</h1>
+    <input id="player-name" placeholder="Your name" value="">
+    <input id="buy-in" type="number" placeholder="Buy-in chips" value="1000">
+    <input id="server-url" placeholder="Server URL" value="ws://localhost:8080/ws">
+    <button onclick="joinGame()">Play</button>
+    <div id="login-error" style="color:#e94560"></div>
+</div>
+
+<!-- Game -->
+<div id="game">
+    <div id="phase-display"></div>
+    <div id="table">
+        <div id="pot-display"></div>
+        <div id="community"></div>
+    </div>
+    <div id="your-cards"></div>
+    <div id="status"></div>
+    <div id="actions">
+        <button id="btn-fold" onclick="sendAction('fold')" disabled>Fold</button>
+        <button id="btn-check" onclick="sendAction('check')" disabled>Check</button>
+        <button id="btn-call" onclick="sendAction('call')" disabled>Call</button>
+        <input id="raise-input" type="number" placeholder="Raise" min="0">
+        <button id="btn-raise" onclick="sendRaise()" disabled>Raise</button>
+    </div>
+    <div id="winner-overlay"></div>
+</div>
+
+<script>
+// ── State ──
+let ws = null;
+let mySeat = -1;
+let myName = '';
+let currentState = null;
+
+// ── Seat positions (up to 8 players, elliptical around table) ──
+const SEAT_POSITIONS = [
+    { top: '88%', left: '50%' },   // 0: bottom center (you)
+    { top: '75%', left: '15%' },   // 1: bottom-left
+    { top: '40%', left: '5%' },    // 2: left
+    { top: '12%', left: '15%' },   // 3: top-left
+    { top: '5%',  left: '50%' },   // 4: top center
+    { top: '12%', left: '85%' },   // 5: top-right
+    { top: '40%', left: '95%' },   // 6: right
+    { top: '75%', left: '85%' },   // 7: bottom-right
+];
+
+// ── Connect & Join ──
+function joinGame() {
+    myName = document.getElementById('player-name').value.trim() || 'Player';
+    const buyIn = parseInt(document.getElementById('buy-in').value) || 1000;
+    const url = document.getElementById('server-url').value.trim();
+
+    ws = new WebSocket(url);
+    ws.onopen = () => {
+        ws.send(JSON.stringify({
+            type: 'JoinRoom',
+            room_id: null,
+            player_name: myName,
+            buy_in: buyIn,
+        }));
+    };
+    ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+    ws.onerror = () => {
+        document.getElementById('login-error').textContent = 'Connection failed';
+    };
+    ws.onclose = () => {
+        document.getElementById('login-error').textContent = 'Disconnected';
+    };
+}
+
+// ── Message handler ──
+function handleMessage(msg) {
+    switch (msg.type) {
+        case 'RoomJoined':
+            mySeat = msg.seat;
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('game').style.display = 'block';
+            setStatus(`Joined room ${msg.room_id} at seat ${msg.seat}`);
+            break;
+
+        case 'TableState':
+            currentState = msg;
+            renderTable(msg);
+            break;
+
+        case 'PlayerAction':
+            setStatus(`Seat ${msg.seat}: ${msg.action}` + (msg.amount > 0 ? ` $${msg.amount}` : ''));
+            break;
+
+        case 'HandResult':
+            showWinner(msg);
+            break;
+
+        case 'ChatMsg':
+            break; // Not shown for now
+
+        case 'Error':
+            setStatus(`Error: ${msg.message}`);
+            document.getElementById('login-error').textContent = msg.message;
+            break;
+    }
+}
+
+// ── Render table ──
+function renderTable(state) {
+    // Phase
+    document.getElementById('phase-display').textContent = state.phase;
+
+    // Pot
+    document.getElementById('pot-display').textContent =
+        state.pot > 0 ? `Pot: $${state.pot}` : '';
+
+    // Community cards
+    const cc = document.getElementById('community');
+    cc.innerHTML = state.community_cards.map(c => cardHTML(c)).join('');
+
+    // Your hole cards
+    const yc = document.getElementById('your-cards');
+    if (state.your_cards) {
+        yc.innerHTML = state.your_cards.map(c => cardHTML(c)).join('');
+    } else {
+        yc.innerHTML = '';
+    }
+
+    // Remove old seats
+    document.querySelectorAll('.player-seat').forEach(el => el.remove());
+
+    // Render player seats
+    const table = document.getElementById('table');
+    state.players.forEach((p) => {
+        // Rotate seat indices so our seat is always at position 0 (bottom)
+        const relIdx = (p.seat - mySeat + 8) % 8;
+        const pos = SEAT_POSITIONS[relIdx] || SEAT_POSITIONS[0];
+
+        const div = document.createElement('div');
+        div.className = 'player-seat'
+            + (p.folded ? ' folded' : '')
+            + (state.action_on === p.seat ? ' active' : '')
+            + (p.is_dealer ? ' dealer' : '');
+        div.style.top = pos.top;
+        div.style.left = pos.left;
+        div.innerHTML = `
+            <div class="name">${esc(p.name)}</div>
+            <div class="chips">$${p.chips}</div>
+            ${p.current_bet > 0 ? `<div class="bet">Bet: $${p.current_bet}</div>` : ''}
+            ${p.seat !== mySeat ? '<div class="cards">' + cardHTML(null) + cardHTML(null) + '</div>' : ''}
+        `;
+        table.appendChild(div);
+    });
+
+    // Update action buttons
+    const isMyTurn = state.action_on === mySeat;
+    document.getElementById('btn-fold').disabled = !isMyTurn;
+    document.getElementById('btn-check').disabled = !isMyTurn;
+    document.getElementById('btn-call').disabled = !isMyTurn;
+    document.getElementById('btn-raise').disabled = !isMyTurn;
+
+    if (isMyTurn) {
+        setStatus("Your turn!");
+        // Show check vs call based on current bet
+        const myPlayer = state.players.find(p => p.seat === mySeat);
+        const needToCall = state.current_bet - (myPlayer ? myPlayer.current_bet : 0);
+        if (needToCall > 0) {
+            document.getElementById('btn-check').style.display = 'none';
+            document.getElementById('btn-call').style.display = '';
+            document.getElementById('btn-call').textContent = `Call $${needToCall}`;
+        } else {
+            document.getElementById('btn-check').style.display = '';
+            document.getElementById('btn-call').style.display = 'none';
+        }
+    }
+}
+
+// ── Card rendering ──
+function cardHTML(code) {
+    if (!code) return '<div class="card back"></div>';
+    const rank = code.slice(0, -1);
+    const suit = code.slice(-1);
+    const suitSymbol = { H: '\u2665', D: '\u2666', C: '\u2663', S: '\u2660' }[suit] || suit;
+    const isRed = suit === 'H' || suit === 'D';
+    const displayRank = { '10': '10', J: 'J', Q: 'Q', K: 'K', A: 'A' }[rank] || rank;
+    return `<div class="card ${isRed ? 'red' : ''}">${displayRank}${suitSymbol}</div>`;
+}
+
+// ── Actions ──
+function sendAction(action) {
+    if (!ws) return;
+    ws.send(JSON.stringify({ type: 'Action', action, amount: null }));
+}
+
+function sendRaise() {
+    if (!ws) return;
+    const amount = parseInt(document.getElementById('raise-input').value) || 0;
+    ws.send(JSON.stringify({ type: 'Action', action: 'raise', amount }));
+}
+
+// ── Winner overlay ──
+function showWinner(msg) {
+    const overlay = document.getElementById('winner-overlay');
+    let html = '';
+    for (const w of msg.winners) {
+        html += `<div class="winner-name">Seat ${w.seat} wins!</div>`;
+        html += `<div class="winner-hand">${w.hand_name}</div>`;
+        html += `<div class="winner-amount">+$${w.amount}</div>`;
+    }
+    if (msg.hands_shown.length > 0) {
+        html += '<div style="margin-top:12px; color:#888">';
+        for (const h of msg.hands_shown) {
+            html += `Seat ${h.seat}: ${h.cards.join(' ')} &nbsp;`;
+        }
+        html += '</div>';
+    }
+    overlay.innerHTML = html;
+    overlay.style.display = 'block';
+    setTimeout(() => { overlay.style.display = 'none'; }, 5000);
+}
+
+// ── Helpers ──
+function setStatus(text) {
+    document.getElementById('status').textContent = text;
+}
+
+function esc(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+</script>
+</body>
+</html>
