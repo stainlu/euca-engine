@@ -107,8 +107,10 @@ struct TiledObject {
     #[serde(default)]
     y: f64,
     #[serde(default)]
+    #[allow(dead_code)]
     width: f64,
     #[serde(default)]
+    #[allow(dead_code)]
     height: f64,
     #[serde(default, rename = "type")]
     object_type: String,
