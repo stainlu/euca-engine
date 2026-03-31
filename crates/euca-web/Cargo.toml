@@ -1,0 +1,33 @@
+[package]
+name = "euca-web"
+version.workspace = true
+edition.workspace = true
+description = "WASM entry point for running Euca Engine in the browser"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+euca-ecs = { path = "../euca-ecs" }
+euca-math = { path = "../euca-math" }
+euca-render = { path = "../euca-render" }
+euca-scene = { path = "../euca-scene" }
+euca-core = { path = "../euca-core" }
+euca-rhi = { path = "../euca-rhi", features = ["web"] }
+wgpu = "27"
+winit = "0.30"
+log = "0.4"
+pollster = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "HtmlCanvasElement", "Element",
+    "CssStyleDeclaration",
+] }
+console_log = "0.2"
+console_error_panic_hook = "0.1"

@@ -26,6 +26,7 @@ members = [
     "crates/euca-terrain",
     "crates/euca-script",
     "crates/euca-services",
+    "crates/euca-web",
     "tools/euca-cli",
     "games/poker",
     "services/matchmaking",

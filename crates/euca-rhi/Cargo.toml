@@ -9,6 +9,7 @@ categories = ["game-development", "rendering"]
 [features]
 default = ["wgpu-backend"]
 wgpu-backend = ["dep:wgpu", "dep:winit"]
+web = ["wgpu-backend", "wgpu/webgpu", "wgpu/webgl"]
 metal-backend = ["dep:objc2", "dep:block2", "dep:objc2-metal", "dep:objc2-foundation", "dep:objc2-quartz-core", "dep:objc2-metal-fx", "dep:naga", "dep:winit", "dep:raw-window-handle"]
 
 [dependencies]

@@ -30,17 +30,17 @@ pub use types::*;
 /// Associated types are opaque GPU handles. The renderer stores and passes
 /// them around but never inspects their internals — only the backend knows
 /// how to use them.
-pub trait RenderDevice: Send + Sync + 'static {
+pub trait RenderDevice: 'static {
     // -- Opaque GPU handle types --
-    type Buffer: Send + Sync;
-    type Texture: Send + Sync;
-    type TextureView: Send + Sync;
-    type Sampler: Send + Sync;
-    type BindGroupLayout: Send + Sync;
-    type BindGroup: Send + Sync;
-    type ShaderModule: Send + Sync;
-    type RenderPipeline: Send + Sync;
-    type ComputePipeline: Send + Sync;
+    type Buffer;
+    type Texture;
+    type TextureView;
+    type Sampler;
+    type BindGroupLayout;
+    type BindGroup;
+    type ShaderModule;
+    type RenderPipeline;
+    type ComputePipeline;
     type CommandEncoder;
     type RenderPass<'a>: RenderPassOps<Self>
     where
