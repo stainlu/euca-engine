@@ -871,150 +871,151 @@ fn spawn_terrain_quad(
 /// lanes, and two base areas. Each zone is a separate entity with its own
 /// material so colours distinguish the different map regions.
 fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext, renderer: &mut Renderer) {
-    // Shared unit plane mesh -- each entity scales/rotates/translates it.
-    let unit_plane = renderer.upload_mesh(gpu, &Mesh::plane(1.0));
+    use euca_terrain::level_data::{LevelData, SurfaceType};
+    use euca_terrain::terrain_material::TerrainMaterialSet;
 
-    // ── Materials ──────────────────────────────────────────────────────────
-    let grass_mat = renderer.upload_material(
-        gpu,
-        &Material::new([0.2, 0.5, 0.15, 1.0], 0.0, 0.95), // bright green
-    );
-    let river_mat = renderer.upload_material(
-        gpu,
-        &Material::new([0.15, 0.3, 0.6, 0.9], 0.5, 0.15), // blue, slightly metallic
-    );
-    let lane_mat = renderer.upload_material(
-        gpu,
-        &Material::new([0.4, 0.35, 0.2, 1.0], 0.0, 0.85), // brown / tan
-    );
-    let base_mat = renderer.upload_material(
-        gpu,
-        &Material::new([0.35, 0.35, 0.3, 1.0], 0.0, 0.8), // stone gray
-    );
-    let jungle_mat = renderer.upload_material(
-        gpu,
-        &Material::new([0.12, 0.3, 0.1, 1.0], 0.0, 0.95), // darker green
+    // ── 1. Configure terrain materials (load textures from disk) ──────────
+    let material_set = TerrainMaterialSet::with_standard_textures("assets/textures/terrain");
+
+    // ── 2. Build LevelData: 70x70 grid centered at origin ────────────────
+    // Map spans (-35..+35) in world space. Grid cell = 1 world unit.
+    let grid_size = 70u32;
+    let mut level = LevelData::new(grid_size + 1, grid_size + 1, 1.0);
+    level.max_height = 2.0;
+    level.interpolate_height = false; // Dota-style flat per-cell
+
+    let half = grid_size as f32 / 2.0;
+
+    for row in 0..grid_size {
+        for col in 0..grid_size {
+            let idx = (row * grid_size + col) as usize;
+            if idx >= level.surface.len() {
+                continue;
+            }
+            // World-space coordinates (centered at origin)
+            let wx = col as f32 - half;
+            let wz = row as f32 - half;
+
+            // River: diagonal band (bottom-left to top-right)
+            if (wx + wz).abs() < 3.0 {
+                level.surface[idx] = SurfaceType::Water;
+                level.heightmap[idx] = 0.0;
+            }
+            // Lanes: L-shaped paths
+            else if is_lane_cell(wx, wz) {
+                level.surface[idx] = SurfaceType::Dirt;
+                level.heightmap[idx] = 0.15;
+            }
+            // Bases: bottom-left (Radiant) and top-right (Dire)
+            else if is_base_cell(wx, wz) {
+                level.surface[idx] = SurfaceType::Stone;
+                level.heightmap[idx] = 0.25;
+            }
+            // Default: grass
+            else {
+                level.surface[idx] = SurfaceType::Grass;
+                level.heightmap[idx] = 0.15;
+            }
+        }
+    }
+
+    // ── 3. Generate terrain meshes via engine pipeline ────────────────────
+    let chunks = euca_terrain::level_render::generate_mesh_from_level_with_materials(
+        &level,
+        &material_set,
     );
 
-    // Helper: build a Transform that positions a unit plane as an axis-aligned
-    // rectangle covering [cx - hw, cx + hw] x [cz - hd, cz + hd] at height y.
-    let axis_rect = |cx: f32, cz: f32, half_w: f32, half_d: f32, y: f32| -> Transform {
-        Transform {
-            translation: Vec3::new(cx, y, cz),
+    // ── 4. Upload materials (load textures from disk → GPU) ──────────────
+    let mut mat_handles: std::collections::HashMap<SurfaceType, MaterialHandle> =
+        std::collections::HashMap::new();
+
+    for chunk in &chunks {
+        if mat_handles.contains_key(&chunk.surface) {
+            continue;
+        }
+        let mat_handle = if let Some(surf_mat) = material_set.get(chunk.surface) {
+            // Try to load albedo texture from disk
+            let mut material = Material::new(
+                surf_mat.base_color,
+                surf_mat.metallic,
+                surf_mat.roughness,
+            );
+            if let Some(ref path) = surf_mat.albedo_texture_path {
+                if let Ok(data) = std::fs::read(path) {
+                    let tex = renderer.upload_texture_image(gpu, &data);
+                    material = material.with_texture(tex);
+                    log::info!("Loaded terrain texture: {path}");
+                }
+            }
+            if let Some(ref path) = surf_mat.normal_texture_path {
+                if let Ok(data) = std::fs::read(path) {
+                    let tex = renderer.upload_texture_image(gpu, &data);
+                    material = material.with_normal_map(tex);
+                    log::info!("Loaded terrain normal map: {path}");
+                }
+            }
+            renderer.upload_material(gpu, &material)
+        } else {
+            // Fallback: flat color from surface_color()
+            let color = euca_terrain::level_render::surface_color(chunk.surface);
+            renderer.upload_material(gpu, &Material::new(color, 0.0, 0.8))
+        };
+        mat_handles.insert(chunk.surface, mat_handle);
+    }
+
+    // ── 5. Spawn terrain entities ────────────────────────────────────────
+    // Offset all terrain so the grid origin (0,0) maps to world (-half, -half).
+    let terrain_offset = Vec3::new(-half, 0.0, -half);
+
+    for chunk in chunks {
+        let mesh_handle = renderer.upload_mesh(gpu, &chunk.mesh);
+        let mat = mat_handles
+            .get(&chunk.surface)
+            .copied()
+            .unwrap_or_else(|| renderer.upload_material(gpu, &Material::new([0.5; 4], 0.0, 0.8)));
+        let entity = world.spawn(LocalTransform(Transform {
+            translation: terrain_offset,
             rotation: Quat::IDENTITY,
-            // plane(1.0) spans -0.5..0.5, so scale by 2*half to get the desired size.
-            scale: Vec3::new(half_w * 2.0, 1.0, half_d * 2.0),
-        }
-    };
+            scale: Vec3::ONE,
+        }));
+        world.insert(entity, GlobalTransform::default());
+        world.insert(entity, MeshRenderer { mesh: mesh_handle });
+        world.insert(entity, MaterialRef { handle: mat });
+    }
 
-    // Helper: diagonal strip centered at (cx, cz), rotated 45 degrees around Y,
-    // with given width and length (measured along the diagonal).
-    let diag_rect = |cx: f32, cz: f32, length: f32, width: f32, y: f32| -> Transform {
-        Transform {
-            translation: Vec3::new(cx, y, cz),
-            rotation: Quat::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), std::f32::consts::FRAC_PI_4),
-            scale: Vec3::new(length, 1.0, width),
-        }
-    };
-
-    // ── 1. Grass base plane ───────────────────────────────────────────────
-    // Covers the full map (-35..35) at y=0. Also carries the physics collider
-    // so click-to-move raycasts can hit the ground.
-    let grass = spawn_terrain_quad(
-        world,
-        unit_plane,
-        grass_mat,
-        axis_rect(0.0, 0.0, 35.0, 35.0, 0.0),
+    // ── 6. Physics collider for click-to-move raycasting ─────────────────
+    let collider_entity = world.spawn(LocalTransform(Transform::from_translation(
+        Vec3::new(0.0, 0.0, 0.0),
+    )));
+    world.insert(collider_entity, GlobalTransform::default());
+    world.insert(collider_entity, euca_physics::PhysicsBody::fixed());
+    world.insert(
+        collider_entity,
+        euca_physics::Collider::aabb(40.0, 0.01, 40.0),
     );
-    world.insert(grass, euca_physics::PhysicsBody::fixed());
-    world.insert(grass, euca_physics::Collider::aabb(40.0, 0.01, 40.0));
+}
 
-    // ── 2. River ──────────────────────────────────────────────────────────
-    // Diagonal band from bottom-left to top-right, slightly below ground.
-    // Length ~100 (diagonal of 70x70), width 6 units.
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        river_mat,
-        diag_rect(0.0, 0.0, 100.0, 6.0, -0.05),
-    );
+/// Check if a world-space position is on a lane path.
+fn is_lane_cell(wx: f32, wz: f32) -> bool {
+    let lane_half_w = 3.0;
+    // Top lane: left edge (x ≈ -28) + top edge (z ≈ 25)
+    let on_top_lane = (wx.abs() - 28.0).abs() < lane_half_w && wz > -25.0 && wz < 25.0
+        || (wz - 25.0).abs() < lane_half_w && wx > -28.0 && wx < 28.0;
+    // Mid lane: diagonal (x ≈ z within some width)
+    let on_mid_lane = (wx - wz).abs() < 2.5 && wx.abs() < 25.0;
+    // Bot lane: bottom edge (z ≈ -25) + right edge (x ≈ 28)
+    let on_bot_lane = (wz + 25.0).abs() < lane_half_w && wx > -28.0 && wx < 28.0
+        || (wx - 28.0).abs() < lane_half_w && wz > -25.0 && wz < 25.0;
+    on_top_lane || on_mid_lane || on_bot_lane
+}
 
-    // ── 3. Lane paths ─────────────────────────────────────────────────────
-    let lane_w = 3.0; // half-width of each lane strip
-
-    // Top lane: vertical segment along the left edge, then horizontal along the top.
-    // Vertical: x=-28, z from -25 to +25
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        lane_mat,
-        axis_rect(-28.0, 0.0, lane_w, 25.0, 0.01),
-    );
-    // Horizontal: z=+25, x from -28 to +28
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        lane_mat,
-        axis_rect(0.0, 25.0, 28.0, lane_w, 0.01),
-    );
-
-    // Mid lane: diagonal from bottom-left base to top-right base.
-    // Length ~71 (diagonal of ~50x50), width 5 units.
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        lane_mat,
-        diag_rect(0.0, 0.0, 71.0, 5.0, 0.01),
-    );
-
-    // Bot lane: horizontal along the bottom edge, then vertical along the right.
-    // Horizontal: z=-25, x from -28 to +28
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        lane_mat,
-        axis_rect(0.0, -25.0, 28.0, lane_w, 0.01),
-    );
-    // Vertical: x=+28, z from -25 to +25
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        lane_mat,
-        axis_rect(28.0, 0.0, lane_w, 25.0, 0.01),
-    );
-
-    // ── 4. Base areas ─────────────────────────────────────────────────────
+/// Check if a world-space position is inside a base area.
+fn is_base_cell(wx: f32, wz: f32) -> bool {
     // Radiant base: bottom-left corner
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        base_mat,
-        axis_rect(-28.0, -28.0, 7.0, 7.0, 0.01),
-    );
+    let radiant = wx < -21.0 && wz < -21.0;
     // Dire base: top-right corner
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        base_mat,
-        axis_rect(28.0, 28.0, 7.0, 7.0, 0.01),
-    );
-
-    // ── 5. Jungle zones ──────────────────────────────────────────────────
-    // Darker green patches between lanes to distinguish jungle from grass.
-    // Upper-left jungle (Radiant side, between top lane and mid lane)
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        jungle_mat,
-        axis_rect(-12.0, 14.0, 13.0, 8.0, 0.005),
-    );
-    // Lower-right jungle (Dire side, between mid lane and bot lane)
-    spawn_terrain_quad(
-        world,
-        unit_plane,
-        jungle_mat,
-        axis_rect(12.0, -14.0, 13.0, 8.0, 0.005),
-    );
+    let dire = wx > 21.0 && wz > 21.0;
+    radiant || dire
 }
 
 /// Spawn tree entities in the jungle areas between L-shaped lanes.

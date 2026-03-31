@@ -1429,6 +1429,7 @@ dependencies = [
  "euca-physics",
  "euca-render",
  "euca-scene",
+ "euca-terrain",
  "log",
  "mimalloc",
  "pollster",

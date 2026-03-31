@@ -20,6 +20,7 @@ euca-agent = { path = "../euca-agent" }
 euca-audio = { path = "../euca-audio" }
 euca-nav = { path = "../euca-nav" }
 euca-asset = { path = "../euca-asset" }
+euca-terrain = { path = "../euca-terrain", features = ["level-render"] }
 euca-particle = { path = "../euca-particle" }
 winit = "0.30"
 wgpu = "27"
