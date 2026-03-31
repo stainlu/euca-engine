@@ -1430,6 +1430,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "euca-level-mcp"
+version = "1.1.0"
+dependencies = [
+ "env_logger",
+ "euca-asset",
+ "euca-math",
+ "euca-terrain",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "euca-matchmaking"
 version = "1.1.0"
 dependencies = [

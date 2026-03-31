@@ -30,6 +30,7 @@ members = [
     "games/poker",
     "services/matchmaking",
     "services/poker-server",
+    "services/level-mcp",
 ]
 
 [workspace.package]

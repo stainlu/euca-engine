@@ -1,0 +1,19 @@
+[package]
+name = "euca-level-mcp"
+version.workspace = true
+edition.workspace = true
+description = "MCP server for AI-powered level generation in Euca Engine"
+
+[[bin]]
+name = "euca-level-mcp"
+path = "src/main.rs"
+
+[dependencies]
+euca-asset = { path = "../../crates/euca-asset" }
+euca-terrain = { path = "../../crates/euca-terrain" }
+euca-math = { path = "../../crates/euca-math" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+env_logger = "0.11"
