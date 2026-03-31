@@ -78,7 +78,19 @@ fn build_cell_quad_smooth(
     let normal = [n.x, n.y, n.z];
     let tangent = [1.0, 0.0, 0.0];
 
-    build_quad(x0, z0, x1, z1, y00, y10, y01, y11, normal, tangent, base_vertex)
+    build_quad(
+        x0,
+        z0,
+        x1,
+        z1,
+        y00,
+        y10,
+        y01,
+        y11,
+        normal,
+        tangent,
+        base_vertex,
+    )
 }
 
 /// Build a cell quad where all four corners share the same height (flat tile).
@@ -108,6 +120,7 @@ fn build_cell_quad_flat(
 ///
 /// `uv_scale` controls how many times the texture tiles across one cell.
 /// Default 1.0 = one tile per cell. Use 4.0 for grass to avoid stretching.
+#[allow(clippy::too_many_arguments)]
 fn build_quad(
     x0: f32,
     z0: f32,
@@ -121,9 +134,23 @@ fn build_quad(
     tangent: [f32; 3],
     base_vertex: u32,
 ) -> ([Vertex; 4], [u32; 6]) {
-    build_quad_uv(x0, z0, x1, z1, y00, y10, y01, y11, normal, tangent, base_vertex, 1.0)
+    build_quad_uv(
+        x0,
+        z0,
+        x1,
+        z1,
+        y00,
+        y10,
+        y01,
+        y11,
+        normal,
+        tangent,
+        base_vertex,
+        1.0,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_quad_uv(
     x0: f32,
     z0: f32,
@@ -139,10 +166,30 @@ fn build_quad_uv(
     uv_scale: f32,
 ) -> ([Vertex; 4], [u32; 6]) {
     let verts = [
-        Vertex { position: [x0, y00, z0], normal, tangent, uv: [0.0, 0.0] },
-        Vertex { position: [x1, y10, z0], normal, tangent, uv: [uv_scale, 0.0] },
-        Vertex { position: [x1, y11, z1], normal, tangent, uv: [uv_scale, uv_scale] },
-        Vertex { position: [x0, y01, z1], normal, tangent, uv: [0.0, uv_scale] },
+        Vertex {
+            position: [x0, y00, z0],
+            normal,
+            tangent,
+            uv: [0.0, 0.0],
+        },
+        Vertex {
+            position: [x1, y10, z0],
+            normal,
+            tangent,
+            uv: [uv_scale, 0.0],
+        },
+        Vertex {
+            position: [x1, y11, z1],
+            normal,
+            tangent,
+            uv: [uv_scale, uv_scale],
+        },
+        Vertex {
+            position: [x0, y01, z1],
+            normal,
+            tangent,
+            uv: [0.0, uv_scale],
+        },
     ];
     let indices = [
         base_vertex,
@@ -323,8 +370,7 @@ pub fn generate_terrain_meshes(
             });
 
             let base = verts_buf.len() as u32;
-            let (quad_verts, quad_indices) =
-                build_cell_quad_smooth(heightmap, col, row, base);
+            let (quad_verts, quad_indices) = build_cell_quad_smooth(heightmap, col, row, base);
 
             verts_buf.extend_from_slice(&quad_verts);
             indices_buf.extend_from_slice(&quad_indices);
@@ -356,8 +402,7 @@ pub fn generate_terrain_mesh_simple(heightmap: &Heightmap) -> Mesh {
     for row in 0..cell_rows {
         for col in 0..cell_cols {
             let base = vertices.len() as u32;
-            let (quad_verts, quad_indices) =
-                build_cell_quad_smooth(heightmap, col, row, base);
+            let (quad_verts, quad_indices) = build_cell_quad_smooth(heightmap, col, row, base);
             vertices.extend_from_slice(&quad_verts);
             indices.extend_from_slice(&quad_indices);
         }
@@ -403,7 +448,11 @@ mod tests {
         let hm = flat_3x3();
         let mesh = generate_terrain_mesh_simple(&hm);
         for v in &mesh.vertices {
-            assert!(v.position[1].abs() < 1e-5, "Expected y ~ 0, got {}", v.position[1]);
+            assert!(
+                v.position[1].abs() < 1e-5,
+                "Expected y ~ 0, got {}",
+                v.position[1]
+            );
         }
     }
 
@@ -430,8 +479,14 @@ mod tests {
         let chunks = generate_terrain_meshes(&hm, Some(&map));
         assert_eq!(chunks.len(), 2);
 
-        let grass = chunks.iter().find(|c| c.surface == SurfaceType::Grass).unwrap();
-        let stone = chunks.iter().find(|c| c.surface == SurfaceType::Stone).unwrap();
+        let grass = chunks
+            .iter()
+            .find(|c| c.surface == SurfaceType::Grass)
+            .unwrap();
+        let stone = chunks
+            .iter()
+            .find(|c| c.surface == SurfaceType::Stone)
+            .unwrap();
         assert_eq!(grass.mesh.vertices.len(), 8);
         assert_eq!(stone.mesh.vertices.len(), 8);
     }
@@ -454,10 +509,17 @@ mod tests {
     #[test]
     fn surface_color_alpha_always_one() {
         let types = [
-            SurfaceType::Grass, SurfaceType::Dirt, SurfaceType::Stone,
-            SurfaceType::Sand, SurfaceType::Snow, SurfaceType::Water,
-            SurfaceType::Mud, SurfaceType::Road, SurfaceType::Cliff,
-            SurfaceType::Void, SurfaceType::Custom(42),
+            SurfaceType::Grass,
+            SurfaceType::Dirt,
+            SurfaceType::Stone,
+            SurfaceType::Sand,
+            SurfaceType::Snow,
+            SurfaceType::Water,
+            SurfaceType::Mud,
+            SurfaceType::Road,
+            SurfaceType::Cliff,
+            SurfaceType::Void,
+            SurfaceType::Custom(42),
         ];
         for s in types {
             assert_eq!(surface_color(s)[3], 1.0, "{s:?} alpha should be 1.0");
@@ -487,7 +549,12 @@ mod tests {
 
         // All 4 corners of cell (0,0) should be at y = 5.0.
         let mesh = &chunks[0].mesh;
-        let y_values: Vec<f32> = mesh.vertices.iter().take(4).map(|v| v.position[1]).collect();
+        let y_values: Vec<f32> = mesh
+            .vertices
+            .iter()
+            .take(4)
+            .map(|v| v.position[1])
+            .collect();
         assert!(
             y_values.iter().all(|&y| (y - 5.0).abs() < 1e-3),
             "Flat mode: all corners should be at 5.0, got {y_values:?}"

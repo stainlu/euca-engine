@@ -43,8 +43,7 @@ impl ScenarioGenerator {
         let secret = self.api_secret.as_deref().ok_or(GenError::NoApiKey)?;
         // Basic auth: base64(key:secret)
         use base64::Engine;
-        let encoded =
-            base64::engine::general_purpose::STANDARD.encode(format!("{key}:{secret}"));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{key}:{secret}"));
         Ok(format!("Basic {encoded}"))
     }
 }
@@ -67,9 +66,10 @@ impl AssetGenerator for ScenarioGenerator {
     fn generate(&self, request: &GenerationRequest) -> Result<GenerationId, GenError> {
         let auth = self.require_auth()?;
 
-        let prompt = request.prompt.as_deref().ok_or_else(|| {
-            GenError::InvalidRequest("scenario: prompt is required".into())
-        })?;
+        let prompt = request
+            .prompt
+            .as_deref()
+            .ok_or_else(|| GenError::InvalidRequest("scenario: prompt is required".into()))?;
 
         let (width, height) = request.dimensions.unwrap_or((1024, 1024));
 
@@ -148,9 +148,7 @@ impl AssetGenerator for ScenarioGenerator {
                     .and_then(|a| a.first())
                     .and_then(|a| a["url"].as_str())
                     .or_else(|| job["url"].as_str())
-                    .ok_or_else(|| {
-                        GenError::ProviderError("no asset URL in completed job".into())
-                    })?
+                    .ok_or_else(|| GenError::ProviderError("no asset URL in completed job".into()))?
                     .to_owned();
                 Ok(GenerationStatus::Complete { download_url })
             }
@@ -162,10 +160,7 @@ impl AssetGenerator for ScenarioGenerator {
                 Ok(GenerationStatus::Failed { error })
             }
             _ => {
-                let progress = job["progress"]
-                    .as_f64()
-                    .map(|p| p as f32)
-                    .unwrap_or(0.0);
+                let progress = job["progress"].as_f64().map(|p| p as f32).unwrap_or(0.0);
                 Ok(GenerationStatus::Pending { progress })
             }
         }

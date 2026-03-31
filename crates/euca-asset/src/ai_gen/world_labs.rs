@@ -51,9 +51,10 @@ impl AssetGenerator for WorldLabsGenerator {
     fn generate(&self, request: &GenerationRequest) -> Result<GenerationId, GenError> {
         let api_key = self.require_key()?;
 
-        let prompt = request.prompt.as_deref().ok_or_else(|| {
-            GenError::InvalidRequest("world_labs: prompt is required".into())
-        })?;
+        let prompt = request
+            .prompt
+            .as_deref()
+            .ok_or_else(|| GenError::InvalidRequest("world_labs: prompt is required".into()))?;
 
         let body = serde_json::json!({
             "prompt": prompt,
@@ -119,7 +120,7 @@ impl AssetGenerator for WorldLabsGenerator {
                     .as_str()
                     .or_else(|| json["mesh_url"].as_str())
                     .or_else(|| json["output"]["mesh_url"].as_str())
-                    .unwrap_or_else(|| {
+                    .unwrap_or({
                         // If no direct mesh URL, construct the export endpoint.
                         // The caller will need to trigger mesh export separately.
                         ""
@@ -127,8 +128,7 @@ impl AssetGenerator for WorldLabsGenerator {
 
                 if mesh_url.is_empty() {
                     // Build the mesh export URL from the world ID.
-                    let export_url =
-                        format!("{BASE_URL}/worlds/{}/exports/mesh", id.0);
+                    let export_url = format!("{BASE_URL}/worlds/{}/exports/mesh", id.0);
                     Ok(GenerationStatus::Complete {
                         download_url: export_url,
                     })
@@ -148,10 +148,7 @@ impl AssetGenerator for WorldLabsGenerator {
             }
             // "pending", "generating", "processing"
             _ => {
-                let progress = json["progress"]
-                    .as_f64()
-                    .map(|p| p as f32)
-                    .unwrap_or(0.0);
+                let progress = json["progress"].as_f64().map(|p| p as f32).unwrap_or(0.0);
                 Ok(GenerationStatus::Pending { progress })
             }
         }
@@ -179,7 +176,7 @@ mod tests {
     #[test]
     fn new_without_api_key_is_unavailable() {
         unsafe { std::env::remove_var("WORLDLABS_API_KEY") };
-        let generator =WorldLabsGenerator::new();
+        let generator = WorldLabsGenerator::new();
         assert!(!generator.is_available());
         assert_eq!(generator.name(), "world_labs");
     }
@@ -187,7 +184,7 @@ mod tests {
     #[test]
     fn generate_without_key_returns_no_api_key() {
         unsafe { std::env::remove_var("WORLDLABS_API_KEY") };
-        let generator =WorldLabsGenerator::new();
+        let generator = WorldLabsGenerator::new();
         let req = GenerationRequest {
             prompt: Some("a medieval tavern interior".into()),
             ..Default::default()
@@ -198,7 +195,7 @@ mod tests {
 
     #[test]
     fn generate_without_prompt_returns_invalid() {
-        let generator =WorldLabsGenerator {
+        let generator = WorldLabsGenerator {
             api_key: Some("fake-key".into()),
             client: reqwest::blocking::Client::new(),
         };

@@ -427,7 +427,10 @@ pub(crate) fn resolve_mesh(
                 return MeshResolution::Pending;
             }
             Err(e) => {
-                log::warn!("Failed to load cooked '{}': {e}, falling back to GLB", cooked_path.display());
+                log::warn!(
+                    "Failed to load cooked '{}': {e}, falling back to GLB",
+                    cooked_path.display()
+                );
             }
         }
     }

@@ -23,9 +23,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::level_data::{
-    EntityPlacement, LevelData, SurfaceType, TriggerPlacement,
-};
+use crate::level_data::{EntityPlacement, LevelData, SurfaceType, TriggerPlacement};
 
 // ---------------------------------------------------------------------------
 // Error
@@ -181,9 +179,7 @@ pub fn parse_tiled_json(
 ) -> Result<LevelData, TiledImportError> {
     let map: TiledMap = serde_json::from_str(json)?;
 
-    if !map.orientation.is_empty()
-        && map.orientation != "orthogonal"
-    {
+    if !map.orientation.is_empty() && map.orientation != "orthogonal" {
         return Err(TiledImportError::UnsupportedOrientation(
             map.orientation.clone(),
         ));
@@ -206,10 +202,8 @@ pub fn parse_tiled_json(
                     found_tile_layer = true;
                     for (i, &gid) in layer.data.iter().enumerate().take(count) {
                         level.surface[i] = gid_to_surface(gid);
-                        level.walkable[i] = !matches!(
-                            level.surface[i],
-                            SurfaceType::Water | SurfaceType::Void
-                        );
+                        level.walkable[i] =
+                            !matches!(level.surface[i], SurfaceType::Water | SurfaceType::Void);
                     }
                 }
             }

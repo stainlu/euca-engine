@@ -11,8 +11,6 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 // Re-use the cooked format from euca-asset
 use euca_asset::cooked::{CookedLod, CookedMaterial, CookedMesh, CookedTexture};
 
@@ -54,10 +52,7 @@ fn cook_glb(input: &Path, output_dir: &Path) -> Result<(), String> {
     let primitive = mesh.primitives().next().ok_or("No primitives")?;
     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-    let positions: Vec<[f32; 3]> = reader
-        .read_positions()
-        .ok_or("No positions")?
-        .collect();
+    let positions: Vec<[f32; 3]> = reader.read_positions().ok_or("No positions")?.collect();
     let normals: Vec<[f32; 3]> = reader
         .read_normals()
         .map(|iter| iter.collect())
@@ -115,13 +110,10 @@ fn cook_glb(input: &Path, output_dir: &Path) -> Result<(), String> {
         ground_offset,
     };
 
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("Failed to create output dir: {e}"))?;
+    std::fs::create_dir_all(output_dir).map_err(|e| format!("Failed to create output dir: {e}"))?;
     let output_path = output_dir.join(format!("{stem}.emesh"));
-    let bytes =
-        bincode::serialize(&cooked).map_err(|e| format!("Serialization failed: {e}"))?;
-    std::fs::write(&output_path, &bytes)
-        .map_err(|e| format!("Failed to write: {e}"))?;
+    let bytes = bincode::serialize(&cooked).map_err(|e| format!("Serialization failed: {e}"))?;
+    std::fs::write(&output_path, &bytes).map_err(|e| format!("Failed to write: {e}"))?;
 
     let total_time = start.elapsed();
     log::info!(
@@ -183,8 +175,7 @@ fn generate_lods(
     };
     let vertex_stride = std::mem::size_of::<PackedVertex>();
 
-    let adapter =
-        meshopt::VertexDataAdapter::new(vertex_bytes, vertex_stride, 0).unwrap();
+    let adapter = meshopt::VertexDataAdapter::new(vertex_bytes, vertex_stride, 0).unwrap();
 
     // LOD targets: 100%, 50%, 25%, 10%
     let original_tri_count = indices.len() / 3;
@@ -202,11 +193,11 @@ fn generate_lods(
 
         let lod_indices = if level == 0 {
             // LOD0: just optimize vertex cache, no simplification
-            meshopt::optimize_vertex_cache(&indices, vertex_count)
+            meshopt::optimize_vertex_cache(indices, vertex_count)
         } else {
             // Simplify then optimize cache
             let simplified = meshopt::simplify(
-                &indices,
+                indices,
                 &adapter,
                 target_indices,
                 1e-2,
@@ -217,21 +208,17 @@ fn generate_lods(
         };
 
         // Remap to remove unused vertices
-        let (remap_count, remap) =
-            meshopt::generate_vertex_remap(&packed, Some(&lod_indices));
+        let (remap_count, remap) = meshopt::generate_vertex_remap(&packed, Some(&lod_indices));
 
-        let remapped_indices =
-            meshopt::remap_index_buffer(Some(&lod_indices), remap_count, &remap);
-        let remapped_packed =
-            meshopt::remap_vertex_buffer(&packed, remap_count, &remap);
+        let remapped_indices = meshopt::remap_index_buffer(Some(&lod_indices), remap_count, &remap);
+        let remapped_packed = meshopt::remap_vertex_buffer(&packed, remap_count, &remap);
 
         // Unpack back to separate arrays
         let lod_positions: Vec<[f32; 3]> =
             remapped_packed.iter().map(|v| [v.px, v.py, v.pz]).collect();
         let lod_normals: Vec<[f32; 3]> =
             remapped_packed.iter().map(|v| [v.nx, v.ny, v.nz]).collect();
-        let lod_uvs: Vec<[f32; 2]> =
-            remapped_packed.iter().map(|v| [v.u, v.v]).collect();
+        let lod_uvs: Vec<[f32; 2]> = remapped_packed.iter().map(|v| [v.u, v.v]).collect();
 
         lods.push(CookedLod {
             vertex_count: lod_positions.len() as u32,

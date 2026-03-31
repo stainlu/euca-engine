@@ -15,7 +15,6 @@
 //! - `import_tiled` — Import a Tiled JSON map into LevelData format.
 //! - `import_ldtk` — Import an LDtk JSON file into LevelData format.
 
-use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
@@ -30,6 +29,7 @@ use serde_json::Value;
 
 #[derive(Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     id: Option<Value>,
     method: String,
@@ -109,7 +109,8 @@ impl McpServer {
         let tools = vec![
             McpToolInfo {
                 name: "generate_heightmap".into(),
-                description: "Generate a terrain heightmap PNG from a text prompt via Stability AI".into(),
+                description: "Generate a terrain heightmap PNG from a text prompt via Stability AI"
+                    .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -121,7 +122,8 @@ impl McpServer {
             },
             McpToolInfo {
                 name: "generate_skybox".into(),
-                description: "Generate a 360° panoramic skybox from a text prompt via Blockade Labs".into(),
+                description:
+                    "Generate a 360° panoramic skybox from a text prompt via Blockade Labs".into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -147,7 +149,8 @@ impl McpServer {
             },
             McpToolInfo {
                 name: "generate_scene".into(),
-                description: "Generate a full 3D scene GLB via World Labs Marble (room-scale)".into(),
+                description: "Generate a full 3D scene GLB via World Labs Marble (room-scale)"
+                    .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -159,7 +162,8 @@ impl McpServer {
             },
             McpToolInfo {
                 name: "list_providers".into(),
-                description: "List all registered AI generation providers and their availability".into(),
+                description: "List all registered AI generation providers and their availability"
+                    .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {}
@@ -201,7 +205,9 @@ impl McpServer {
         let args = &params["arguments"];
 
         let result = match tool_name {
-            "generate_heightmap" => self.tool_generate(args, "stability", GenerationKind::Heightmap),
+            "generate_heightmap" => {
+                self.tool_generate(args, "stability", GenerationKind::Heightmap)
+            }
             "generate_skybox" => self.tool_generate(args, "blockade_labs", GenerationKind::Skybox),
             "generate_prop" => {
                 let provider = args["provider"].as_str().unwrap_or("tripo");
@@ -231,9 +237,7 @@ impl McpServer {
         default_provider: &str,
         kind: GenerationKind,
     ) -> Result<String, String> {
-        let prompt = args["prompt"]
-            .as_str()
-            .ok_or("missing 'prompt' argument")?;
+        let prompt = args["prompt"].as_str().ok_or("missing 'prompt' argument")?;
 
         let quality = match args["quality"].as_str().unwrap_or("medium") {
             "low" => Quality::Low,
@@ -256,10 +260,7 @@ impl McpServer {
         // Poll until complete (blocking — MCP tools are expected to return
         // results, not start async work).
         loop {
-            let status = self
-                .service
-                .update(&task_id)
-                .map_err(|e| e.to_string())?;
+            let status = self.service.update(&task_id).map_err(|e| e.to_string())?;
 
             match status {
                 GenerationStatus::Complete { .. } => {
@@ -305,16 +306,11 @@ impl McpServer {
     }
 
     fn tool_import_tiled(&self, args: &Value) -> Result<String, String> {
-        let path = args["path"]
-            .as_str()
-            .ok_or("missing 'path' argument")?;
+        let path = args["path"].as_str().ok_or("missing 'path' argument")?;
         let cell_size = args["cell_size"].as_f64().unwrap_or(1.0) as f32;
 
-        let level = euca_terrain::tiled_import::load_tiled_json(
-            &PathBuf::from(path),
-            cell_size,
-        )
-        .map_err(|e| e.to_string())?;
+        let level = euca_terrain::tiled_import::load_tiled_json(&PathBuf::from(path), cell_size)
+            .map_err(|e| e.to_string())?;
 
         let json = level.to_json().map_err(|e| e.to_string())?;
 
@@ -332,16 +328,11 @@ impl McpServer {
     }
 
     fn tool_import_ldtk(&self, args: &Value) -> Result<String, String> {
-        let path = args["path"]
-            .as_str()
-            .ok_or("missing 'path' argument")?;
+        let path = args["path"].as_str().ok_or("missing 'path' argument")?;
         let cell_size = args["cell_size"].as_f64().unwrap_or(1.0) as f32;
 
-        let level = euca_terrain::ldtk_import::load_ldtk_json(
-            &PathBuf::from(path),
-            cell_size,
-        )
-        .map_err(|e| e.to_string())?;
+        let level = euca_terrain::ldtk_import::load_ldtk_json(&PathBuf::from(path), cell_size)
+            .map_err(|e| e.to_string())?;
 
         let json = level.to_json().map_err(|e| e.to_string())?;
 
@@ -371,13 +362,15 @@ fn main() {
     let output_dir = std::env::var("EUCA_GEN_OUTPUT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            let dir = std::env::current_dir()
+            std::env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
-                .join("generated_assets");
-            dir
+                .join("generated_assets")
         });
 
-    log::info!("euca-level-mcp starting (output_dir: {})", output_dir.display());
+    log::info!(
+        "euca-level-mcp starting (output_dir: {})",
+        output_dir.display()
+    );
 
     let mut server = McpServer::new(output_dir);
     let stdin = io::stdin();

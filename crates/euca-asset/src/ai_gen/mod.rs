@@ -55,7 +55,7 @@ impl GenerationKind {
 }
 
 /// What to generate.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct GenerationRequest {
     /// Text prompt describing the desired asset.
     pub prompt: Option<String>,
@@ -68,18 +68,6 @@ pub struct GenerationRequest {
     /// Desired output dimensions (width, height) — used for heightmaps and
     /// textures. Providers that don't support custom dimensions ignore this.
     pub dimensions: Option<(u32, u32)>,
-}
-
-impl Default for GenerationRequest {
-    fn default() -> Self {
-        Self {
-            prompt: None,
-            image: None,
-            quality: Quality::default(),
-            kind: GenerationKind::default(),
-            dimensions: None,
-        }
-    }
 }
 
 /// Generation quality tier.

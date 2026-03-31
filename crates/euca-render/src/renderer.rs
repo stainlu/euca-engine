@@ -424,7 +424,7 @@ impl<D: RenderDevice> Renderer<D> {
         let instance_buf_size =
             (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64;
         let unified = gpu.unified_memory();
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         let (surface_w, surface_h) = rhi.surface_size();
         let surface_fmt = rhi.surface_format();
         let instance_buffer = SmartBuffer::new(
@@ -1139,7 +1139,7 @@ impl<D: RenderDevice> Renderer<D> {
     ///
     /// Call this once after creating the renderer, before uploading materials.
     pub fn enable_bindless(&mut self, gpu: &GpuContext<D>) {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         let system = crate::bindless::BindlessMaterialSystem::new(rhi, gpu.unified_memory());
         if !system.is_enabled() {
             log::warn!("Bindless materials requested but GPU lacks required features");
@@ -1206,7 +1206,7 @@ impl<D: RenderDevice> Renderer<D> {
     /// [`DrawCommand`]s.
     pub fn upload_mesh(&mut self, gpu: &GpuContext<D>, mesh: &Mesh) -> MeshHandle {
         use euca_rhi::{BufferDesc, BufferUsages};
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
 
         let vdata = bytemuck::cast_slice::<_, u8>(&mesh.vertices);
         let vb = rhi.create_buffer(&BufferDesc {
@@ -1251,13 +1251,13 @@ impl<D: RenderDevice> Renderer<D> {
         height: u32,
         rgba: &[u8],
     ) -> TextureHandle {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         self.textures.upload_rgba(rhi, width, height, rgba)
     }
 
     /// Decode an image file (PNG, JPEG, etc.) from memory and upload it as a texture.
     pub fn upload_texture_image(&mut self, gpu: &GpuContext<D>, data: &[u8]) -> TextureHandle {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         self.textures.upload_image(rhi, data)
     }
 
@@ -1268,7 +1268,7 @@ impl<D: RenderDevice> Renderer<D> {
         size: u32,
         tile: u32,
     ) -> TextureHandle {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         self.textures.checkerboard(rhi, size, tile)
     }
 
@@ -1276,10 +1276,9 @@ impl<D: RenderDevice> Renderer<D> {
     /// return a handle for use in [`DrawCommand`]s.
     pub fn upload_material(&mut self, gpu: &GpuContext<D>, mat: &Material) -> MaterialHandle {
         use euca_rhi::{
-            BindGroupDesc, BindGroupEntry, BindingResource, BufferBinding, BufferDesc,
-            BufferUsages,
+            BindGroupDesc, BindGroupEntry, BindingResource, BufferBinding, BufferDesc, BufferUsages,
         };
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
 
         let handle = MaterialHandle(self.materials.len() as u32);
         let uniforms = MaterialUniforms {
@@ -1383,7 +1382,7 @@ impl<D: RenderDevice> Renderer<D> {
     /// Recreate size-dependent GPU resources (depth buffer, MSAA target, etc.)
     /// after the window has been resized.
     pub fn resize(&mut self, gpu: &GpuContext<D>) {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         let (w, h) = rhi.surface_size();
         self.depth_texture =
             Self::create_depth_texture(rhi, w, h, euca_rhi::TextureFormat::Depth32Float);
@@ -1525,7 +1524,7 @@ impl<D: RenderDevice> Renderer<D> {
         gpu: &GpuContext<D>,
         config: crate::gpu_particles::GpuParticleConfig,
     ) -> usize {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         let format = rhi.surface_format();
         let system = crate::gpu_particles::GpuParticleSystem::new(&**gpu, config, format);
         self.gpu_particle_systems.push(system);
@@ -1581,7 +1580,7 @@ impl<D: RenderDevice> Renderer<D> {
     /// shader and composite the result over the HDR buffer after the PBR pass
     /// and before post-processing.
     pub fn enable_volumetric_fog(&mut self, gpu: &GpuContext<D>) {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         let (sw, sh) = rhi.surface_size();
         let sf = rhi.surface_format();
         self.volumetric_fog_pass = Some(VolumetricFogPass::new(&**gpu, sw, sh, sf));
@@ -1760,7 +1759,7 @@ impl<D: RenderDevice> Renderer<D> {
         point_lights: &[(euca_math::Vec3, &crate::light::PointLight)],
         spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
     ) {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
 
         let output = match rhi.get_current_texture() {
             Ok(t) => t,
@@ -1831,7 +1830,7 @@ impl<D: RenderDevice> Renderer<D> {
         color_view: &D::TextureView,
         encoder: &mut D::CommandEncoder,
     ) {
-        let rhi: &D = &**gpu;
+        let rhi: &D = gpu;
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
         let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);

@@ -384,8 +384,7 @@ pub fn load_level_into_world(w: &mut euca_ecs::World, level: &serde_json::Value)
 ///
 /// Returns the number of entities created.
 pub fn load_level_auto(w: &mut euca_ecs::World, level: &serde_json::Value) -> u32 {
-    let is_new_format =
-        level.get("width").is_some() && level.get("height").is_some();
+    let is_new_format = level.get("width").is_some() && level.get("height").is_some();
 
     if !is_new_format {
         return load_level_into_world(w, level);
@@ -404,12 +403,7 @@ pub fn load_level_auto(w: &mut euca_ecs::World, level: &serde_json::Value) -> u3
     let level_name = data.name.as_deref().unwrap_or("<unnamed>");
     let width = data.width.unwrap_or(0);
     let height = data.height.unwrap_or(0);
-    log::info!(
-        "Loading level '{}' ({}x{})",
-        level_name,
-        width,
-        height,
-    );
+    log::info!("Loading level '{}' ({}x{})", level_name, width, height,);
 
     // Store the LevelData as a world resource so other systems can query it.
     w.insert_resource(data.clone());
@@ -422,17 +416,17 @@ pub fn load_level_auto(w: &mut euca_ecs::World, level: &serde_json::Value) -> u3
     }
 
     // Apply camera config.
-    if let Some(cam_cfg) = &data.camera {
-        if let Some(cam) = w.resource_mut::<euca_render::Camera>() {
-            if let Some(eye) = cam_cfg.eye {
-                cam.eye = Vec3::new(eye[0], eye[1], eye[2]);
-            }
-            if let Some(target) = cam_cfg.target {
-                cam.target = Vec3::new(target[0], target[1], target[2]);
-            }
-            if let Some(fov_y) = cam_cfg.fov_y {
-                cam.fov_y = fov_y;
-            }
+    if let Some(cam_cfg) = &data.camera
+        && let Some(cam) = w.resource_mut::<euca_render::Camera>()
+    {
+        if let Some(eye) = cam_cfg.eye {
+            cam.eye = Vec3::new(eye[0], eye[1], eye[2]);
+        }
+        if let Some(target) = cam_cfg.target {
+            cam.target = Vec3::new(target[0], target[1], target[2]);
+        }
+        if let Some(fov_y) = cam_cfg.fov_y {
+            cam.fov_y = fov_y;
         }
     }
 

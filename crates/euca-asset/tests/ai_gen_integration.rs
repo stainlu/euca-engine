@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use euca_asset::ai_gen::service::GenerationService;
 use euca_asset::ai_gen::{
-    AssetGenerator, GenError, GenerationId, GenerationRequest, GenerationStatus, Quality,
+    AssetGenerator, GenError, GenerationId, GenerationRequest, GenerationStatus,
 };
 
 // ---------------------------------------------------------------------------

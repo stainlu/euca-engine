@@ -179,10 +179,7 @@ pub fn parse_ldtk_json(
         root.levels.first().ok_or(LdtkImportError::NoLevels)?
     };
 
-    let layers = ldtk_level
-        .layer_instances
-        .as_deref()
-        .unwrap_or(&[]);
+    let layers = ldtk_level.layer_instances.as_deref().unwrap_or(&[]);
 
     // Determine grid dimensions from the first layer that has them, or from
     // the pixel dimensions + default grid size.
@@ -210,10 +207,8 @@ pub fn parse_ldtk_json(
                     let count = level.cell_count();
                     for (i, &val) in layer.int_grid_csv.iter().enumerate().take(count) {
                         level.surface[i] = default_intgrid_to_surface(val);
-                        level.walkable[i] = !matches!(
-                            level.surface[i],
-                            SurfaceType::Water | SurfaceType::Void
-                        );
+                        level.walkable[i] =
+                            !matches!(level.surface[i], SurfaceType::Water | SurfaceType::Void);
                     }
                 }
             }
@@ -225,10 +220,7 @@ pub fn parse_ldtk_json(
 
                     let mut props = HashMap::new();
                     for field in &ent.field_instances {
-                        props.insert(
-                            field.identifier.clone(),
-                            field.value.to_string(),
-                        );
+                        props.insert(field.identifier.clone(), field.value.to_string());
                     }
 
                     level.entities.push(EntityPlacement {

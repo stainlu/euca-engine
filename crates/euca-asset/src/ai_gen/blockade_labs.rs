@@ -48,9 +48,10 @@ impl AssetGenerator for BlockadeLabsGenerator {
     fn generate(&self, request: &GenerationRequest) -> Result<GenerationId, GenError> {
         let api_key = self.require_key()?;
 
-        let prompt = request.prompt.as_deref().ok_or_else(|| {
-            GenError::InvalidRequest("blockade_labs: prompt is required".into())
-        })?;
+        let prompt = request
+            .prompt
+            .as_deref()
+            .ok_or_else(|| GenError::InvalidRequest("blockade_labs: prompt is required".into()))?;
 
         let body = serde_json::json!({
             "prompt": prompt,
@@ -107,9 +108,7 @@ impl AssetGenerator for BlockadeLabsGenerator {
             .map_err(|e| GenError::HttpError(e.to_string()))?;
 
         let request = &json["request"];
-        let status = request["status"]
-            .as_str()
-            .unwrap_or("unknown");
+        let status = request["status"].as_str().unwrap_or("unknown");
 
         match status {
             "complete" => {
@@ -160,7 +159,7 @@ mod tests {
     #[test]
     fn new_without_api_key_is_unavailable() {
         unsafe { std::env::remove_var("BLOCKADE_API_KEY") };
-        let generator =BlockadeLabsGenerator::new();
+        let generator = BlockadeLabsGenerator::new();
         assert!(!generator.is_available());
         assert_eq!(generator.name(), "blockade_labs");
     }
@@ -168,7 +167,7 @@ mod tests {
     #[test]
     fn generate_without_key_returns_no_api_key() {
         unsafe { std::env::remove_var("BLOCKADE_API_KEY") };
-        let generator =BlockadeLabsGenerator::new();
+        let generator = BlockadeLabsGenerator::new();
         let req = GenerationRequest {
             prompt: Some("sunset over mountains".into()),
             ..Default::default()
@@ -179,7 +178,7 @@ mod tests {
 
     #[test]
     fn generate_without_prompt_returns_invalid() {
-        let generator =BlockadeLabsGenerator {
+        let generator = BlockadeLabsGenerator {
             api_key: Some("fake-key".into()),
             client: reqwest::blocking::Client::new(),
         };

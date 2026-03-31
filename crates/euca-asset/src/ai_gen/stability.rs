@@ -51,9 +51,10 @@ impl AssetGenerator for StabilityGenerator {
     fn generate(&self, request: &GenerationRequest) -> Result<GenerationId, GenError> {
         let api_key = self.require_key()?;
 
-        let prompt = request.prompt.as_deref().ok_or_else(|| {
-            GenError::InvalidRequest("stability: prompt is required".into())
-        })?;
+        let prompt = request
+            .prompt
+            .as_deref()
+            .ok_or_else(|| GenError::InvalidRequest("stability: prompt is required".into()))?;
 
         // Stability's image generation API uses multipart form data.
         // The response can be JSON (with base64 image) or raw bytes depending
@@ -83,7 +84,9 @@ impl AssetGenerator for StabilityGenerator {
                 .or_else(|| json["name"].as_str())
                 .unwrap_or("unknown error")
                 .to_owned();
-            return Err(GenError::ProviderError(format!("stability ({status}): {msg}")));
+            return Err(GenError::ProviderError(format!(
+                "stability ({status}): {msg}"
+            )));
         }
 
         // The ultra endpoint returns a generation ID for async retrieval, or
@@ -141,7 +144,7 @@ mod tests {
     #[test]
     fn new_without_api_key_is_unavailable() {
         unsafe { std::env::remove_var("STABILITY_API_KEY") };
-        let generator =StabilityGenerator::new();
+        let generator = StabilityGenerator::new();
         assert!(!generator.is_available());
         assert_eq!(generator.name(), "stability");
     }
@@ -149,7 +152,7 @@ mod tests {
     #[test]
     fn generate_without_key_returns_no_api_key() {
         unsafe { std::env::remove_var("STABILITY_API_KEY") };
-        let generator =StabilityGenerator::new();
+        let generator = StabilityGenerator::new();
         let req = GenerationRequest {
             prompt: Some("terrain heightmap".into()),
             ..Default::default()
@@ -161,7 +164,7 @@ mod tests {
     #[test]
     fn generate_without_prompt_returns_invalid() {
         // Manually set a fake key so we get past the key check.
-        let generator =StabilityGenerator {
+        let generator = StabilityGenerator {
             api_key: Some("fake-key".into()),
             client: reqwest::blocking::Client::new(),
         };
@@ -172,7 +175,7 @@ mod tests {
 
     #[test]
     fn poll_b64_returns_complete() {
-        let generator =StabilityGenerator::new();
+        let generator = StabilityGenerator::new();
         let id = GenerationId("b64:AAAA".into());
         let status = generator.poll(&id).unwrap();
         assert!(matches!(status, GenerationStatus::Complete { .. }));
@@ -185,7 +188,7 @@ mod tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
         let url = format!("b64:{encoded}");
 
-        let generator =StabilityGenerator::new();
+        let generator = StabilityGenerator::new();
         let result = generator.download(&url).unwrap();
         assert_eq!(result, data);
     }

@@ -115,6 +115,7 @@ impl TerrainMaterialSet {
     ///
     /// Looks for `{dir}/{name}.png` (albedo) and `{dir}/{name}_normal.png`
     /// (normal map). If found, sets the paths. If not, leaves as fallback color.
+    #[allow(clippy::too_many_arguments)]
     pub fn configure_from_dir(
         &mut self,
         surface: SurfaceType,
@@ -292,6 +293,11 @@ mod tests {
         assert!(set.get(SurfaceType::Water).is_some());
         assert!(set.get(SurfaceType::Stone).is_some());
         // Paths should be None since directory doesn't exist.
-        assert!(set.get(SurfaceType::Grass).unwrap().albedo_texture_path.is_none());
+        assert!(
+            set.get(SurfaceType::Grass)
+                .unwrap()
+                .albedo_texture_path
+                .is_none()
+        );
     }
 }

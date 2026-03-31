@@ -2,18 +2,8 @@ use euca_render::{Material, Mesh, TextureHandle, Vertex};
 use std::path::Path;
 
 use crate::animation::{AnimationClipData, parse_animations};
-use crate::lod::simplify_mesh;
-use crate::mesh_opt::{deduplicate_vertices, optimize_vertex_cache};
+use crate::mesh_opt::deduplicate_vertices;
 use crate::skeleton::{Skeleton, parse_skeleton};
-
-/// Meshes exceeding this vertex count are automatically decimated on load.
-///
-/// 50K vertices is sufficient for high-quality rendering of most game assets
-/// while avoiding the GPU cost of oversized source models (e.g., 280K-vertex
-/// tower GLBs that balloon level load times).
-// Disabled: QEM decimation on 280K meshes takes longer than just loading them.
-// Re-enable when we have faster simplification or pre-processed assets.
-const AUTO_DECIMATE_VERTEX_THRESHOLD: usize = usize::MAX;
 
 /// Axis-aligned bounding box computed from mesh vertex positions.
 #[derive(Clone, Copy, Debug)]
@@ -370,25 +360,12 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<GltfScene, String> {
             // Auto-decimate oversized meshes to keep load times and GPU cost
             // reasonable.  Skip skinned meshes — their per-vertex joint data
             // would become misaligned after vertex removal.
-            let is_skinned = joint_indices.is_some();
             let mut mesh = Mesh { vertices, indices };
 
-            if !is_skinned && mesh.vertices.len() > AUTO_DECIMATE_VERTEX_THRESHOLD {
-                let ratio = AUTO_DECIMATE_VERTEX_THRESHOLD as f32 / mesh.vertices.len() as f32;
-                log::info!(
-                    "Auto-decimating mesh '{}' from {} to ~{} vertices (ratio {:.2})",
-                    mesh_name.as_deref().unwrap_or("unnamed"),
-                    mesh.vertices.len(),
-                    AUTO_DECIMATE_VERTEX_THRESHOLD,
-                    ratio,
-                );
-                mesh = simplify_mesh(&mesh, ratio);
-            }
-
-            // Post-process: merge duplicate vertices and reorder triangles for
-            // GPU vertex-cache locality.
+            // Post-process: merge duplicate vertices. Vertex cache optimization
+            // and mesh decimation are handled by the asset cooker (euca-cook)
+            // at build time, not at runtime.
             mesh = deduplicate_vertices(&mesh);
-            optimize_vertex_cache(&mut mesh);
 
             let bounds = MeshBounds::from_vertices(&mesh.vertices);
 

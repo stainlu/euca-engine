@@ -27,8 +27,8 @@ use euca_core::Time;
 use euca_ecs::World;
 use euca_math::Vec3;
 use euca_render::{
-    AmbientLight, Camera, DirectionalLight, DrawCommand, GpuContext, HardwareSurvey,
-    MeshRenderer, MaterialRef, Renderer,
+    AmbientLight, Camera, DirectionalLight, DrawCommand, GpuContext, HardwareSurvey, MaterialRef,
+    MeshRenderer, Renderer,
 };
 use euca_scene::GlobalTransform;
 
@@ -149,10 +149,8 @@ impl<T: WebApp> ApplicationHandler for WebAppRunner<T> {
         let mut renderer = Renderer::new(&gpu);
 
         self.world.insert_resource(Time::new());
-        self.world.insert_resource(Camera::new(
-            Vec3::new(0.0, 5.0, -8.0),
-            Vec3::ZERO,
-        ));
+        self.world
+            .insert_resource(Camera::new(Vec3::new(0.0, 5.0, -8.0), Vec3::ZERO));
         self.world.insert_resource(DirectionalLight::default());
         self.world.insert_resource(AmbientLight::default());
 
@@ -197,7 +195,7 @@ impl<T: WebApp> WebAppRunner<T> {
     fn update_and_render(&mut self) {
         // Update time.
         let dt = {
-            let mut time = self.world.resource_mut::<Time>().unwrap();
+            let time = self.world.resource_mut::<Time>().unwrap();
             time.update();
             time.delta
         };
@@ -252,4 +250,3 @@ pub use euca_ecs;
 pub use euca_math;
 pub use euca_render;
 pub use euca_scene;
-

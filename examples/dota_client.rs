@@ -920,10 +920,8 @@ fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext, renderer: &mut Render
     }
 
     // ── 3. Generate terrain meshes via engine pipeline ────────────────────
-    let chunks = euca_terrain::level_render::generate_mesh_from_level_with_materials(
-        &level,
-        &material_set,
-    );
+    let chunks =
+        euca_terrain::level_render::generate_mesh_from_level_with_materials(&level, &material_set);
 
     // ── 4. Upload materials (load textures from disk → GPU) ──────────────
     let mut mat_handles: std::collections::HashMap<SurfaceType, MaterialHandle> =
@@ -935,11 +933,8 @@ fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext, renderer: &mut Render
         }
         let mat_handle = if let Some(surf_mat) = material_set.get(chunk.surface) {
             // Try to load albedo texture from disk
-            let mut material = Material::new(
-                surf_mat.base_color,
-                surf_mat.metallic,
-                surf_mat.roughness,
-            );
+            let mut material =
+                Material::new(surf_mat.base_color, surf_mat.metallic, surf_mat.roughness);
             if let Some(ref path) = surf_mat.albedo_texture_path {
                 if let Ok(data) = std::fs::read(path) {
                     let tex = renderer.upload_texture_image(gpu, &data);
@@ -984,9 +979,9 @@ fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext, renderer: &mut Render
     }
 
     // ── 6. Physics collider for click-to-move raycasting ─────────────────
-    let collider_entity = world.spawn(LocalTransform(Transform::from_translation(
-        Vec3::new(0.0, 0.0, 0.0),
-    )));
+    let collider_entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+        0.0, 0.0, 0.0,
+    ))));
     world.insert(collider_entity, GlobalTransform::default());
     world.insert(collider_entity, euca_physics::PhysicsBody::fixed());
     world.insert(

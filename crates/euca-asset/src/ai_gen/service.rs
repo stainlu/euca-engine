@@ -220,8 +220,7 @@ impl GenerationService {
                     &entry.prompt,
                     entry.kind,
                     download_url,
-                )
-                {
+                ) {
                     Ok(path) => {
                         entry.file_path = Some(path);
                     }

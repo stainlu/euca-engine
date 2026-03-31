@@ -17,9 +17,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use euca_terrain::level_data::{
-    CameraConfig, EntityPlacement, LevelData, NavConfig, SurfaceType,
-};
+use euca_terrain::level_data::{CameraConfig, EntityPlacement, LevelData, NavConfig, SurfaceType};
 
 use super::service::GenerationService;
 use super::{GenError, GenerationKind, GenerationRequest, GenerationStatus, Quality};
@@ -280,16 +278,16 @@ impl LevelOrchestrator {
         // Collect asset paths.
         let mut assets: HashMap<String, PathBuf> = HashMap::new();
 
-        if let Some(ref task_id) = progress.heightmap_task {
-            if let Some(path) = service.file_path(task_id) {
-                assets.insert("heightmap".into(), path.to_path_buf());
-            }
+        if let Some(ref task_id) = progress.heightmap_task
+            && let Some(path) = service.file_path(task_id)
+        {
+            assets.insert("heightmap".into(), path.to_path_buf());
         }
 
-        if let Some(ref task_id) = progress.skybox_task {
-            if let Some(path) = service.file_path(task_id) {
-                assets.insert("skybox".into(), path.to_path_buf());
-            }
+        if let Some(ref task_id) = progress.skybox_task
+            && let Some(path) = service.file_path(task_id)
+        {
+            assets.insert("skybox".into(), path.to_path_buf());
         }
 
         for (idx, task_id) in &progress.prop_tasks {
@@ -384,10 +382,8 @@ mod tests {
     #[test]
     fn assemble_produces_level_data() {
         // Create a mock service and progress with no actual tasks.
-        let service = GenerationService::with_providers(
-            HashMap::new(),
-            PathBuf::from("/tmp/euca_orch_test"),
-        );
+        let service =
+            GenerationService::with_providers(HashMap::new(), PathBuf::from("/tmp/euca_orch_test"));
 
         let layout = LevelLayout {
             terrain_prompt: "flat grass".into(),

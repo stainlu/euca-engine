@@ -59,8 +59,8 @@ pub struct CookedMaterial {
 
 /// Load a cooked `.emesh` file from disk.
 pub fn load_cooked(path: &Path) -> Result<CookedMesh, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("Failed to read '{}': {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("Failed to read '{}': {e}", path.display()))?;
     bincode::deserialize(&bytes)
         .map_err(|e| format!("Failed to deserialize '{}': {e}", path.display()))
 }
