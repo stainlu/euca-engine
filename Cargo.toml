@@ -28,6 +28,7 @@ members = [
     "crates/euca-services",
     "crates/euca-web",
     "tools/euca-cli",
+    "tools/euca-cook",
     "games/poker",
     "services/matchmaking",
     "services/poker-server",

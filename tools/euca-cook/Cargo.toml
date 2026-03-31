@@ -1,0 +1,20 @@
+[package]
+name = "euca-cook"
+version.workspace = true
+edition.workspace = true
+description = "Offline asset cooker — pre-processes GLB/glTF into engine-native binary with LOD generation"
+
+[[bin]]
+name = "euca-cook"
+path = "src/main.rs"
+
+[dependencies]
+euca-asset = { path = "../../crates/euca-asset" }
+euca-render = { path = "../../crates/euca-render" }
+gltf = "1.4"
+meshopt = "0.6"
+bincode = "1"
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
