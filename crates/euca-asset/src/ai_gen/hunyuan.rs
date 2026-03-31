@@ -325,8 +325,7 @@ mod tests {
         let generator = HunyuanGenerator::with_base_url(DEFAULT_BASE_URL, None);
         let req = GenerationRequest {
             prompt: Some("a sword".into()),
-            image: None,
-            quality: Quality::Medium,
+            ..Default::default()
         };
         let err = generator.generate(&req).unwrap_err();
         assert!(matches!(err, GenError::NoApiKey));
@@ -335,11 +334,7 @@ mod tests {
     #[test]
     fn generate_empty_request_returns_invalid() {
         let generator = HunyuanGenerator::with_base_url("http://localhost:8000", None);
-        let req = GenerationRequest {
-            prompt: None,
-            image: None,
-            quality: Quality::Medium,
-        };
+        let req = GenerationRequest::default();
         let err = generator.generate(&req).unwrap_err();
         assert!(matches!(err, GenError::InvalidRequest(_)));
     }

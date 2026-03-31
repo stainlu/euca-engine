@@ -20,11 +20,16 @@ use std::path::{Path, PathBuf};
 
 use euca_ecs::Entity;
 
+use super::blockade_labs::BlockadeLabsGenerator;
 use super::hunyuan::HunyuanGenerator;
 use super::meshy::MeshyGenerator;
 use super::rodin::RodinGenerator;
+use super::stability::StabilityGenerator;
 use super::tripo::TripoGenerator;
-use super::{AssetGenerator, GenError, GenerationId, GenerationRequest, GenerationStatus};
+use super::world_labs::WorldLabsGenerator;
+use super::{
+    AssetGenerator, GenError, GenerationId, GenerationKind, GenerationRequest, GenerationStatus,
+};
 
 // ---------------------------------------------------------------------------
 // TaskEntry
@@ -38,9 +43,11 @@ struct TaskEntry {
     provider_id: GenerationId,
     /// The original prompt (used for display / events).
     prompt: String,
+    /// What kind of asset is being generated (determines output file extension).
+    kind: GenerationKind,
     /// Current generation status.
     status: GenerationStatus,
-    /// Path to the downloaded GLB file, populated on completion.
+    /// Path to the downloaded file, populated on completion.
     file_path: Option<PathBuf>,
 }
 
@@ -64,14 +71,25 @@ pub struct GenerationService {
 }
 
 impl GenerationService {
-    /// Create a service with the four default providers, each reading its API
-    /// key from the environment.
+    /// Create a service with all default providers, each reading its API key
+    /// from the environment.
     pub fn new(output_dir: PathBuf) -> Self {
         let mut providers: HashMap<String, Box<dyn AssetGenerator>> = HashMap::new();
+
+        // 3D model providers
         providers.insert("tripo".into(), Box::new(TripoGenerator::new()));
         providers.insert("meshy".into(), Box::new(MeshyGenerator::new()));
         providers.insert("rodin".into(), Box::new(RodinGenerator::new()));
         providers.insert("hunyuan".into(), Box::new(HunyuanGenerator::new()));
+
+        // Level pipeline providers
+        providers.insert("stability".into(), Box::new(StabilityGenerator::new()));
+        providers.insert(
+            "blockade_labs".into(),
+            Box::new(BlockadeLabsGenerator::new()),
+        );
+        providers.insert("world_labs".into(), Box::new(WorldLabsGenerator::new()));
+
         Self {
             providers,
             tasks: HashMap::new(),
@@ -128,9 +146,10 @@ impl GenerationService {
             .ok_or_else(|| GenError::InvalidRequest(format!("unknown provider: {provider}")))?;
 
         let prompt = request.prompt.clone().unwrap_or_default();
+        let kind = request.kind;
 
         // Check disk cache before hitting the network.
-        let cache_path = self.cache_path(provider, &prompt);
+        let cache_path = self.cache_path(provider, &prompt, kind);
         if cache_path.exists() {
             let task_id = self.alloc_task_id();
             log::info!(
@@ -143,6 +162,7 @@ impl GenerationService {
                     provider: provider.to_owned(),
                     provider_id: GenerationId(String::new()),
                     prompt,
+                    kind,
                     status: GenerationStatus::Complete {
                         download_url: String::new(),
                     },
@@ -161,6 +181,7 @@ impl GenerationService {
                 provider: provider.to_owned(),
                 provider_id,
                 prompt,
+                kind,
                 status: GenerationStatus::Pending { progress: 0.0 },
                 file_path: None,
             },
@@ -189,9 +210,15 @@ impl GenerationService {
 
             let new_status = generator.poll(&entry.provider_id)?;
 
-            // If the provider reports completion, download the GLB.
+            // If the provider reports completion, download the asset.
             if let GenerationStatus::Complete { ref download_url } = new_status {
-                match self.download_and_save(&entry.provider, task_id, &entry.prompt, download_url)
+                match self.download_and_save(
+                    &entry.provider,
+                    task_id,
+                    &entry.prompt,
+                    entry.kind,
+                    download_url,
+                )
                 {
                     Ok(path) => {
                         entry.file_path = Some(path);
@@ -272,11 +299,11 @@ impl GenerationService {
         id
     }
 
-    /// Deterministic cache path for a `(provider, prompt)` pair.
+    /// Deterministic cache path for a `(provider, prompt, kind)` triple.
     ///
-    /// The filename is derived from the provider name and a sanitized,
-    /// truncated prompt: `{provider}_{sanitized_prompt}.glb`.
-    fn cache_path(&self, provider: &str, prompt: &str) -> PathBuf {
+    /// The filename is derived from the provider name, a sanitized truncated
+    /// prompt, and the output file extension for the generation kind.
+    fn cache_path(&self, provider: &str, prompt: &str, kind: GenerationKind) -> PathBuf {
         let sanitized: String = prompt
             .chars()
             .map(|c| {
@@ -288,10 +315,12 @@ impl GenerationService {
             })
             .take(50)
             .collect();
-        self.output_dir.join(format!("{provider}_{sanitized}.glb"))
+        let ext = kind.file_extension();
+        self.output_dir
+            .join(format!("{provider}_{sanitized}.{ext}"))
     }
 
-    /// Download GLB bytes from the provider and write them to disk.
+    /// Download asset bytes from the provider and write them to disk.
     ///
     /// The file is saved both at the task-id path (for retrieval by callers)
     /// and at the cache path (for future prompt-based cache hits). When both
@@ -302,6 +331,7 @@ impl GenerationService {
         provider_name: &str,
         task_id: &str,
         prompt: &str,
+        kind: GenerationKind,
         download_url: &str,
     ) -> Result<PathBuf, GenError> {
         let generator = self.providers.get(provider_name).ok_or_else(|| {
@@ -318,14 +348,15 @@ impl GenerationService {
             ))
         })?;
 
-        // Primary path: task-id based.
-        let task_path = self.output_dir.join(format!("{task_id}.glb"));
+        // Primary path: task-id based with correct extension.
+        let ext = kind.file_extension();
+        let task_path = self.output_dir.join(format!("{task_id}.{ext}"));
         std::fs::write(&task_path, &bytes).map_err(|e| {
             GenError::HttpError(format!("failed to write {}: {e}", task_path.display()))
         })?;
 
         // Cache path: prompt-based (enables cache hits on future identical prompts).
-        let cache = self.cache_path(provider_name, prompt);
+        let cache = self.cache_path(provider_name, prompt, kind);
         if cache != task_path {
             let _ = std::fs::write(&cache, &bytes);
         }
@@ -419,13 +450,16 @@ mod tests {
     // -- constructor & provider listing ------------------------------------
 
     #[test]
-    fn new_creates_four_providers() {
+    fn new_creates_all_providers() {
         let svc = GenerationService::new(PathBuf::from("/tmp/euca_test"));
-        assert_eq!(svc.providers.len(), 4);
+        assert_eq!(svc.providers.len(), 7);
         assert!(svc.providers.contains_key("tripo"));
         assert!(svc.providers.contains_key("meshy"));
         assert!(svc.providers.contains_key("rodin"));
         assert!(svc.providers.contains_key("hunyuan"));
+        assert!(svc.providers.contains_key("stability"));
+        assert!(svc.providers.contains_key("blockade_labs"));
+        assert!(svc.providers.contains_key("world_labs"));
     }
 
     #[test]
@@ -459,8 +493,7 @@ mod tests {
         let mut svc = GenerationService::with_providers(HashMap::new(), dir);
         let req = GenerationRequest {
             prompt: Some("a chair".into()),
-            image: None,
-            quality: super::super::Quality::Medium,
+            ..Default::default()
         };
         let err = svc.start("nonexistent", &req).unwrap_err();
         assert!(matches!(err, GenError::InvalidRequest(_)));
@@ -472,8 +505,7 @@ mod tests {
         let mut svc = service_with_fake("fake", true, dir);
         let req = GenerationRequest {
             prompt: Some("a robot".into()),
-            image: None,
-            quality: super::super::Quality::Medium,
+            ..Default::default()
         };
         let id = svc.start("fake", &req).unwrap();
         assert_eq!(id, "gen_0");
@@ -496,8 +528,8 @@ mod tests {
         let mut svc = service_with_fake("fake", true, dir);
         let req = GenerationRequest {
             prompt: Some("sword".into()),
-            image: None,
             quality: super::super::Quality::Low,
+            ..Default::default()
         };
         svc.start("fake", &req).unwrap();
         svc.start("fake", &req).unwrap();
@@ -510,7 +542,7 @@ mod tests {
     fn start_returns_cached_when_file_exists() {
         let dir = temp_dir("cache_hit");
 
-        // Pre-populate the cache file.
+        // Pre-populate the cache file (Model3D → .glb extension).
         let cache_file = dir.join("fake_a_wooden_chair.glb");
         let mut f = std::fs::File::create(&cache_file).unwrap();
         f.write_all(b"cached-glb").unwrap();
@@ -518,8 +550,7 @@ mod tests {
         let mut svc = service_with_fake("fake", true, dir);
         let req = GenerationRequest {
             prompt: Some("a wooden chair".into()),
-            image: None,
-            quality: super::super::Quality::Medium,
+            ..Default::default()
         };
         let id = svc.start("fake", &req).unwrap();
 
@@ -566,8 +597,7 @@ mod tests {
         let mut svc = service_with_fake("fake", true, dir);
         let req = GenerationRequest {
             prompt: Some("test".into()),
-            image: None,
-            quality: super::super::Quality::Medium,
+            ..Default::default()
         };
         let id0 = svc.start("fake", &req).unwrap();
         let id1 = svc.start("fake", &req).unwrap();

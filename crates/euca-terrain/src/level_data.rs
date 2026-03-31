@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Heightmap;
 
-// ── Surface & terrain mode ──────────────────────────────────────────────────
+// ── Surface type ────────────────────────────────────────────────────────────
 
 /// The physical/visual surface material applied to a terrain cell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -38,22 +38,6 @@ impl Default for SurfaceType {
     fn default() -> Self {
         Self::Grass
     }
-}
-
-/// How the terrain geometry is represented.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum TerrainMode {
-    /// Classic heightfield terrain.
-    #[default]
-    Heightmap,
-    /// Discrete tile grid (e.g. strategy or RPG maps).
-    Tiles,
-    /// Flat polygonal zones with optional elevation offsets.
-    FlatZones,
-    /// Arbitrary static mesh used as terrain.
-    StaticMesh,
-    /// No terrain — pure sky/void levels.
-    None,
 }
 
 // ── Placement types ─────────────────────────────────────────────────────────
@@ -154,7 +138,12 @@ pub struct LevelData {
     pub cell_size: f32,
 
     // ── Terrain layer ──
-    pub terrain_mode: TerrainMode,
+    /// Scaling factor applied to normalised height values to produce world-space Y.
+    pub max_height: f32,
+    /// When `true` the renderer bilinearly interpolates between cell heights
+    /// (smooth terrain).  When `false` each cell is flat at its own height
+    /// (tile-like surfaces).
+    pub interpolate_height: bool,
     /// Row-major elevation data, each value in `[0, 1]`.
     pub heightmap: Vec<f32>,
 
@@ -189,7 +178,8 @@ impl LevelData {
             width,
             height,
             cell_size,
-            terrain_mode: TerrainMode::default(),
+            max_height: 50.0,
+            interpolate_height: true,
             heightmap: vec![0.0; count],
             surface: vec![SurfaceType::default(); count],
             walkable: vec![true; count],
@@ -339,6 +329,7 @@ impl LevelData {
     pub fn to_heightmap(&self) -> Heightmap {
         Heightmap::from_raw(self.width, self.height, self.heightmap.clone())
             .with_cell_size(self.cell_size)
+            .with_max_height(self.max_height)
     }
 
     // ── Serialisation ───────────────────────────────────────────────────
@@ -589,11 +580,6 @@ mod tests {
     #[test]
     fn default_surface_is_grass() {
         assert_eq!(SurfaceType::default(), SurfaceType::Grass);
-    }
-
-    #[test]
-    fn default_terrain_mode_is_heightmap() {
-        assert_eq!(TerrainMode::default(), TerrainMode::Heightmap);
     }
 
     #[test]

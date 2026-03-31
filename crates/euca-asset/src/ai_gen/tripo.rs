@@ -194,8 +194,7 @@ mod tests {
     fn generation_request_with_prompt() {
         let req = GenerationRequest {
             prompt: Some("a wooden chair".into()),
-            image: None,
-            quality: Quality::Medium,
+            ..Default::default()
         };
         assert!(req.prompt.is_some());
         assert!(req.image.is_none());
@@ -232,8 +231,7 @@ mod tests {
         let generator = TripoGenerator::new();
         let req = GenerationRequest {
             prompt: Some("test".into()),
-            image: None,
-            quality: Quality::Medium,
+            ..Default::default()
         };
         let err = generator.generate(&req).unwrap_err();
         assert!(matches!(err, GenError::NoApiKey));

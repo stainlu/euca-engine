@@ -116,8 +116,8 @@ pub async fn asset_generate(
             let quality = parse_quality(req.quality.as_deref());
             let gen_request = GenerationRequest {
                 prompt: Some(req.prompt.clone()),
-                image: None,
                 quality,
+                ..Default::default()
             };
 
             service

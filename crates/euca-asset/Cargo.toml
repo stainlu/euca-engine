@@ -10,6 +10,7 @@ categories = ["game-development"]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
 euca-render = { path = "../euca-render" }
+euca-terrain = { path = "../euca-terrain" }
 gltf = "1.4"
 log = "0.4"
 base64 = "0.22"

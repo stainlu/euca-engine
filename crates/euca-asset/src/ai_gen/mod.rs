@@ -1,17 +1,22 @@
-//! AI-powered 3D asset generation.
+//! AI-powered asset generation (3D models, heightmaps, skyboxes, textures,
+//! scenes).
 //!
 //! This module defines the [`AssetGenerator`] trait that all AI generation
 //! providers implement, along with shared request/response types. Concrete
-//! providers live in sub-modules (e.g. [`tripo`]).
+//! providers live in sub-modules (e.g. [`tripo`], [`stability`]).
 //!
 //! All provider methods are **synchronous and blocking** — callers are
 //! responsible for scheduling them on a background thread or task pool.
 
+pub mod blockade_labs;
 pub mod hunyuan;
+pub mod level_orchestrator;
 pub mod meshy;
 pub mod rodin;
 pub mod service;
+pub mod stability;
 pub mod tripo;
+pub mod world_labs;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -20,15 +25,60 @@ use std::fmt;
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GenerationId(pub String);
 
+/// The kind of asset being generated — determines output format and provider
+/// selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GenerationKind {
+    /// 3D model in GLB format (Meshy, Tripo, Rodin, Hunyuan).
+    #[default]
+    Model3D,
+    /// Grayscale heightmap image in PNG format (Stability AI).
+    Heightmap,
+    /// 360° panoramic skybox in HDR/PNG format (Blockade Labs).
+    Skybox,
+    /// PBR texture set — albedo, normal, roughness, AO (Scenario).
+    Texture,
+    /// Full 3D scene in GLB format (World Labs Marble).
+    Scene,
+}
+
+impl GenerationKind {
+    /// File extension for the primary output of this generation kind.
+    pub fn file_extension(&self) -> &'static str {
+        match self {
+            Self::Model3D | Self::Scene => "glb",
+            Self::Heightmap | Self::Texture => "png",
+            Self::Skybox => "hdr",
+        }
+    }
+}
+
 /// What to generate.
 #[derive(Clone, Debug)]
 pub struct GenerationRequest {
-    /// Text prompt describing the 3D model (text-to-3D).
+    /// Text prompt describing the desired asset.
     pub prompt: Option<String>,
-    /// Image bytes for image-to-3D generation.
+    /// Image bytes for image-to-3D or image-to-image generation.
     pub image: Option<Vec<u8>>,
     /// Quality level.
     pub quality: Quality,
+    /// The kind of asset to generate.
+    pub kind: GenerationKind,
+    /// Desired output dimensions (width, height) — used for heightmaps and
+    /// textures. Providers that don't support custom dimensions ignore this.
+    pub dimensions: Option<(u32, u32)>,
+}
+
+impl Default for GenerationRequest {
+    fn default() -> Self {
+        Self {
+            prompt: None,
+            image: None,
+            quality: Quality::default(),
+            kind: GenerationKind::default(),
+            dimensions: None,
+        }
+    }
 }
 
 /// Generation quality tier.
@@ -92,6 +142,6 @@ pub trait AssetGenerator: Send + Sync {
     /// Check the status of a generation task.
     fn poll(&self, id: &GenerationId) -> Result<GenerationStatus, GenError>;
 
-    /// Download the generated GLB model bytes.
+    /// Download the generated asset bytes (GLB, PNG, HDR, etc.).
     fn download(&self, url: &str) -> Result<Vec<u8>, GenError>;
 }

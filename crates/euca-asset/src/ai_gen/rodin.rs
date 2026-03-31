@@ -338,8 +338,7 @@ mod tests {
         let generator = RodinGenerator::with_api_key("");
         let req = GenerationRequest {
             prompt: Some("a sword".into()),
-            image: None,
-            quality: Quality::Medium,
+            ..Default::default()
         };
         let err = generator.generate(&req).unwrap_err();
         assert!(matches!(err, GenError::NoApiKey));
@@ -348,11 +347,7 @@ mod tests {
     #[test]
     fn generate_without_prompt_returns_invalid_request() {
         let generator = RodinGenerator::with_api_key("test-key");
-        let req = GenerationRequest {
-            prompt: None,
-            image: None,
-            quality: Quality::Medium,
-        };
+        let req = GenerationRequest::default();
         let err = generator.generate(&req).unwrap_err();
         assert!(matches!(err, GenError::InvalidRequest(_)));
     }

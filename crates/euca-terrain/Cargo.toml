@@ -17,4 +17,7 @@ euca-physics = { path = "../euca-physics" }
 euca-rhi = { path = "../euca-rhi", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
 euca-render = { path = "../euca-render", optional = true }
+bincode = "1"
 log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

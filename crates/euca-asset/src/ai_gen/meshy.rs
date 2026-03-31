@@ -225,8 +225,7 @@ mod tests {
         let generator = MeshyGenerator::with_api_key(None);
         let req = GenerationRequest {
             prompt: Some("a chair".into()),
-            image: None,
-            quality: Quality::Medium,
+            ..Default::default()
         };
         let err = generator.generate(&req).unwrap_err();
         assert!(matches!(err, GenError::NoApiKey));
@@ -235,11 +234,7 @@ mod tests {
     #[test]
     fn generate_empty_request_returns_invalid() {
         let generator = MeshyGenerator::with_api_key(Some("key".into()));
-        let req = GenerationRequest {
-            prompt: None,
-            image: None,
-            quality: Quality::Medium,
-        };
+        let req = GenerationRequest::default();
         let err = generator.generate(&req).unwrap_err();
         assert!(matches!(err, GenError::InvalidRequest(_)));
     }

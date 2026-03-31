@@ -15,7 +15,7 @@ use super::{
 };
 
 // ---------------------------------------------------------------------------
-// New LevelData format (terrain-aware levels with width/height/terrain_mode)
+// New LevelData format (terrain-aware levels with width/height)
 // ---------------------------------------------------------------------------
 
 /// Camera configuration embedded in a new-format level.
@@ -32,22 +32,19 @@ pub struct LevelCamera {
 /// New level data format that carries terrain dimensions and metadata
 /// alongside the entity list and camera config.
 ///
-/// Detected by the presence of `terrain_mode` or both `width` + `height`
-/// fields at the top level of the JSON document.
+/// Detected by the presence of both `width` and `height` fields at the
+/// top level of the JSON document.
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub struct LevelData {
     /// Human-readable level name.
     #[serde(default)]
     pub name: Option<String>,
-    /// Terrain width in world units.
+    /// Terrain width in grid cells.
     #[serde(default)]
     pub width: Option<u32>,
-    /// Terrain height (depth) in world units.
+    /// Terrain height (depth) in grid cells.
     #[serde(default)]
     pub height: Option<u32>,
-    /// Terrain generation mode, e.g. "flat", "heightmap", "procedural".
-    #[serde(default)]
-    pub terrain_mode: Option<String>,
     /// Entities to spawn.
     #[serde(default)]
     pub entities: Vec<SpawnRequest>,
@@ -381,14 +378,14 @@ pub fn load_level_into_world(w: &mut euca_ecs::World, level: &serde_json::Value)
 
 /// Auto-detect old vs new level format and load accordingly.
 ///
-/// **New format** is identified by the presence of a `terrain_mode` field or
-/// both `width` and `height` fields at the JSON root.  Everything else falls
-/// through to the existing [`load_level_into_world`] path (backward compatible).
+/// **New format** is identified by the presence of both `width` and `height`
+/// fields at the JSON root.  Everything else falls through to the existing
+/// [`load_level_into_world`] path (backward compatible).
 ///
 /// Returns the number of entities created.
 pub fn load_level_auto(w: &mut euca_ecs::World, level: &serde_json::Value) -> u32 {
-    let is_new_format = level.get("terrain_mode").is_some()
-        || (level.get("width").is_some() && level.get("height").is_some());
+    let is_new_format =
+        level.get("width").is_some() && level.get("height").is_some();
 
     if !is_new_format {
         return load_level_into_world(w, level);
@@ -408,11 +405,10 @@ pub fn load_level_auto(w: &mut euca_ecs::World, level: &serde_json::Value) -> u3
     let width = data.width.unwrap_or(0);
     let height = data.height.unwrap_or(0);
     log::info!(
-        "Loading level '{}' ({}x{}, terrain_mode={:?})",
+        "Loading level '{}' ({}x{})",
         level_name,
         width,
         height,
-        data.terrain_mode.as_deref().unwrap_or("none"),
     );
 
     // Store the LevelData as a world resource so other systems can query it.
@@ -650,8 +646,8 @@ mod tests {
     use super::*;
     use euca_ecs::World;
 
-    /// Old-format JSON (no `terrain_mode`, no `width`/`height`) must fall
-    /// through to `load_level_into_world` and still work.
+    /// Old-format JSON (no `width`/`height`) must fall through to
+    /// `load_level_into_world` and still work.
     #[test]
     fn auto_detect_old_format() {
         let mut world = World::new();
@@ -671,8 +667,8 @@ mod tests {
         );
     }
 
-    /// New-format JSON (has `terrain_mode`) must be detected and stored as
-    /// a `LevelData` world resource.
+    /// New-format JSON (has `width` + `height`) must be detected and stored
+    /// as a `LevelData` world resource.
     #[test]
     fn auto_detect_new_format() {
         let mut world = World::new();
@@ -680,7 +676,6 @@ mod tests {
             "name": "Test Arena",
             "width": 256,
             "height": 256,
-            "terrain_mode": "flat",
             "entities": [
                 { "position": [0.0, 0.0, 0.0] },
             ],
@@ -695,7 +690,6 @@ mod tests {
         assert_eq!(ld.name.as_deref(), Some("Test Arena"));
         assert_eq!(ld.width, Some(256));
         assert_eq!(ld.height, Some(256));
-        assert_eq!(ld.terrain_mode.as_deref(), Some("flat"));
     }
 
     /// Entities in the new format must actually be spawned into the world.
@@ -728,7 +722,8 @@ mod tests {
         world.insert_resource(euca_render::Camera::default());
 
         let level = serde_json::json!({
-            "terrain_mode": "heightmap",
+            "width": 64,
+            "height": 64,
             "entities": [],
             "camera": {
                 "eye": [10.0, 20.0, 30.0],

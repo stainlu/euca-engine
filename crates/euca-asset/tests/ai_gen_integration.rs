@@ -88,8 +88,7 @@ fn temp_dir(name: &str) -> PathBuf {
 fn mock_request(prompt: &str) -> GenerationRequest {
     GenerationRequest {
         prompt: Some(prompt.into()),
-        image: None,
-        quality: Quality::Medium,
+        ..Default::default()
     }
 }
 
@@ -205,14 +204,17 @@ fn unknown_provider_returns_error() {
     );
 }
 
-/// The default `GenerationService::new` registers all 4 real providers.
+/// The default `GenerationService::new` registers all real providers.
 #[test]
 fn service_lists_providers() {
     let svc = GenerationService::new(PathBuf::from("/tmp/euca_provider_list_test"));
     let registered = svc.registered_providers();
-    assert_eq!(registered.len(), 4);
+    assert_eq!(registered.len(), 7);
     assert!(registered.contains(&"tripo"));
     assert!(registered.contains(&"meshy"));
     assert!(registered.contains(&"rodin"));
     assert!(registered.contains(&"hunyuan"));
+    assert!(registered.contains(&"stability"));
+    assert!(registered.contains(&"blockade_labs"));
+    assert!(registered.contains(&"world_labs"));
 }

@@ -31,12 +31,15 @@ pub mod editing;
 #[cfg(feature = "gpu-terrain")]
 pub mod gpu_terrain;
 pub mod heightmap;
+pub mod ldtk_import;
+pub mod level_data;
 #[cfg(feature = "level-render")]
 pub mod level_render;
 pub mod lod;
 pub mod mesh;
 pub mod physics;
 pub mod splat;
+pub mod tiled_import;
 
 // Re-export the most commonly used items at crate root.
 pub use chunk::{TerrainChunk, aabb_in_frustum, build_chunks, generate_chunk_mesh};
