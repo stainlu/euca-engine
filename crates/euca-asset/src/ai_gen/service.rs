@@ -24,6 +24,7 @@ use super::blockade_labs::BlockadeLabsGenerator;
 use super::hunyuan::HunyuanGenerator;
 use super::meshy::MeshyGenerator;
 use super::rodin::RodinGenerator;
+use super::scenario::ScenarioGenerator;
 use super::stability::StabilityGenerator;
 use super::tripo::TripoGenerator;
 use super::world_labs::WorldLabsGenerator;
@@ -89,6 +90,7 @@ impl GenerationService {
             Box::new(BlockadeLabsGenerator::new()),
         );
         providers.insert("world_labs".into(), Box::new(WorldLabsGenerator::new()));
+        providers.insert("scenario".into(), Box::new(ScenarioGenerator::new()));
 
         Self {
             providers,
@@ -452,7 +454,7 @@ mod tests {
     #[test]
     fn new_creates_all_providers() {
         let svc = GenerationService::new(PathBuf::from("/tmp/euca_test"));
-        assert_eq!(svc.providers.len(), 7);
+        assert_eq!(svc.providers.len(), 8);
         assert!(svc.providers.contains_key("tripo"));
         assert!(svc.providers.contains_key("meshy"));
         assert!(svc.providers.contains_key("rodin"));
@@ -460,6 +462,7 @@ mod tests {
         assert!(svc.providers.contains_key("stability"));
         assert!(svc.providers.contains_key("blockade_labs"));
         assert!(svc.providers.contains_key("world_labs"));
+        assert!(svc.providers.contains_key("scenario"));
     }
 
     #[test]

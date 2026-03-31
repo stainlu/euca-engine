@@ -105,6 +105,9 @@ fn build_cell_quad_flat(
 }
 
 /// Construct the 4 vertices + 6 indices for a quad with given corners.
+///
+/// `uv_scale` controls how many times the texture tiles across one cell.
+/// Default 1.0 = one tile per cell. Use 4.0 for grass to avoid stretching.
 fn build_quad(
     x0: f32,
     z0: f32,
@@ -118,11 +121,28 @@ fn build_quad(
     tangent: [f32; 3],
     base_vertex: u32,
 ) -> ([Vertex; 4], [u32; 6]) {
+    build_quad_uv(x0, z0, x1, z1, y00, y10, y01, y11, normal, tangent, base_vertex, 1.0)
+}
+
+fn build_quad_uv(
+    x0: f32,
+    z0: f32,
+    x1: f32,
+    z1: f32,
+    y00: f32,
+    y10: f32,
+    y01: f32,
+    y11: f32,
+    normal: [f32; 3],
+    tangent: [f32; 3],
+    base_vertex: u32,
+    uv_scale: f32,
+) -> ([Vertex; 4], [u32; 6]) {
     let verts = [
         Vertex { position: [x0, y00, z0], normal, tangent, uv: [0.0, 0.0] },
-        Vertex { position: [x1, y10, z0], normal, tangent, uv: [1.0, 0.0] },
-        Vertex { position: [x1, y11, z1], normal, tangent, uv: [1.0, 1.0] },
-        Vertex { position: [x0, y01, z1], normal, tangent, uv: [0.0, 1.0] },
+        Vertex { position: [x1, y10, z0], normal, tangent, uv: [uv_scale, 0.0] },
+        Vertex { position: [x1, y11, z1], normal, tangent, uv: [uv_scale, uv_scale] },
+        Vertex { position: [x0, y01, z1], normal, tangent, uv: [0.0, uv_scale] },
     ];
     let indices = [
         base_vertex,
@@ -177,6 +197,81 @@ pub fn generate_mesh_from_level(level: &LevelData) -> Vec<TerrainRenderChunk> {
             } else {
                 build_cell_quad_flat(&heightmap, col, row, base)
             };
+
+            verts_buf.extend_from_slice(&quad_verts);
+            indices_buf.extend_from_slice(&quad_indices);
+        }
+    }
+
+    let mut chunks: Vec<TerrainRenderChunk> = buckets
+        .into_iter()
+        .map(|(surface, (vertices, indices))| TerrainRenderChunk {
+            surface,
+            mesh: Mesh { vertices, indices },
+        })
+        .collect();
+
+    chunks.sort_by(|a, b| format!("{:?}", a.surface).cmp(&format!("{:?}", b.surface)));
+    chunks
+}
+
+/// Generate terrain meshes with per-surface UV tiling from a
+/// [`TerrainMaterialSet`].
+///
+/// Same as [`generate_mesh_from_level`] but uses the material set's UV scale
+/// for each surface type so textures tile correctly.
+pub fn generate_mesh_from_level_with_materials(
+    level: &LevelData,
+    materials: &crate::terrain_material::TerrainMaterialSet,
+) -> Vec<TerrainRenderChunk> {
+    let heightmap = level.to_heightmap();
+    let cell_cols = level.width.saturating_sub(1);
+    let cell_rows = level.height.saturating_sub(1);
+    let total_cells = (cell_cols * cell_rows) as usize;
+
+    let mut buckets: HashMap<SurfaceType, (Vec<Vertex>, Vec<u32>)> = HashMap::new();
+
+    for row in 0..cell_rows {
+        for col in 0..cell_cols {
+            let cell_idx = (row * cell_cols + col) as usize;
+            let surface = if cell_idx < level.surface.len() {
+                level.surface[cell_idx]
+            } else {
+                SurfaceType::Grass
+            };
+
+            let uv_scale = materials.uv_scale(surface);
+
+            let (verts_buf, indices_buf) = buckets.entry(surface).or_insert_with(|| {
+                (
+                    Vec::with_capacity(total_cells * 4),
+                    Vec::with_capacity(total_cells * 6),
+                )
+            });
+
+            let base = verts_buf.len() as u32;
+            let cs = heightmap.cell_size;
+            let x0 = col as f32 * cs;
+            let z0 = row as f32 * cs;
+            let x1 = (col + 1) as f32 * cs;
+            let z1 = (row + 1) as f32 * cs;
+
+            let (y00, y10, y01, y11, normal) = if level.interpolate_height {
+                let y00 = heightmap.sample(x0, z0);
+                let y10 = heightmap.sample(x1, z0);
+                let y01 = heightmap.sample(x0, z1);
+                let y11 = heightmap.sample(x1, z1);
+                let n = heightmap.normal_at((x0 + x1) * 0.5, (z0 + z1) * 0.5);
+                (y00, y10, y01, y11, [n.x, n.y, n.z])
+            } else {
+                let y = heightmap.raw_at(col, row) * heightmap.max_height;
+                (y, y, y, y, [0.0, 1.0, 0.0])
+            };
+
+            let tangent = [1.0, 0.0, 0.0];
+            let (quad_verts, quad_indices) = build_quad_uv(
+                x0, z0, x1, z1, y00, y10, y01, y11, normal, tangent, base, uv_scale,
+            );
 
             verts_buf.extend_from_slice(&quad_verts);
             indices_buf.extend_from_slice(&quad_indices);

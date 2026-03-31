@@ -13,6 +13,7 @@ pub mod hunyuan;
 pub mod level_orchestrator;
 pub mod meshy;
 pub mod rodin;
+pub mod scenario;
 pub mod service;
 pub mod stability;
 pub mod tripo;

@@ -39,6 +39,7 @@ pub mod lod;
 pub mod mesh;
 pub mod physics;
 pub mod splat;
+pub mod terrain_material;
 pub mod tiled_import;
 
 // Re-export the most commonly used items at crate root.

@@ -209,7 +209,7 @@ fn unknown_provider_returns_error() {
 fn service_lists_providers() {
     let svc = GenerationService::new(PathBuf::from("/tmp/euca_provider_list_test"));
     let registered = svc.registered_providers();
-    assert_eq!(registered.len(), 7);
+    assert_eq!(registered.len(), 8);
     assert!(registered.contains(&"tripo"));
     assert!(registered.contains(&"meshy"));
     assert!(registered.contains(&"rodin"));
@@ -217,4 +217,5 @@ fn service_lists_providers() {
     assert!(registered.contains(&"stability"));
     assert!(registered.contains(&"blockade_labs"));
     assert!(registered.contains(&"world_labs"));
+    assert!(registered.contains(&"scenario"));
 }
