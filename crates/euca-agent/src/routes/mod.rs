@@ -302,6 +302,17 @@ fn glb_procedural_fallback(path: &str) -> Option<String> {
     }
 }
 
+/// Map a GLB path to its cooked `.emesh` equivalent.
+///
+/// `"assets/generated/dire_tower.glb"` → `"assets/cooked/dire_tower.emesh"`
+fn cooked_path_for(glb_path: &str) -> std::path::PathBuf {
+    let stem = std::path::Path::new(glb_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    std::path::PathBuf::from(format!("assets/cooked/{stem}.emesh"))
+}
+
 /// Result of resolving a mesh name in the spawn handler.
 pub(crate) enum MeshResolution {
     /// Already uploaded — use this handle immediately.
@@ -362,7 +373,66 @@ pub(crate) fn resolve_mesh(
         return MeshResolution::LoadError(format!("File not found: {mesh_name}"));
     }
 
-    // 5. Check the glTF load cache to avoid re-parsing the same file.
+    // 5. Try loading a cooked .emesh file first (instant, pre-processed).
+    let cooked_path = cooked_path_for(mesh_name);
+    if cooked_path.exists() {
+        match euca_asset::cooked::load_cooked(&cooked_path) {
+            Ok(cooked) => {
+                // Use LOD2 (25% detail) for gameplay — good balance of quality and performance.
+                let lod_level = 2.min(cooked.lods.len().saturating_sub(1));
+                let mesh = euca_asset::cooked::lod_to_mesh(&cooked.lods[lod_level]);
+                let material = euca_asset::cooked::cooked_material_to_material(&cooked.material);
+
+                log::info!(
+                    "Loaded cooked asset '{}' LOD{} ({} verts)",
+                    cooked_path.display(),
+                    lod_level,
+                    cooked.lods[lod_level].vertex_count,
+                );
+
+                // Ensure PendingMeshUpload resource exists.
+                if w.resource::<PendingMeshUpload>().is_none() {
+                    w.insert_resource(PendingMeshUpload::default());
+                }
+
+                // Extract albedo texture if present.
+                let (images, albedo_tex_index) =
+                    if let Some(tex_idx) = cooked.material.albedo_tex_index {
+                        let imgs: Vec<euca_asset::gltf_loader::GltfImage> = cooked
+                            .textures
+                            .iter()
+                            .map(|t| euca_asset::gltf_loader::GltfImage {
+                                pixels: t.pixels.clone(),
+                                width: t.width,
+                                height: t.height,
+                            })
+                            .collect();
+                        (imgs, Some(tex_idx))
+                    } else {
+                        (Vec::new(), None)
+                    };
+
+                if let Some(pending) = w.resource_mut::<PendingMeshUpload>() {
+                    pending.queue.push(PendingMeshEntry {
+                        entity,
+                        path: mesh_name.to_string(),
+                        mesh,
+                        material: Some(material),
+                        images,
+                        albedo_tex_index,
+                        ground_offset: Some(cooked.ground_offset),
+                    });
+                }
+
+                return MeshResolution::Pending;
+            }
+            Err(e) => {
+                log::warn!("Failed to load cooked '{}': {e}, falling back to GLB", cooked_path.display());
+            }
+        }
+    }
+
+    // 6. Fall back to GLB loading (slow path).
     if w.resource::<GltfLoadCache>().is_none() {
         w.insert_resource(GltfLoadCache::default());
     }
@@ -375,7 +445,6 @@ pub(crate) fn resolve_mesh(
         log::info!("glTF load cache hit for '{mesh_name}'");
         cached
     } else {
-        // Load from disk (expensive for large models).
         let scene = match euca_asset::load_gltf(mesh_name) {
             Ok(s) => s,
             Err(e) => return MeshResolution::LoadError(e),
@@ -395,7 +464,6 @@ pub(crate) fn resolve_mesh(
             ground_offset,
         };
 
-        // Cache for future entities referencing the same file.
         if let Some(cache) = w.resource_mut::<GltfLoadCache>() {
             cache.entries.insert(mesh_name.to_string(), entry.clone());
         }
