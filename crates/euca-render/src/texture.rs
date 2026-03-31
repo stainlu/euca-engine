@@ -35,7 +35,11 @@ impl<D: RenderDevice> TextureStore<D> {
         store
     }
 
-    /// Upload raw RGBA8 pixel data as a 2D texture with auto-generated mipmaps.
+    /// Upload raw RGBA8 pixel data as a 2D texture.
+    ///
+    /// Uses a single mip level (no CPU mipmap generation) for fast loading.
+    /// GPU-side mip generation or pre-baked mipmaps from the asset cooker
+    /// will replace this in the future.
     pub fn upload_rgba(
         &mut self,
         device: &D,
@@ -43,7 +47,7 @@ impl<D: RenderDevice> TextureStore<D> {
         height: u32,
         rgba: &[u8],
     ) -> TextureHandle {
-        let mip_level_count = 1 + (width.max(height) as f32).log2().floor() as u32;
+        let mip_level_count = 1;
 
         let size = euca_rhi::Extent3d {
             width,
@@ -77,66 +81,6 @@ impl<D: RenderDevice> TextureStore<D> {
             },
             size,
         );
-
-        // Generate remaining mip levels on CPU (box filter downscale)
-        let mut prev_data = rgba.to_vec();
-        let mut mip_w = width;
-        let mut mip_h = height;
-
-        for level in 1..mip_level_count {
-            let new_w = (mip_w / 2).max(1);
-            let new_h = (mip_h / 2).max(1);
-            let mut new_data = vec![0u8; (new_w * new_h * 4) as usize];
-
-            // Box filter: average 2x2 blocks
-            for y in 0..new_h {
-                for x in 0..new_w {
-                    let dst = ((y * new_w + x) * 4) as usize;
-                    let sx = (x * 2).min(mip_w - 1);
-                    let sy = (y * 2).min(mip_h - 1);
-
-                    for c in 0..4u32 {
-                        let s00 = prev_data[((sy * mip_w + sx) * 4 + c) as usize] as u32;
-                        let s10 = prev_data
-                            [(((sy) * mip_w + (sx + 1).min(mip_w - 1)) * 4 + c) as usize]
-                            as u32;
-                        let s01 = prev_data
-                            [(((sy + 1).min(mip_h - 1) * mip_w + sx) * 4 + c) as usize]
-                            as u32;
-                        let s11 = prev_data[(((sy + 1).min(mip_h - 1) * mip_w
-                            + (sx + 1).min(mip_w - 1))
-                            * 4
-                            + c) as usize] as u32;
-                        new_data[dst + c as usize] = ((s00 + s10 + s01 + s11) / 4) as u8;
-                    }
-                }
-            }
-
-            let mip_size = euca_rhi::Extent3d {
-                width: new_w,
-                height: new_h,
-                depth_or_array_layers: 1,
-            };
-            device.write_texture(
-                &euca_rhi::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: level,
-                    origin: euca_rhi::Origin3d::default(),
-                    aspect: euca_rhi::TextureAspect::All,
-                },
-                &new_data,
-                &euca_rhi::TextureDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * new_w),
-                    rows_per_image: Some(new_h),
-                },
-                mip_size,
-            );
-
-            prev_data = new_data;
-            mip_w = new_w;
-            mip_h = new_h;
-        }
 
         let view = device.create_texture_view(&texture, &euca_rhi::TextureViewDesc::default());
         let handle = TextureHandle(self.textures.len() as u32);

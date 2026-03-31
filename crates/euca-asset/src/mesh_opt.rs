@@ -186,11 +186,14 @@ pub fn optimize_vertex_cache(mesh: &mut Mesh) {
     mesh.indices = new_indices;
 }
 
-/// Run all mesh optimizations: dedup, tangents, cache optimization.
+/// Run mesh optimizations: dedup and tangent computation.
+///
+/// Vertex cache optimization is intentionally skipped — the current O(T²)
+/// greedy algorithm takes 2-3 seconds per 500K-triangle mesh. Will be
+/// replaced by meshoptimizer (O(T) Forsyth/Tipsify) in the asset cooker.
 pub fn optimize_mesh(mesh: &Mesh) -> Mesh {
     let mut optimized = deduplicate_vertices(mesh);
     compute_tangents(&mut optimized);
-    optimize_vertex_cache(&mut optimized);
     optimized
 }
 

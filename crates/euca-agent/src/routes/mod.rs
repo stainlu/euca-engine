@@ -225,6 +225,7 @@ impl GpuInfo {
 #[derive(Clone, Default)]
 pub struct MeshCache {
     pub meshes: std::collections::HashMap<String, MeshHandle>,
+    pub materials: std::collections::HashMap<String, MaterialHandle>,
 }
 
 /// Cache of loaded glTF mesh data (CPU-side), keyed by file path.
@@ -474,9 +475,14 @@ pub fn drain_pending_mesh_uploads(
                 w.insert(entry.entity, euca_render::GroundOffset(offset));
             }
 
-            // Upload GLB material with textures if available, otherwise use default.
-            let mat_handle = if let Some(ref mat) = entry.material {
-                // Upload albedo texture from GLB if present.
+            // Upload material with textures, using cache to avoid redundant work.
+            let cached_mat = w
+                .resource::<MeshCache>()
+                .and_then(|c| c.materials.get(&entry.path).copied());
+
+            let mat_handle = if let Some(h) = cached_mat {
+                Some(h)
+            } else if let Some(ref mat) = entry.material {
                 let mut uploaded_mat = mat.clone();
                 if let Some(tex_idx) = entry.albedo_tex_index
                     && let Some(img) = entry.images.get(tex_idx)
@@ -485,7 +491,11 @@ pub fn drain_pending_mesh_uploads(
                         renderer.upload_texture(gpu, img.width, img.height, &img.pixels);
                     uploaded_mat.albedo_texture = Some(tex_handle);
                 }
-                Some(renderer.upload_material(gpu, &uploaded_mat))
+                let h = renderer.upload_material(gpu, &uploaded_mat);
+                if let Some(cache) = w.resource_mut::<MeshCache>() {
+                    cache.materials.insert(entry.path.clone(), h);
+                }
+                Some(h)
             } else {
                 None
             };
@@ -552,7 +562,14 @@ pub fn drain_one_pending_mesh_upload(
             w.insert(entry.entity, euca_render::GroundOffset(offset));
         }
 
-        let mat_handle = if let Some(ref mat) = entry.material {
+        // Material/texture cache: skip redundant texture uploads for shared models.
+        let cached_mat = w
+            .resource::<MeshCache>()
+            .and_then(|c| c.materials.get(&entry.path).copied());
+
+        let mat_handle = if let Some(h) = cached_mat {
+            Some(h)
+        } else if let Some(ref mat) = entry.material {
             let mut uploaded_mat = mat.clone();
             if let Some(tex_idx) = entry.albedo_tex_index
                 && let Some(img) = entry.images.get(tex_idx)
@@ -560,7 +577,11 @@ pub fn drain_one_pending_mesh_upload(
                 let tex_handle = renderer.upload_texture(gpu, img.width, img.height, &img.pixels);
                 uploaded_mat.albedo_texture = Some(tex_handle);
             }
-            Some(renderer.upload_material(gpu, &uploaded_mat))
+            let h = renderer.upload_material(gpu, &uploaded_mat);
+            if let Some(cache) = w.resource_mut::<MeshCache>() {
+                cache.materials.insert(entry.path.clone(), h);
+            }
+            Some(h)
         } else {
             None
         };
