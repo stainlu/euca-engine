@@ -1205,7 +1205,7 @@ impl<D: RenderDevice> Renderer<D> {
     /// Upload CPU-side mesh data to the GPU and return a handle for use in
     /// [`DrawCommand`]s.
     pub fn upload_mesh(&mut self, gpu: &GpuContext<D>, mesh: &Mesh) -> MeshHandle {
-        use euca_rhi::{BufferDesc, BufferUsages, RenderDevice};
+        use euca_rhi::{BufferDesc, BufferUsages};
         let rhi: &D = &**gpu;
 
         let vdata = bytemuck::cast_slice::<_, u8>(&mesh.vertices);
@@ -1277,7 +1277,7 @@ impl<D: RenderDevice> Renderer<D> {
     pub fn upload_material(&mut self, gpu: &GpuContext<D>, mat: &Material) -> MaterialHandle {
         use euca_rhi::{
             BindGroupDesc, BindGroupEntry, BindingResource, BufferBinding, BufferDesc,
-            BufferUsages, RenderDevice,
+            BufferUsages,
         };
         let rhi: &D = &**gpu;
 
@@ -1760,7 +1760,6 @@ impl<D: RenderDevice> Renderer<D> {
         point_lights: &[(euca_math::Vec3, &crate::light::PointLight)],
         spot_lights: &[(euca_math::Vec3, &crate::light::SpotLight)],
     ) {
-        use euca_rhi::RenderDevice;
         let rhi: &D = &**gpu;
 
         let output = match rhi.get_current_texture() {

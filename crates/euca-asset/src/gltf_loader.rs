@@ -74,6 +74,7 @@ pub struct GltfMesh {
 }
 
 /// An image extracted from a glTF file, converted to RGBA8.
+#[derive(Clone)]
 pub struct GltfImage {
     pub pixels: Vec<u8>,
     pub width: u32,

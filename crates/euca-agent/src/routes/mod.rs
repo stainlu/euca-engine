@@ -227,6 +227,26 @@ pub struct MeshCache {
     pub meshes: std::collections::HashMap<String, MeshHandle>,
 }
 
+/// Cache of loaded glTF mesh data (CPU-side), keyed by file path.
+///
+/// Prevents re-reading and re-parsing the same GLB file when multiple entities
+/// reference the same model. The GPU-side cache (`MeshCache`) prevents
+/// duplicate uploads; this cache prevents duplicate disk I/O and parsing.
+#[derive(Clone, Default)]
+pub struct GltfLoadCache {
+    pub entries: std::collections::HashMap<String, GltfLoadCacheEntry>,
+}
+
+/// Cached CPU-side mesh data from a glTF file.
+#[derive(Clone)]
+pub struct GltfLoadCacheEntry {
+    pub mesh: Mesh,
+    pub material: Option<euca_render::Material>,
+    pub images: Vec<euca_asset::gltf_loader::GltfImage>,
+    pub albedo_tex_index: Option<usize>,
+    pub ground_offset: Option<f32>,
+}
+
 /// Queue of meshes loaded from disk that need GPU upload.
 ///
 /// The spawn handler pushes entries here (on the HTTP thread) and the
@@ -341,16 +361,45 @@ pub(crate) fn resolve_mesh(
         return MeshResolution::LoadError(format!("File not found: {mesh_name}"));
     }
 
-    // 5. Load the GLB/glTF from disk (CPU-only, no GPU access needed).
-    let scene = match euca_asset::load_gltf(mesh_name) {
-        Ok(s) => s,
-        Err(e) => return MeshResolution::LoadError(e),
-    };
+    // 5. Check the glTF load cache to avoid re-parsing the same file.
+    if w.resource::<GltfLoadCache>().is_none() {
+        w.insert_resource(GltfLoadCache::default());
+    }
 
-    // Take the first mesh from the scene.
-    let gltf_mesh = match scene.meshes.into_iter().next() {
-        Some(m) => m,
-        None => return MeshResolution::LoadError("GLB file contains no meshes".into()),
+    let cached_entry = w
+        .resource::<GltfLoadCache>()
+        .and_then(|c| c.entries.get(mesh_name).cloned());
+
+    let entry = if let Some(cached) = cached_entry {
+        log::info!("glTF load cache hit for '{mesh_name}'");
+        cached
+    } else {
+        // Load from disk (expensive for large models).
+        let scene = match euca_asset::load_gltf(mesh_name) {
+            Ok(s) => s,
+            Err(e) => return MeshResolution::LoadError(e),
+        };
+
+        let gltf_mesh = match scene.meshes.into_iter().next() {
+            Some(m) => m,
+            None => return MeshResolution::LoadError("GLB file contains no meshes".into()),
+        };
+
+        let ground_offset = gltf_mesh.bounds.map(|b| b.ground_offset());
+        let entry = GltfLoadCacheEntry {
+            mesh: gltf_mesh.mesh,
+            material: Some(gltf_mesh.material),
+            images: scene.images,
+            albedo_tex_index: gltf_mesh.albedo_tex_index,
+            ground_offset,
+        };
+
+        // Cache for future entities referencing the same file.
+        if let Some(cache) = w.resource_mut::<GltfLoadCache>() {
+            cache.entries.insert(mesh_name.to_string(), entry.clone());
+        }
+
+        entry
     };
 
     // 6. Ensure PendingMeshUpload resource exists.
@@ -359,16 +408,15 @@ pub(crate) fn resolve_mesh(
     }
 
     // 7. Push to pending queue for GPU upload in the render loop.
-    let ground_offset = gltf_mesh.bounds.map(|b| b.ground_offset());
     if let Some(pending) = w.resource_mut::<PendingMeshUpload>() {
         pending.queue.push(PendingMeshEntry {
             entity,
             path: mesh_name.to_string(),
-            mesh: gltf_mesh.mesh,
-            material: Some(gltf_mesh.material),
-            images: scene.images,
-            albedo_tex_index: gltf_mesh.albedo_tex_index,
-            ground_offset,
+            mesh: entry.mesh,
+            material: entry.material,
+            images: entry.images,
+            albedo_tex_index: entry.albedo_tex_index,
+            ground_offset: entry.ground_offset,
         });
     }
 

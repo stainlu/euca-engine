@@ -26,6 +26,7 @@ pub struct GroundOffset(pub f32);
 ///
 /// Upload to the GPU via [`Renderer::upload_mesh`] to obtain a [`MeshHandle`]
 /// that can be referenced in [`DrawCommand`](crate::DrawCommand)s.
+#[derive(Clone)]
 pub struct Mesh {
     /// Interleaved vertex data (position, normal, tangent, UV).
     pub vertices: Vec<Vertex>,
