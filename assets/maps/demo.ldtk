@@ -1,0 +1,82 @@
+{
+  "jsonVersion": "1.5.3",
+  "worldGridWidth": 256,
+  "worldGridHeight": 256,
+  "levels": [
+    {
+      "identifier": "Demo_Level",
+      "uid": 0,
+      "worldX": 0,
+      "worldY": 0,
+      "pxWid": 256,
+      "pxHei": 256,
+      "layerInstances": [
+        {
+          "__identifier": "Terrain",
+          "__type": "IntGrid",
+          "__cWid": 16,
+          "__cHei": 16,
+          "__gridSize": 16,
+          "intGridCsv": [
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+            1,1,1,1,2,2,2,2,2,2,2,2,1,1,1,1,
+            1,1,1,2,2,3,3,3,3,3,3,2,2,1,1,1,
+            1,1,2,2,3,3,5,5,5,5,3,3,2,2,1,1,
+            1,1,2,3,3,5,5,5,5,5,5,3,3,2,1,1,
+            1,1,2,3,5,5,4,4,4,4,5,5,3,2,1,1,
+            1,1,2,3,5,5,4,3,3,4,5,5,3,2,1,1,
+            1,1,2,3,5,5,4,3,3,4,5,5,3,2,1,1,
+            1,1,2,3,5,5,4,4,4,4,5,5,3,2,1,1,
+            1,1,2,3,3,5,5,5,5,5,5,3,3,2,1,1,
+            1,1,2,2,3,3,5,5,5,5,3,3,2,2,1,1,
+            1,1,1,2,2,3,3,3,3,3,3,2,2,1,1,1,
+            1,1,1,1,2,2,2,2,2,2,2,2,1,1,1,1,
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+          ],
+          "autoLayerTiles": [],
+          "entityInstances": []
+        },
+        {
+          "__identifier": "Entities",
+          "__type": "Entities",
+          "__cWid": 16,
+          "__cHei": 16,
+          "__gridSize": 16,
+          "intGridCsv": [],
+          "autoLayerTiles": [],
+          "entityInstances": [
+            {
+              "__identifier": "player_spawn",
+              "__grid": [8, 8],
+              "__worldX": 128,
+              "__worldY": 128,
+              "width": 16,
+              "height": 16,
+              "fieldInstances": []
+            },
+            {
+              "__identifier": "treasure",
+              "__grid": [4, 4],
+              "__worldX": 64,
+              "__worldY": 64,
+              "width": 16,
+              "height": 16,
+              "fieldInstances": []
+            },
+            {
+              "__identifier": "enemy_guard",
+              "__grid": [12, 12],
+              "__worldX": 192,
+              "__worldY": 192,
+              "width": 16,
+              "height": 16,
+              "fieldInstances": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
