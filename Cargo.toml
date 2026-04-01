@@ -30,6 +30,7 @@ members = [
     "tools/euca-cli",
     "tools/euca-cook",
     "games/poker",
+    "games/web-demo",
     "services/matchmaking",
     "services/poker-server",
     "services/level-mcp",

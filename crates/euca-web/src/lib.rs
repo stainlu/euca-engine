@@ -74,6 +74,7 @@ pub fn run_web_app<T: WebApp + Default>() {
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
 
+    #[allow(unused_mut)]
     let mut app = WebAppRunner::<T> {
         game: T::default(),
         world: World::new(),
