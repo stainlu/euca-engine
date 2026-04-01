@@ -55,22 +55,8 @@ shader_test!(validate_ssgi, "ssgi.wgsl");
 shader_test!(validate_ssr, "ssr.wgsl");
 shader_test!(validate_ssr_normals, "ssr_normals.wgsl");
 shader_test!(validate_ssr_composite, "ssr_composite.wgsl");
-// dof.wgsl and motion_blur.wgsl have pre-existing naga parse issues
-// (wrong argument count in textureSampleLevel calls). They compile fine
-// via wgpu's shader pipeline but fail naga's strict standalone validator.
-// TODO: fix these shaders to pass strict validation.
-#[test]
-#[ignore]
-fn validate_dof() {
-    let source = include_str!("../shaders/dof.wgsl");
-    validate_wgsl("dof.wgsl", source);
-}
-#[test]
-#[ignore]
-fn validate_motion_blur() {
-    let source = include_str!("../shaders/motion_blur.wgsl");
-    validate_wgsl("motion_blur.wgsl", source);
-}
+shader_test!(validate_dof, "dof.wgsl");
+shader_test!(validate_motion_blur, "motion_blur.wgsl");
 shader_test!(validate_volumetric_fog, "volumetric_fog.wgsl");
 shader_test!(validate_particle_compute, "particle_compute.wgsl");
 shader_test!(validate_particle_render, "particle_render.wgsl");

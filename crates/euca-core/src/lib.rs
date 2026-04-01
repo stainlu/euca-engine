@@ -4,11 +4,13 @@
 //! or [`App::run_windowed`].
 
 mod app;
+pub mod platform;
 mod plugin;
 mod profiler;
 mod time;
 
 pub use app::App;
+pub use platform::performance_core_count;
 pub use plugin::Plugin;
 pub use profiler::{ProfileSection, Profiler, profiler_begin, profiler_end};
 pub use time::Time;

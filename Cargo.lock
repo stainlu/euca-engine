@@ -1701,6 +1701,7 @@ dependencies = [
  "euca-physics",
  "euca-render",
  "euca-rhi",
+ "image",
  "log",
  "serde",
  "serde_json",

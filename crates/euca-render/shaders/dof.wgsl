@@ -97,7 +97,7 @@ fn gather_pass(@builtin(global_invocation_id) gid: vec3u) {
         return;
     }
 
-    let center_coc = textureLoad(coc_tex, pixel, 0).x;
+    let center_coc = textureLoad(coc_tex, pixel).x;
     let center_color = textureLoad(color_tex, pixel, 0);
     let abs_coc = abs(center_coc);
 
@@ -122,7 +122,7 @@ fn gather_pass(@builtin(global_invocation_id) gid: vec3u) {
         let clamped = clamp(sample_pos, vec2i(0), dims - vec2i(1));
 
         let sample_color = textureLoad(color_tex, clamped, 0);
-        let sample_coc = textureLoad(coc_tex, clamped, 0).x;
+        let sample_coc = textureLoad(coc_tex, clamped).x;
 
         // Separate near (negative CoC) and far (positive CoC) fields.
         // Near-field samples bleed outward (use their own CoC as weight).

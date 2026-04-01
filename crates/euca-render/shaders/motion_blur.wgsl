@@ -93,7 +93,7 @@ fn blur(@builtin(global_invocation_id) gid: vec3u) {
 
     // Check tile velocity magnitude — early out if static
     let tile_coord = pixel / vec2i(i32(params.tile_size));
-    let tile_vel = textureLoad(tile_max_tex, tile_coord, 0).xy;
+    let tile_vel = textureLoad(tile_max_tex, tile_coord).xy;
     let tile_mag = length(tile_vel);
 
     let center_color = textureLoad(color_tex, pixel, 0);
