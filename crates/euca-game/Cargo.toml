@@ -6,6 +6,10 @@ description = "Standalone game runner with .eucaproject.json configuration"
 keywords = ["gamedev", "game-engine", "runtime", "game-runner"]
 categories = ["game-development"]
 
+[features]
+default = []
+metal-native = ["euca-render/metal-native"]
+
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }

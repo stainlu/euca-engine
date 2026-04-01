@@ -501,10 +501,10 @@ pub(crate) fn resolve_mesh(
 /// Call this from the render loop where `Renderer` and `GpuContext` are
 /// available. Each uploaded mesh is cached in `MeshCache` so that
 /// subsequent spawns with the same path skip the upload.
-pub fn drain_pending_mesh_uploads(
+pub fn drain_pending_mesh_uploads<D: euca_render::euca_rhi::RenderDevice>(
     w: &mut euca_ecs::World,
-    renderer: &mut euca_render::Renderer,
-    gpu: &euca_render::GpuContext,
+    renderer: &mut euca_render::Renderer<D>,
+    gpu: &euca_render::GpuContext<D>,
 ) {
     // Drain the queue: take all entries, leaving the resource empty.
     let entries: Vec<PendingMeshEntry> = match w.resource_mut::<PendingMeshUpload>() {
@@ -595,10 +595,10 @@ pub fn drain_pending_mesh_uploads(
 ///
 /// Use this for incremental loading (one mesh per frame) to keep the window
 /// responsive during level load.
-pub fn drain_one_pending_mesh_upload(
+pub fn drain_one_pending_mesh_upload<D: euca_render::euca_rhi::RenderDevice>(
     w: &mut euca_ecs::World,
-    renderer: &mut euca_render::Renderer,
-    gpu: &euca_render::GpuContext,
+    renderer: &mut euca_render::Renderer<D>,
+    gpu: &euca_render::GpuContext<D>,
 ) -> bool {
     let entry = match w.resource_mut::<PendingMeshUpload>() {
         Some(pending) if !pending.queue.is_empty() => pending.queue.remove(0),

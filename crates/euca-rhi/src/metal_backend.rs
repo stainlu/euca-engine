@@ -1296,9 +1296,17 @@ impl RenderDevice for MetalDevice {
         MetalTextureView(SendSync(texture))
     }
 
+    fn prepare_present(
+        &self,
+        encoder: &mut MetalCommandEncoder,
+        texture: &MetalSurfaceTexture,
+    ) {
+        encoder.schedule_present(texture);
+    }
+
     fn present(&self, _texture: MetalSurfaceTexture) {
         // Presentation is handled in submit() — the drawable was attached to the
-        // command encoder via schedule_present(). This method is a no-op for Metal.
+        // command encoder via prepare_present(). This method is a no-op for Metal.
         // The drawable is dropped here, releasing it back to the CAMetalLayer pool.
     }
 

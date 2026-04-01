@@ -1782,6 +1782,7 @@ impl<D: RenderDevice> Renderer<D> {
             &view,
             &mut encoder,
         );
+        rhi.prepare_present(&mut encoder, &output);
         rhi.submit(encoder);
         rhi.present(output);
     }

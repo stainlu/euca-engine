@@ -1005,6 +1005,14 @@ impl RenderDevice for WgpuDevice {
             .create_view(&wgpu::TextureViewDescriptor::default())
     }
 
+    fn prepare_present(
+        &self,
+        _encoder: &mut wgpu::CommandEncoder,
+        _texture: &wgpu::SurfaceTexture,
+    ) {
+        // No-op for wgpu — presentation is handled by the separate `present()` call.
+    }
+
     fn present(&self, texture: wgpu::SurfaceTexture) {
         texture.present();
     }

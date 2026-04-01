@@ -130,6 +130,17 @@ pub trait RenderDevice: 'static {
     /// Create a default view of the surface texture for rendering.
     fn surface_texture_view(&self, surface_texture: &Self::SurfaceTexture) -> Self::TextureView;
 
+    /// Prepare a surface texture for presentation before submitting the encoder.
+    ///
+    /// On Metal, this schedules the drawable for presentation when the command
+    /// buffer completes. On wgpu this is a no-op — presentation is handled by
+    /// the separate `present()` call after submit.
+    fn prepare_present(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        texture: &Self::SurfaceTexture,
+    );
+
     fn present(&self, texture: Self::SurfaceTexture);
     fn resize_surface(&mut self, width: u32, height: u32);
     fn surface_format(&self) -> TextureFormat;

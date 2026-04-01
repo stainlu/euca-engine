@@ -22,7 +22,14 @@ use euca_gameplay::{
 use euca_math::{Mat4, Quat, Transform, Vec3};
 use euca_physics::PhysicsConfig;
 use euca_render::*;
+use euca_render::euca_rhi::RenderDevice;
 use euca_scene::{GlobalTransform, LocalTransform};
+
+// Backend type alias: Metal on Apple Silicon when the feature is enabled, wgpu otherwise.
+#[cfg(all(target_os = "macos", feature = "metal-native"))]
+type BackendDevice = euca_render::euca_rhi::metal_backend::MetalDevice;
+#[cfg(not(all(target_os = "macos", feature = "metal-native")))]
+type BackendDevice = euca_render::euca_rhi::wgpu_backend::WgpuDevice;
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -725,7 +732,7 @@ fn apply_hero_template(world: &mut World, entity: Entity, hero_name: &str) {
 
 // ── DefaultAssets setup ─────────────────────────────────────────────────────
 
-fn setup_default_assets(world: &mut World, gpu: &GpuContext, renderer: &mut Renderer) {
+fn setup_default_assets(world: &mut World, gpu: &GpuContext<BackendDevice>, renderer: &mut Renderer<BackendDevice>) {
     let plane = renderer.upload_mesh(gpu, &Mesh::plane(40.0));
     let cube = renderer.upload_mesh(gpu, &Mesh::cube());
     let sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.5, 16, 32));
@@ -870,7 +877,7 @@ fn spawn_terrain_quad(
 /// Build the full MOBA terrain: grass base, diagonal river, three L-shaped
 /// lanes, and two base areas. Each zone is a separate entity with its own
 /// material so colours distinguish the different map regions.
-fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext, renderer: &mut Renderer) {
+fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext<BackendDevice>, renderer: &mut Renderer<BackendDevice>) {
     use euca_terrain::level_data::{LevelData, SurfaceType};
     use euca_terrain::terrain_material::TerrainMaterialSet;
 
@@ -1104,9 +1111,9 @@ fn spawn_tree_lines(world: &mut World, mesh: MeshHandle, material: MaterialHandl
 struct DotaClientApp {
     world: World,
     initialized: bool,
-    gpu: Option<GpuContext>,
-    renderer: Option<Renderer>,
-    ui_overlay: Option<UiOverlayRenderer>,
+    gpu: Option<GpuContext<BackendDevice>>,
+    renderer: Option<Renderer<BackendDevice>>,
+    ui_overlay: Option<UiOverlayRenderer<BackendDevice>>,
     window_attrs: WindowAttributes,
     phase: AppPhase,
     /// Entities that had the `Dead` marker last frame — used to detect respawns.
@@ -1402,18 +1409,12 @@ impl DotaClientApp {
     /// Render the loading screen: dark background with a centered progress bar.
     fn render_loading_screen(&mut self, loaded: usize, total: usize) {
         let gpu = self.gpu.as_ref().unwrap();
-        let output = match gpu.surface.get_current_texture() {
+        let output = match gpu.get_current_texture() {
             Ok(t) => t,
             Err(_) => return,
         };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("loading frame"),
-            });
+        let view = gpu.surface_texture_view(&output);
+        let mut encoder = gpu.create_command_encoder(Some("loading frame"));
 
         // Clear to dark background using the 3D renderer (no draw commands).
         let camera = self.world.resource::<Camera>().unwrap().clone();
@@ -1436,15 +1437,16 @@ impl DotaClientApp {
         );
 
         // Build progress bar UI quads.
-        let vw = gpu.surface_config.width as f32;
-        let vh = gpu.surface_config.height as f32;
+        let (vw, vh) = gpu.surface_size();
+        let (vw, vh) = (vw as f32, vh as f32);
         let quads = build_loading_screen_quads(loaded, total, vw, vh);
         if let Some(ui) = self.ui_overlay.as_mut() {
             ui.render(&*gpu, &mut encoder, &view, &quads, vw, vh);
         }
 
-        gpu.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        gpu.prepare_present(&mut encoder, &output);
+        gpu.submit(encoder);
+        gpu.present(output);
     }
 
     /// Full gameplay frame: run all ECS systems, then render the 3D scene
@@ -1603,18 +1605,12 @@ impl DotaClientApp {
         // ── Render ──────────────────────────────────────────────────────
 
         let gpu = self.gpu.as_ref().unwrap();
-        let output = match gpu.surface.get_current_texture() {
+        let output = match gpu.get_current_texture() {
             Ok(t) => t,
             Err(_) => return,
         };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("dota frame"),
-            });
+        let view = gpu.surface_texture_view(&output);
+        let mut encoder = gpu.create_command_encoder(Some("dota frame"));
 
         let draw_commands = collect_draw_commands(&self.world);
         let light = {
@@ -1661,8 +1657,8 @@ impl DotaClientApp {
         // UI overlay: health bars above entities + HUD
         {
             let vp = camera.view_projection_matrix(gpu.aspect_ratio());
-            let vw = gpu.surface_config.width as f32;
-            let vh = gpu.surface_config.height as f32;
+            let (sw, sh) = gpu.surface_size();
+            let (vw, vh) = (sw as f32, sh as f32);
             let mut ui_quads = build_health_bar_quads(&self.world, &vp, vw, vh);
             ui_quads.extend(build_hud_quads(&self.world, vw, vh));
             ui_quads.extend(build_top_bar_quads(&self.world, vw, vh));
@@ -1674,8 +1670,9 @@ impl DotaClientApp {
             }
         }
 
-        gpu.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        gpu.prepare_present(&mut encoder, &output);
+        gpu.submit(encoder);
+        gpu.present(output);
     }
 }
 
@@ -3965,11 +3962,21 @@ impl ApplicationHandler for DotaClientApp {
             return;
         }
 
-        let (survey, wgpu_instance) = HardwareSurvey::detect();
         let window = event_loop
             .create_window(self.window_attrs.clone())
             .expect("Failed to create window");
-        let gpu = GpuContext::new(window, &survey, &wgpu_instance);
+
+        #[cfg(all(target_os = "macos", feature = "metal-native"))]
+        let gpu = {
+            log::info!("Using native Metal backend on Apple Silicon");
+            GpuContext::new_metal(std::sync::Arc::new(window))
+        };
+        #[cfg(not(all(target_os = "macos", feature = "metal-native")))]
+        let gpu = {
+            let (survey, wgpu_instance) = HardwareSurvey::detect();
+            GpuContext::new(window, &survey, &wgpu_instance)
+        };
+
         let renderer = Renderer::new(&gpu);
         let ui_overlay = UiOverlayRenderer::new(&*gpu, gpu.surface_format());
         self.gpu = Some(gpu);

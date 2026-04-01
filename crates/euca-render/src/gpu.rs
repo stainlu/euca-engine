@@ -19,6 +19,8 @@ pub struct GpuContext<D: RenderDevice = WgpuDevice> {
     pub adapter_info: AdapterInfo,
     /// Rendering backend chosen by the hardware survey.
     pub render_backend: RenderBackend,
+    /// Window reference for request_redraw and size queries.
+    pub window: Arc<Window>,
 }
 
 impl<D: RenderDevice> std::ops::Deref for GpuContext<D> {
@@ -185,12 +187,13 @@ impl GpuContext {
             ..Default::default()
         };
 
-        let rhi = WgpuDevice::new(device, queue, surface, surface_config, window, capabilities);
+        let rhi = WgpuDevice::new(device, queue, surface, surface_config, window.clone(), capabilities);
 
         Self {
             rhi,
             adapter_info,
             render_backend: survey.render_backend,
+            window,
         }
     }
 }
@@ -309,12 +312,13 @@ impl GpuContext {
             ..Default::default()
         };
 
-        let rhi = WgpuDevice::new(device, queue, surface, surface_config, window, capabilities);
+        let rhi = WgpuDevice::new(device, queue, surface, surface_config, window.clone(), capabilities);
 
         Self {
             rhi,
             adapter_info,
             render_backend: survey.render_backend,
+            window,
         }
     }
 }
@@ -329,10 +333,10 @@ impl GpuContext<euca_rhi::metal_backend::MetalDevice> {
     ///
     /// Bypasses wgpu to access Metal 3/4 features: mesh shaders, tile shading,
     /// indirect command buffers, MetalFX upscaling, memoryless render targets.
-    pub fn new_metal(window: &winit::window::Window) -> Self {
+    pub fn new_metal(window: Arc<Window>) -> Self {
         use crate::hardware::GpuVendor;
 
-        let device = euca_rhi::metal_backend::MetalDevice::from_window(window);
+        let device = euca_rhi::metal_backend::MetalDevice::from_window(&window);
         let caps = device.capabilities().clone();
 
         Self {
@@ -349,6 +353,7 @@ impl GpuContext<euca_rhi::metal_backend::MetalDevice> {
             },
             render_backend: RenderBackend::MetalNative,
             rhi: device,
+            window,
         }
     }
 }
