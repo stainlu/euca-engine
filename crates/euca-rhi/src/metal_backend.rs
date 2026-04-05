@@ -59,12 +59,20 @@ pub struct MetalShaderModule {
     library: SendSync<Retained<ProtocolObject<dyn MTLLibrary>>>,
     /// Maps WGSL entry point names to their MSL function names (naga may rename them).
     entry_point_map: std::collections::HashMap<String, String>,
+    /// Maps (group, binding, kind) → Metal index. kind: 0=buffer, 1=texture, 2=sampler.
+    /// Used by set_bind_group to bind resources at the correct Metal slots.
+    binding_map: std::collections::HashMap<(u32, u32, u8), u8>,
 }
 pub struct MetalRenderPipeline {
     state: SendSync<Retained<ProtocolObject<dyn MTLRenderPipelineState>>>,
     primitive_type: MTLPrimitiveType,
+    /// Maps (group, binding, kind) → Metal index for resource binding.
+    binding_map: std::collections::HashMap<(u32, u32, u8), u8>,
 }
-pub struct MetalComputePipeline(SendSync<Retained<ProtocolObject<dyn MTLComputePipelineState>>>);
+pub struct MetalComputePipeline {
+    state: SendSync<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    binding_map: std::collections::HashMap<(u32, u32, u8), u8>,
+}
 pub struct MetalBindGroupLayout {
     // Stored for validation during bind group creation; not read by the GPU.
     #[allow(dead_code)]
@@ -87,12 +95,10 @@ type IndexBufferBinding = (Retained<ProtocolObject<dyn MTLBuffer>>, MTLIndexType
 
 pub struct MetalRenderPass<'a> {
     encoder: Retained<ProtocolObject<dyn MTLRenderCommandEncoder>>,
-    /// Current primitive topology, set when a pipeline is bound.
     primitive_type: MTLPrimitiveType,
-    /// Stored index buffer for `draw_indexed` calls. Metal requires the index
-    /// buffer to be passed directly to the draw call, unlike wgpu which has
-    /// separate `set_index_buffer` / `draw_indexed` steps.
     index_buffer: Option<IndexBufferBinding>,
+    /// Binding map from the current pipeline's shader, used by set_bind_group.
+    binding_map: std::collections::HashMap<(u32, u32, u8), u8>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -166,6 +172,7 @@ impl MetalRenderPass<'_> {
 
 pub struct MetalComputePass<'a> {
     encoder: Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>,
+    binding_map: std::collections::HashMap<(u32, u32, u8), u8>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -473,6 +480,7 @@ impl MetalDevice {
             MetalRenderPipeline {
                 state: SendSync(pipeline),
                 primitive_type: MTLPrimitiveType::Triangle,
+                binding_map: shader.binding_map.clone(),
             }
         }
     }
@@ -492,6 +500,8 @@ struct MslTranspilation {
     source: String,
     /// Maps WGSL entry point name → MSL function name (naga may rename, e.g. "main" → "main_").
     entry_point_map: std::collections::HashMap<String, String>,
+    /// Maps (group, binding, kind) → Metal index for runtime binding.
+    binding_map: std::collections::HashMap<(u32, u32, u8), u8>,
 }
 
 fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
@@ -510,13 +520,73 @@ fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
         panic!("WGSL shader validation failed: {e}");
     });
 
+    // Build per_entry_point_map: tells naga which Metal buffer/texture/sampler
+    // index to use for each WGSL @group(G) @binding(B). Without this, naga
+    // generates [[user(fakeN)]] placeholders and no resources are actually bound.
+    //
+    // Metal has flat, per-type index spaces (buffers: 0-30, textures: 0-127,
+    // samplers: 0-15). We assign sequential Metal indices per resource type,
+    // sorted by (group, binding) to ensure consistency between shader and runtime.
+    struct BindInfo {
+        group: u32,
+        binding: u32,
+        kind: u8, // 0=buffer, 1=texture, 2=sampler
+    }
+    let mut bind_infos = Vec::new();
+    for (_, var) in module.global_variables.iter() {
+        if let Some(ref b) = var.binding {
+            let kind = match var.space {
+                naga::AddressSpace::Uniform | naga::AddressSpace::Storage { .. } => 0,
+                naga::AddressSpace::Handle => {
+                    let ty = &module.types[var.ty];
+                    match ty.inner {
+                        naga::TypeInner::Sampler { .. } => 2,
+                        _ => 1,
+                    }
+                }
+                _ => continue,
+            };
+            bind_infos.push(BindInfo { group: b.group, binding: b.binding, kind });
+        }
+    }
+    bind_infos.sort_by_key(|b| (b.kind, b.group, b.binding));
+
+    let mut resource_map = std::collections::BTreeMap::new();
+    let mut next_idx = [0u8; 3]; // [buffer, texture, sampler]
+    for info in &bind_infos {
+        let rb = naga::ResourceBinding { group: info.group, binding: info.binding };
+        let idx = next_idx[info.kind as usize];
+        next_idx[info.kind as usize] += 1;
+        let bind_target = match info.kind {
+            0 => naga::back::msl::BindTarget { buffer: Some(idx), ..Default::default() },
+            1 => naga::back::msl::BindTarget { texture: Some(idx), ..Default::default() },
+            _ => naga::back::msl::BindTarget {
+                sampler: Some(naga::back::msl::BindSamplerTarget::Resource(idx)),
+                ..Default::default()
+            },
+        };
+        resource_map.insert(rb, bind_target);
+    }
+
+    let mut per_entry_point_map = std::collections::BTreeMap::new();
+    for ep in &module.entry_points {
+        per_entry_point_map.insert(
+            ep.name.clone(),
+            naga::back::msl::EntryPointResources {
+                resources: resource_map.clone(),
+                push_constant_buffer: None,
+                sizes_buffer: None,
+            },
+        );
+    }
+
     // Translate naga IR → MSL
     let options = naga::back::msl::Options {
         lang_version: (3, 0), // Metal 3.0 (Apple Silicon)
-        per_entry_point_map: Default::default(),
+        per_entry_point_map,
         inline_samplers: Default::default(),
         spirv_cross_compatibility: false,
-        fake_missing_bindings: true,
+        fake_missing_bindings: true, // fallback for any unmapped bindings
         bounds_check_policies: Default::default(),
         zero_initialize_workgroup_memory: true,
         force_loop_bounding: false,
@@ -538,9 +608,19 @@ fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
         }
     }
 
+    // Build runtime binding map from the same bind_infos
+    let mut binding_map = std::collections::HashMap::new();
+    let mut rt_idx = [0u8; 3];
+    for info in &bind_infos {
+        let idx = rt_idx[info.kind as usize];
+        rt_idx[info.kind as usize] += 1;
+        binding_map.insert((info.group, info.binding, info.kind), idx);
+    }
+
     MslTranspilation {
         source: msl,
         entry_point_map,
+        binding_map,
     }
 }
 
@@ -873,13 +953,11 @@ impl RenderDevice for MetalDevice {
     }
 
     fn create_shader(&self, desc: &ShaderDesc) -> MetalShaderModule {
-        let (msl_source, entry_point_map) = match &desc.source {
-            ShaderSource::Msl(src) => (src.to_string(), std::collections::HashMap::new()),
+        let (msl_source, entry_point_map, binding_map) = match &desc.source {
+            ShaderSource::Msl(src) => (src.to_string(), std::collections::HashMap::new(), std::collections::HashMap::new()),
             ShaderSource::Wgsl(wgsl) => {
-                // Transpile WGSL → MSL via naga. This unlocks all existing WGSL
-                // shaders for the Metal backend without maintaining separate MSL files.
                 let result = wgsl_to_msl(wgsl);
-                (result.source, result.entry_point_map)
+                (result.source, result.entry_point_map, result.binding_map)
             }
             ShaderSource::SpirV(_) => {
                 panic!("SPIR-V shaders not directly supported by Metal backend — use MSL or WGSL")
@@ -900,6 +978,7 @@ impl RenderDevice for MetalDevice {
         MetalShaderModule {
             library: SendSync(library),
             entry_point_map,
+            binding_map,
         }
     }
 
@@ -1046,9 +1125,18 @@ impl RenderDevice for MetalDevice {
                 .newRenderPipelineStateWithDescriptor_error(&pipeline_desc)
                 .expect("Failed to create Metal render pipeline");
 
+            // Use the fragment shader's binding map (it has all resource bindings).
+            // Fall back to vertex shader's map if no fragment shader.
+            let binding_map = desc
+                .fragment
+                .as_ref()
+                .map(|f| f.module.binding_map.clone())
+                .unwrap_or_else(|| desc.vertex.module.binding_map.clone());
+
             MetalRenderPipeline {
                 state: SendSync(pipeline),
                 primitive_type: to_mtl_primitive_type(desc.primitive.topology),
+                binding_map,
             }
         }
     }
@@ -1077,7 +1165,10 @@ impl RenderDevice for MetalDevice {
             .newComputePipelineStateWithFunction_error(&function)
             .expect("Failed to create Metal compute pipeline");
 
-        MetalComputePipeline(SendSync(pipeline))
+        MetalComputePipeline {
+            state: SendSync(pipeline),
+            binding_map: desc.module.binding_map.clone(),
+        }
     }
 
     fn write_buffer(&self, buffer: &MetalBuffer, offset: u64, data: &[u8]) {
@@ -1230,6 +1321,7 @@ impl RenderDevice for MetalDevice {
                 encoder: render_encoder,
                 primitive_type: MTLPrimitiveType::Triangle,
                 index_buffer: None,
+                binding_map: std::collections::HashMap::new(),
                 _marker: std::marker::PhantomData,
             }
         }
@@ -1246,6 +1338,7 @@ impl RenderDevice for MetalDevice {
             .expect("Failed to create Metal compute encoder");
         MetalComputePass {
             encoder: compute_encoder,
+            binding_map: std::collections::HashMap::new(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -1461,28 +1554,36 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
     fn set_pipeline(&mut self, pipeline: &MetalRenderPipeline) {
         self.encoder.setRenderPipelineState(&pipeline.state);
         self.primitive_type = pipeline.primitive_type;
+        self.binding_map = pipeline.binding_map.clone();
     }
 
-    fn set_bind_group(&mut self, _index: u32, bind_group: &MetalBindGroup, _offsets: &[u32]) {
-        // Metal: bind resources directly to encoder slots
+    fn set_bind_group(&mut self, index: u32, bind_group: &MetalBindGroup, _offsets: &[u32]) {
+        // Look up the Metal slot from the shader's binding map (built during
+        // WGSL→MSL transpilation). Falls back to binding index if not found.
         unsafe {
             for (binding, buf) in &bind_group.buffers {
+                let slot = self.binding_map.get(&(index, *binding, 0))
+                    .copied().unwrap_or(*binding as u8) as usize;
                 self.encoder
-                    .setVertexBuffer_offset_atIndex(Some(&buf.0), 0, *binding as usize);
+                    .setVertexBuffer_offset_atIndex(Some(&buf.0), 0, slot);
                 self.encoder
-                    .setFragmentBuffer_offset_atIndex(Some(&buf.0), 0, *binding as usize);
+                    .setFragmentBuffer_offset_atIndex(Some(&buf.0), 0, slot);
             }
             for (binding, tex) in &bind_group.textures {
+                let slot = self.binding_map.get(&(index, *binding, 1))
+                    .copied().unwrap_or(*binding as u8) as usize;
                 self.encoder
-                    .setVertexTexture_atIndex(Some(&tex.0), *binding as usize);
+                    .setVertexTexture_atIndex(Some(&tex.0), slot);
                 self.encoder
-                    .setFragmentTexture_atIndex(Some(&tex.0), *binding as usize);
+                    .setFragmentTexture_atIndex(Some(&tex.0), slot);
             }
             for (binding, sam) in &bind_group.samplers {
+                let slot = self.binding_map.get(&(index, *binding, 2))
+                    .copied().unwrap_or(*binding as u8) as usize;
                 self.encoder
-                    .setVertexSamplerState_atIndex(Some(&sam.0), *binding as usize);
+                    .setVertexSamplerState_atIndex(Some(&sam.0), slot);
                 self.encoder
-                    .setFragmentSamplerState_atIndex(Some(&sam.0), *binding as usize);
+                    .setFragmentSamplerState_atIndex(Some(&sam.0), slot);
             }
         }
     }
@@ -1648,22 +1749,29 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
 
 impl<'a> ComputePassOps<MetalDevice> for MetalComputePass<'a> {
     fn set_pipeline(&mut self, pipeline: &MetalComputePipeline) {
-        self.encoder.setComputePipelineState(&pipeline.0);
+        self.encoder.setComputePipelineState(&pipeline.state);
+        self.binding_map = pipeline.binding_map.clone();
     }
 
-    fn set_bind_group(&mut self, _index: u32, bind_group: &MetalBindGroup, _offsets: &[u32]) {
+    fn set_bind_group(&mut self, index: u32, bind_group: &MetalBindGroup, _offsets: &[u32]) {
         unsafe {
             for (binding, buf) in &bind_group.buffers {
+                let slot = self.binding_map.get(&(index, *binding, 0))
+                    .copied().unwrap_or(*binding as u8) as usize;
                 self.encoder
-                    .setBuffer_offset_atIndex(Some(&buf.0), 0, *binding as usize);
+                    .setBuffer_offset_atIndex(Some(&buf.0), 0, slot);
             }
             for (binding, tex) in &bind_group.textures {
+                let slot = self.binding_map.get(&(index, *binding, 1))
+                    .copied().unwrap_or(*binding as u8) as usize;
                 self.encoder
-                    .setTexture_atIndex(Some(&tex.0), *binding as usize);
+                    .setTexture_atIndex(Some(&tex.0), slot);
             }
             for (binding, sam) in &bind_group.samplers {
+                let slot = self.binding_map.get(&(index, *binding, 2))
+                    .copied().unwrap_or(*binding as u8) as usize;
                 self.encoder
-                    .setSamplerState_atIndex(Some(&sam.0), *binding as usize);
+                    .setSamplerState_atIndex(Some(&sam.0), slot);
             }
         }
     }
