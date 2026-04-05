@@ -3992,6 +3992,10 @@ impl ApplicationHandler for DotaClientApp {
             self.gpu.as_ref().unwrap(),
             self.renderer.as_mut().unwrap(),
         );
+
+        // Kick off the render loop — Metal backend replaces winit's layer,
+        // so the initial RedrawRequested may not arrive automatically.
+        self.gpu.as_ref().unwrap().window.request_redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {

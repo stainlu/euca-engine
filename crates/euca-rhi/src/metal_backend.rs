@@ -1097,16 +1097,20 @@ impl RenderDevice for MetalDevice {
         size: Extent3d,
     ) {
         let bytes_per_row = layout.bytes_per_row.unwrap_or(0) as usize;
+        let is_3d = dst.texture.0.textureType() == MTLTextureType::Type3D;
         let region = MTLRegion {
             origin: MTLOrigin {
                 x: dst.origin.x as usize,
                 y: dst.origin.y as usize,
-                z: dst.origin.z as usize,
+                // For non-3D textures, z goes to the `slice` parameter, not the region origin.
+                z: if is_3d { dst.origin.z as usize } else { 0 },
             },
             size: MTLSize {
                 width: size.width as usize,
                 height: size.height as usize,
-                depth: size.depth_or_array_layers as usize,
+                // For non-3D textures (2D, 2D array, multisample), depth must be 1.
+                // Array layers are addressed via the `slice` parameter.
+                depth: if is_3d { size.depth_or_array_layers as usize } else { 1 },
             },
         };
         unsafe {
@@ -1120,7 +1124,7 @@ impl RenderDevice for MetalDevice {
                     dst.origin.z as usize,
                     nn,
                     bytes_per_row,
-                    0, // bytesPerImage (0 for 2D textures)
+                    0,
                 );
         }
     }
@@ -1183,9 +1187,48 @@ impl RenderDevice for MetalDevice {
                 .renderCommandEncoderWithDescriptor(&pass_desc)
                 .expect("Failed to create Metal render encoder");
 
+            // Metal does NOT auto-set the viewport (unlike wgpu). Default is 0x0
+            // which clips all geometry. Set it to match the first color attachment.
+            if let Some(Some(a)) = desc.color_attachments.first() {
+                let w = a.view.0.width() as f64;
+                let h = a.view.0.height() as f64;
+                render_encoder.setViewport(MTLViewport {
+                    originX: 0.0,
+                    originY: 0.0,
+                    width: w,
+                    height: h,
+                    znear: 0.0,
+                    zfar: 1.0,
+                });
+                render_encoder.setScissorRect(MTLScissorRect {
+                    x: 0,
+                    y: 0,
+                    width: w as usize,
+                    height: h as usize,
+                });
+            } else if let Some(ref ds) = desc.depth_stencil_attachment {
+                // Depth-only pass (e.g., shadow maps)
+                let w = ds.view.0.width() as f64;
+                let h = ds.view.0.height() as f64;
+                render_encoder.setViewport(MTLViewport {
+                    originX: 0.0,
+                    originY: 0.0,
+                    width: w,
+                    height: h,
+                    znear: 0.0,
+                    zfar: 1.0,
+                });
+                render_encoder.setScissorRect(MTLScissorRect {
+                    x: 0,
+                    y: 0,
+                    width: w as usize,
+                    height: h as usize,
+                });
+            }
+
             MetalRenderPass {
                 encoder: render_encoder,
-                primitive_type: MTLPrimitiveType::Triangle, // default; overwritten by set_pipeline
+                primitive_type: MTLPrimitiveType::Triangle,
                 index_buffer: None,
                 _marker: std::marker::PhantomData,
             }
@@ -1241,27 +1284,29 @@ impl RenderDevice for MetalDevice {
                 .command_buffer
                 .blitCommandEncoder()
                 .expect("Failed to create Metal blit encoder");
+            let src_is_3d = src.texture.0.textureType() == MTLTextureType::Type3D;
+            let dst_is_3d = dst.texture.0.textureType() == MTLTextureType::Type3D;
             blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
                 &(src.texture.0).0,
-                0, // source slice
+                if src_is_3d { 0 } else { src.origin.z as usize },
                 src.mip_level as usize,
                 MTLOrigin {
                     x: src.origin.x as usize,
                     y: src.origin.y as usize,
-                    z: src.origin.z as usize,
+                    z: if src_is_3d { src.origin.z as usize } else { 0 },
                 },
                 MTLSize {
                     width: size.width as usize,
                     height: size.height as usize,
-                    depth: size.depth_or_array_layers as usize,
+                    depth: if src_is_3d { size.depth_or_array_layers as usize } else { 1 },
                 },
                 &(dst.texture.0).0,
-                0, // destination slice
+                if dst_is_3d { 0 } else { dst.origin.z as usize },
                 dst.mip_level as usize,
                 MTLOrigin {
                     x: dst.origin.x as usize,
                     y: dst.origin.y as usize,
-                    z: dst.origin.z as usize,
+                    z: if dst_is_3d { dst.origin.z as usize } else { 0 },
                 },
             );
             blit.endEncoding();
@@ -1332,6 +1377,8 @@ impl RenderDevice for MetalDevice {
             dispatch_semaphore_wait(self.frame_semaphore.0, DISPATCH_TIME_FOREVER);
         }
         let drawable = self.layer.nextDrawable().ok_or(SurfaceError::Timeout)?;
+        let tex = drawable.texture();
+        let _ = tex; // drawable validation passed
         Ok(MetalSurfaceTexture { drawable })
     }
 
