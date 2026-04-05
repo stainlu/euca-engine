@@ -634,7 +634,6 @@ fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
         }
     }
 
-    // Build runtime binding map from the same bind_infos
     let mut binding_map = std::collections::HashMap::new();
     let mut rt_idx = [0u8; 3];
     for info in &bind_infos {
