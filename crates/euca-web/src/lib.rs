@@ -102,6 +102,7 @@ pub fn run_web_app<T: WebApp + Default>() {
 // ---------------------------------------------------------------------------
 
 /// GPU + renderer pair created by the async init task on WASM.
+#[cfg(target_arch = "wasm32")]
 struct GpuState {
     gpu: GpuContext,
     renderer: Renderer,
