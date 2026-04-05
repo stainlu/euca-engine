@@ -55,7 +55,11 @@ pub struct MetalBuffer(SendSync<Retained<ProtocolObject<dyn MTLBuffer>>>);
 pub struct MetalTexture(SendSync<Retained<ProtocolObject<dyn MTLTexture>>>);
 pub struct MetalTextureView(SendSync<Retained<ProtocolObject<dyn MTLTexture>>>);
 pub struct MetalSampler(SendSync<Retained<ProtocolObject<dyn MTLSamplerState>>>);
-pub struct MetalShaderModule(SendSync<Retained<ProtocolObject<dyn MTLLibrary>>>);
+pub struct MetalShaderModule {
+    library: SendSync<Retained<ProtocolObject<dyn MTLLibrary>>>,
+    /// Maps WGSL entry point names to their MSL function names (naga may rename them).
+    entry_point_map: std::collections::HashMap<String, String>,
+}
 pub struct MetalRenderPipeline {
     state: SendSync<Retained<ProtocolObject<dyn MTLRenderPipelineState>>>,
     primitive_type: MTLPrimitiveType,
@@ -400,18 +404,20 @@ impl MetalDevice {
             }
 
             // Mesh function (required)
+            let mesh_msl = shader.entry_point_map.get(mesh_entry).map(|s| s.as_str()).unwrap_or(mesh_entry);
             let mesh_fn = shader
-                .0
-                .newFunctionWithName(&NSString::from_str(mesh_entry))
+                .library
+                .newFunctionWithName(&NSString::from_str(mesh_msl))
                 .unwrap_or_else(|| {
                     panic!("Mesh function '{mesh_entry}' not found in Metal library")
                 });
             desc.setMeshFunction(Some(&mesh_fn));
 
             // Fragment function
+            let frag_msl = shader.entry_point_map.get(fragment_entry).map(|s| s.as_str()).unwrap_or(fragment_entry);
             let frag_fn = shader
-                .0
-                .newFunctionWithName(&NSString::from_str(fragment_entry))
+                .library
+                .newFunctionWithName(&NSString::from_str(frag_msl))
                 .unwrap_or_else(|| {
                     panic!("Fragment function '{fragment_entry}' not found in Metal library")
                 });
@@ -419,9 +425,10 @@ impl MetalDevice {
 
             // Object function (optional — for GPU-driven culling)
             if let Some(obj_entry) = object_entry {
+                let obj_msl = shader.entry_point_map.get(obj_entry).map(|s| s.as_str()).unwrap_or(obj_entry);
                 let obj_fn = shader
-                    .0
-                    .newFunctionWithName(&NSString::from_str(obj_entry))
+                    .library
+                    .newFunctionWithName(&NSString::from_str(obj_msl))
                     .unwrap_or_else(|| {
                         panic!("Object function '{obj_entry}' not found in Metal library")
                     });
@@ -480,7 +487,14 @@ impl MetalDevice {
 /// This enables all existing WGSL shaders to run on the Metal backend without
 /// maintaining separate MSL shader files. Naga translates the abstract shader
 /// IR to valid Metal Shading Language.
-fn wgsl_to_msl(wgsl_source: &str) -> String {
+/// Result of WGSL → MSL transpilation, including entry point name mapping.
+struct MslTranspilation {
+    source: String,
+    /// Maps WGSL entry point name → MSL function name (naga may rename, e.g. "main" → "main_").
+    entry_point_map: std::collections::HashMap<String, String>,
+}
+
+fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
     // Parse WGSL → naga IR
     let module = naga::front::wgsl::parse_str(wgsl_source).unwrap_or_else(|e| {
         panic!("Failed to parse WGSL shader: {e}");
@@ -510,12 +524,24 @@ fn wgsl_to_msl(wgsl_source: &str) -> String {
 
     let pipeline_options = naga::back::msl::PipelineOptions::default();
 
-    let (msl, _) = naga::back::msl::write_string(&module, &info, &options, &pipeline_options)
-        .unwrap_or_else(|e| {
-            panic!("Failed to transpile WGSL → MSL: {e}");
-        });
+    let (msl, translation_info) =
+        naga::back::msl::write_string(&module, &info, &options, &pipeline_options)
+            .unwrap_or_else(|e| {
+                panic!("Failed to transpile WGSL → MSL: {e}");
+            });
 
-    msl
+    // Build entry point name map: WGSL name → MSL name
+    let mut entry_point_map = std::collections::HashMap::new();
+    for (i, ep) in module.entry_points.iter().enumerate() {
+        if let Some(Ok(msl_name)) = translation_info.entry_point_names.get(i) {
+            entry_point_map.insert(ep.name.clone(), msl_name.clone());
+        }
+    }
+
+    MslTranspilation {
+        source: msl,
+        entry_point_map,
+    }
 }
 
 // ===========================================================================
@@ -847,12 +873,13 @@ impl RenderDevice for MetalDevice {
     }
 
     fn create_shader(&self, desc: &ShaderDesc) -> MetalShaderModule {
-        let msl_source = match &desc.source {
-            ShaderSource::Msl(src) => src.to_string(),
+        let (msl_source, entry_point_map) = match &desc.source {
+            ShaderSource::Msl(src) => (src.to_string(), std::collections::HashMap::new()),
             ShaderSource::Wgsl(wgsl) => {
                 // Transpile WGSL → MSL via naga. This unlocks all existing WGSL
                 // shaders for the Metal backend without maintaining separate MSL files.
-                wgsl_to_msl(wgsl)
+                let result = wgsl_to_msl(wgsl);
+                (result.source, result.entry_point_map)
             }
             ShaderSource::SpirV(_) => {
                 panic!("SPIR-V shaders not directly supported by Metal backend — use MSL or WGSL")
@@ -870,7 +897,10 @@ impl RenderDevice for MetalDevice {
                     e
                 )
             });
-        MetalShaderModule(SendSync(library))
+        MetalShaderModule {
+            library: SendSync(library),
+            entry_point_map,
+        }
     }
 
     fn create_bind_group_layout(&self, desc: &BindGroupLayoutDesc) -> MetalBindGroupLayout {
@@ -924,20 +954,22 @@ impl RenderDevice for MetalDevice {
             let pipeline_desc = MTLRenderPipelineDescriptor::new();
 
             // Vertex function
+            let vs_msl = desc.vertex.module.entry_point_map.get(desc.vertex.entry_point).map(|s| s.as_str()).unwrap_or(desc.vertex.entry_point);
             let vertex_fn = desc
                 .vertex
                 .module
-                .0
-                .newFunctionWithName(&NSString::from_str(desc.vertex.entry_point))
+                .library
+                .newFunctionWithName(&NSString::from_str(vs_msl))
                 .expect("Vertex function not found in Metal library");
             pipeline_desc.setVertexFunction(Some(&vertex_fn));
 
             // Fragment function
             if let Some(ref frag) = desc.fragment {
+                let fs_msl = frag.module.entry_point_map.get(frag.entry_point).map(|s| s.as_str()).unwrap_or(frag.entry_point);
                 let fragment_fn = frag
                     .module
-                    .0
-                    .newFunctionWithName(&NSString::from_str(frag.entry_point))
+                    .library
+                    .newFunctionWithName(&NSString::from_str(fs_msl))
                     .expect("Fragment function not found in Metal library");
                 pipeline_desc.setFragmentFunction(Some(&fragment_fn));
 
@@ -1022,11 +1054,23 @@ impl RenderDevice for MetalDevice {
     }
 
     fn create_compute_pipeline(&self, desc: &ComputePipelineDesc<Self>) -> MetalComputePipeline {
+        // Look up the MSL function name — naga may have renamed it (e.g. "main" → "main_")
+        let msl_name = desc
+            .module
+            .entry_point_map
+            .get(desc.entry_point)
+            .map(|s| s.as_str())
+            .unwrap_or(desc.entry_point);
         let function = desc
             .module
-            .0
-            .newFunctionWithName(&NSString::from_str(desc.entry_point))
-            .expect("Compute function not found in Metal library");
+            .library
+            .newFunctionWithName(&NSString::from_str(msl_name))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Compute function '{}' (MSL: '{}') not found in Metal library",
+                    desc.entry_point, msl_name
+                )
+            });
 
         let pipeline = self
             .device
@@ -1893,9 +1937,10 @@ impl MetalDevice {
                 desc.setLabel(Some(&NSString::from_str(lbl)));
             }
 
+            let tile_msl = shader.entry_point_map.get(tile_entry).map(|s| s.as_str()).unwrap_or(tile_entry);
             let tile_fn = shader
-                .0
-                .newFunctionWithName(&NSString::from_str(tile_entry))
+                .library
+                .newFunctionWithName(&NSString::from_str(tile_msl))
                 .unwrap_or_else(|| {
                     panic!("Tile function '{tile_entry}' not found in Metal library")
                 });

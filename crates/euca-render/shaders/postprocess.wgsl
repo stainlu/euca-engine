@@ -1,6 +1,8 @@
 // Post-processing shader: bloom + ACES tonemapping + gamma + vignette.
 // Fullscreen triangle driven by vertex_index.
 
+diagnostic(off, derivative_uniformity);
+
 @group(0) @binding(0) var hdr_tex: texture_2d<f32>;
 @group(0) @binding(1) var hdr_sampler: sampler;
 

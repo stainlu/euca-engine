@@ -120,7 +120,7 @@ impl HardwareSurvey {
             ..Default::default()
         });
 
-        let adapters: Vec<AdapterInfo> = instance
+        let mut adapters: Vec<AdapterInfo> = instance
             .enumerate_adapters(wgpu::Backends::PRIMARY)
             .into_iter()
             .map(|adapter| {
@@ -139,6 +139,23 @@ impl HardwareSurvey {
                 }
             })
             .collect();
+
+        // On WASM, enumerate_adapters returns empty — the adapter is only
+        // available via async request_adapter(). Insert a placeholder so the
+        // survey doesn't panic; GpuContext::new_async will get the real adapter.
+        if adapters.is_empty() {
+            adapters.push(AdapterInfo {
+                name: "WebGPU (deferred)".into(),
+                vendor: GpuVendor::Unknown(0),
+                vendor_id: 0,
+                device_type: wgpu::DeviceType::Other,
+                wgpu_backend: wgpu::Backend::BrowserWebGpu,
+                driver: String::new(),
+                driver_info: String::new(),
+                features: wgpu::Features::empty(),
+                limits: wgpu::Limits::downlevel_webgl2_defaults(),
+            });
+        }
 
         let selected_adapter = Self::select_adapter(&adapters);
         let render_backend = Self::select_backend(&adapters, selected_adapter);

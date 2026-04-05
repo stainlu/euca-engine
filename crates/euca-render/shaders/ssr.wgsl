@@ -7,6 +7,8 @@
 //
 // Output: reflection color blended with a fade at screen edges and distance.
 
+diagnostic(off, derivative_uniformity);
+
 struct SsrUniforms {
     inv_projection: mat4x4<f32>,
     projection: mat4x4<f32>,

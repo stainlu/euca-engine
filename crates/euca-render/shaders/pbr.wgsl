@@ -3,6 +3,10 @@
 // Supports: directional light with cascaded shadow maps, point lights, spot lights,
 //           normal mapping, metallic-roughness workflow, AO, emissive, alpha modes.
 
+// Allow textureSampleCompare in non-uniform control flow (PCSS shadows).
+// Required for WebGPU which enforces strict uniformity analysis.
+diagnostic(off, derivative_uniformity);
+
 // ---------------------------------------------------------------------------
 // Structures
 // ---------------------------------------------------------------------------

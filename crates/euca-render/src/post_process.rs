@@ -1391,7 +1391,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
 }
 
 fn fxaa_shader() -> String {
-    format!("{FULLSCREEN_VS_WGSL}{PP_UNIFORMS_WGSL}
+    format!("diagnostic(off, derivative_uniformity);
+{FULLSCREEN_VS_WGSL}{PP_UNIFORMS_WGSL}
 @group(0) @binding(0) var color_tex: texture_2d<f32>;
 @group(0) @binding(1) var tex_sampler: sampler;
 @group(0) @binding(2) var<uniform> uniforms: PostProcessUniforms;

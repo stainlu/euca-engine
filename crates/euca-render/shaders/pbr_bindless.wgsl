@@ -3,6 +3,8 @@
 // are accessed via storage buffer array + texture binding array, eliminating
 // per-batch bind group switches.
 //
+diagnostic(off, derivative_uniformity);
+
 // Requires: TEXTURE_BINDING_ARRAY + NON_UNIFORM_INDEXING GPU features.
 
 // ---------------------------------------------------------------------------

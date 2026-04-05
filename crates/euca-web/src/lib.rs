@@ -4,7 +4,7 @@
 //! an HTML canvas. The WASM bootstrap handles:
 //!
 //! * Canvas element acquisition from the DOM
-//! * Async GPU initialization (no `pollster::block_on` on WASM)
+//! * Async GPU initialization (via `wasm_bindgen_futures` on WASM)
 //! * winit event loop via `EventLoop::spawn()` on web
 //! * `requestAnimationFrame`-driven render loop
 //!
@@ -81,11 +81,12 @@ pub fn run_web_app<T: WebApp + Default>() {
         gpu: None,
         renderer: None,
         initialized: false,
+        #[cfg(target_arch = "wasm32")]
+        deferred_init: std::rc::Rc::new(std::cell::RefCell::new(None)),
     };
 
     #[cfg(target_arch = "wasm32")]
     {
-        // On WASM, winit uses spawn() instead of run_app().
         use winit::platform::web::EventLoopExtWebSys;
         event_loop.spawn_app(app);
     }
@@ -100,18 +101,28 @@ pub fn run_web_app<T: WebApp + Default>() {
 // Internal runner
 // ---------------------------------------------------------------------------
 
+/// GPU + renderer pair created by the async init task on WASM.
+struct GpuState {
+    gpu: GpuContext,
+    renderer: Renderer,
+}
+
 struct WebAppRunner<T: WebApp> {
     game: T,
     world: World,
     gpu: Option<GpuContext>,
     renderer: Option<Renderer>,
     initialized: bool,
+    /// On WASM, async GPU init writes here; the event loop picks it up on the
+    /// next RedrawRequested.
+    #[cfg(target_arch = "wasm32")]
+    deferred_init: std::rc::Rc<std::cell::RefCell<Option<GpuState>>>,
 }
 
 impl<T: WebApp> ApplicationHandler for WebAppRunner<T> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.gpu.is_some() {
-            return; // Already initialized.
+            return;
         }
 
         let window_attrs = WindowAttributes::default().with_title("Euca Engine");
@@ -120,8 +131,6 @@ impl<T: WebApp> ApplicationHandler for WebAppRunner<T> {
         let window_attrs = {
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
-            // Attach to existing canvas with id="euca-canvas", or let winit
-            // create one and append it to the document body.
             let canvas = web_sys::window()
                 .and_then(|w| w.document())
                 .and_then(|d| d.get_element_by_id("euca-canvas"))
@@ -140,26 +149,36 @@ impl<T: WebApp> ApplicationHandler for WebAppRunner<T> {
 
         let (survey, instance) = HardwareSurvey::detect();
 
-        // On WASM, pollster delegates to the browser's microtask queue.
+        // On WASM, GPU init is async — spawn it and pick up results later.
         #[cfg(target_arch = "wasm32")]
-        let gpu = pollster::block_on(GpuContext::new_async(window, &survey, &instance));
+        {
+            let deferred = std::rc::Rc::clone(&self.deferred_init);
+            wasm_bindgen_futures::spawn_local(async move {
+                let gpu = GpuContext::new_async(window, &survey, &instance).await;
+                let renderer = Renderer::new(&gpu);
+                *deferred.borrow_mut() = Some(GpuState { gpu, renderer });
+                log::info!("GPU initialized asynchronously");
+            });
+        }
 
+        // On native, init synchronously.
         #[cfg(not(target_arch = "wasm32"))]
-        let gpu = GpuContext::new(window, &survey, &instance);
+        {
+            let gpu = GpuContext::new(window, &survey, &instance);
+            let mut renderer = Renderer::new(&gpu);
 
-        let mut renderer = Renderer::new(&gpu);
+            self.world.insert_resource(Time::new());
+            self.world
+                .insert_resource(Camera::new(Vec3::new(0.0, 5.0, -8.0), Vec3::ZERO));
+            self.world.insert_resource(DirectionalLight::default());
+            self.world.insert_resource(AmbientLight::default());
 
-        self.world.insert_resource(Time::new());
-        self.world
-            .insert_resource(Camera::new(Vec3::new(0.0, 5.0, -8.0), Vec3::ZERO));
-        self.world.insert_resource(DirectionalLight::default());
-        self.world.insert_resource(AmbientLight::default());
+            self.game.init(&mut self.world, &mut renderer, &gpu);
 
-        self.game.init(&mut self.world, &mut renderer, &gpu);
-
-        self.gpu = Some(gpu);
-        self.renderer = Some(renderer);
-        self.initialized = true;
+            self.gpu = Some(gpu);
+            self.renderer = Some(renderer);
+            self.initialized = true;
+        }
     }
 
     fn window_event(
@@ -179,6 +198,28 @@ impl<T: WebApp> ApplicationHandler for WebAppRunner<T> {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // On WASM, check if the async GPU init has completed.
+                #[cfg(target_arch = "wasm32")]
+                if !self.initialized {
+                    let ready = self.deferred_init.borrow().is_some();
+                    if ready {
+                        let state = self.deferred_init.borrow_mut().take().unwrap();
+                        self.world.insert_resource(Time::new());
+                        self.world
+                            .insert_resource(Camera::new(Vec3::new(0.0, 5.0, -8.0), Vec3::ZERO));
+                        self.world.insert_resource(DirectionalLight::default());
+                        self.world.insert_resource(AmbientLight::default());
+
+                        let mut renderer = state.renderer;
+                        self.game
+                            .init(&mut self.world, &mut renderer, &state.gpu);
+
+                        self.gpu = Some(state.gpu);
+                        self.renderer = Some(renderer);
+                        self.initialized = true;
+                    }
+                }
+
                 if !self.initialized {
                     return;
                 }
@@ -194,20 +235,16 @@ impl<T: WebApp> ApplicationHandler for WebAppRunner<T> {
 
 impl<T: WebApp> WebAppRunner<T> {
     fn update_and_render(&mut self) {
-        // Update time.
         let dt = {
             let time = self.world.resource_mut::<Time>().unwrap();
             time.update();
             time.delta
         };
 
-        // Let the game update.
         self.game.update(&mut self.world, dt);
 
-        // Propagate transforms.
         euca_scene::transform_propagation_system(&mut self.world);
 
-        // Collect draw commands.
         let draw_commands = {
             let query = euca_ecs::Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(
                 &self.world,
@@ -223,7 +260,6 @@ impl<T: WebApp> WebAppRunner<T> {
                 .collect::<Vec<_>>()
         };
 
-        // Render.
         let gpu = self.gpu.as_ref().unwrap();
         let renderer = self.renderer.as_mut().unwrap();
         let camera = self.world.resource::<Camera>().unwrap().clone();
