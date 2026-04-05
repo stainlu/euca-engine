@@ -152,6 +152,7 @@ impl Stage {
     }
 }
 
+#[allow(dead_code)] // Used for parallel system execution; dead on single-threaded targets (WASM)
 struct SystemJob(*mut dyn System, *mut World);
 unsafe impl Send for SystemJob {}
 
