@@ -51,6 +51,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      - name: Check Metal backend compiles
+        run: cargo check -p euca-game --features metal-native
+
+  check-wasm:
+    name: Check (WASM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target wasm32-unknown-unknown -p euca-web-demo
 
   fmt:
     name: Format
