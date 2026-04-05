@@ -8,9 +8,7 @@
 
 use euca_web::euca_ecs::{Entity, Query, World};
 use euca_web::euca_math::{Quat, Transform, Vec3};
-use euca_web::euca_render::{
-    GpuContext, Material, MaterialRef, Mesh, MeshRenderer, Renderer,
-};
+use euca_web::euca_render::{GpuContext, Material, MaterialRef, Mesh, MeshRenderer, Renderer};
 use euca_web::euca_scene::{GlobalTransform, LocalTransform};
 use euca_web::{WebApp, euca_core::Time, euca_render::Camera};
 
@@ -29,7 +27,10 @@ impl WebApp for SpinningCubes {
         let green = renderer.upload_material(gpu, &Material::green());
         let blue = renderer.upload_material(gpu, &Material::blue_plastic());
 
-        let spawn = |world: &mut World, pos: Vec3, mat: euca_web::euca_render::MaterialHandle, speed: f32| {
+        let spawn = |world: &mut World,
+                     pos: Vec3,
+                     mat: euca_web::euca_render::MaterialHandle,
+                     speed: f32| {
             let e = world.spawn(LocalTransform(Transform::from_translation(pos)));
             world.insert(e, GlobalTransform::default());
             world.insert(e, MeshRenderer { mesh: cube });

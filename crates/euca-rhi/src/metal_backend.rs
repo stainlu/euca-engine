@@ -411,7 +411,11 @@ impl MetalDevice {
             }
 
             // Mesh function (required)
-            let mesh_msl = shader.entry_point_map.get(mesh_entry).map(|s| s.as_str()).unwrap_or(mesh_entry);
+            let mesh_msl = shader
+                .entry_point_map
+                .get(mesh_entry)
+                .map(|s| s.as_str())
+                .unwrap_or(mesh_entry);
             let mesh_fn = shader
                 .library
                 .newFunctionWithName(&NSString::from_str(mesh_msl))
@@ -421,7 +425,11 @@ impl MetalDevice {
             desc.setMeshFunction(Some(&mesh_fn));
 
             // Fragment function
-            let frag_msl = shader.entry_point_map.get(fragment_entry).map(|s| s.as_str()).unwrap_or(fragment_entry);
+            let frag_msl = shader
+                .entry_point_map
+                .get(fragment_entry)
+                .map(|s| s.as_str())
+                .unwrap_or(fragment_entry);
             let frag_fn = shader
                 .library
                 .newFunctionWithName(&NSString::from_str(frag_msl))
@@ -432,7 +440,11 @@ impl MetalDevice {
 
             // Object function (optional — for GPU-driven culling)
             if let Some(obj_entry) = object_entry {
-                let obj_msl = shader.entry_point_map.get(obj_entry).map(|s| s.as_str()).unwrap_or(obj_entry);
+                let obj_msl = shader
+                    .entry_point_map
+                    .get(obj_entry)
+                    .map(|s| s.as_str())
+                    .unwrap_or(obj_entry);
                 let obj_fn = shader
                     .library
                     .newFunctionWithName(&NSString::from_str(obj_msl))
@@ -546,7 +558,11 @@ fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
                 }
                 _ => continue,
             };
-            bind_infos.push(BindInfo { group: b.group, binding: b.binding, kind });
+            bind_infos.push(BindInfo {
+                group: b.group,
+                binding: b.binding,
+                kind,
+            });
         }
     }
     bind_infos.sort_by_key(|b| (b.kind, b.group, b.binding));
@@ -554,12 +570,21 @@ fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
     let mut resource_map = std::collections::BTreeMap::new();
     let mut next_idx = [0u8; 3]; // [buffer, texture, sampler]
     for info in &bind_infos {
-        let rb = naga::ResourceBinding { group: info.group, binding: info.binding };
+        let rb = naga::ResourceBinding {
+            group: info.group,
+            binding: info.binding,
+        };
         let idx = next_idx[info.kind as usize];
         next_idx[info.kind as usize] += 1;
         let bind_target = match info.kind {
-            0 => naga::back::msl::BindTarget { buffer: Some(idx), ..Default::default() },
-            1 => naga::back::msl::BindTarget { texture: Some(idx), ..Default::default() },
+            0 => naga::back::msl::BindTarget {
+                buffer: Some(idx),
+                ..Default::default()
+            },
+            1 => naga::back::msl::BindTarget {
+                texture: Some(idx),
+                ..Default::default()
+            },
             _ => naga::back::msl::BindTarget {
                 sampler: Some(naga::back::msl::BindSamplerTarget::Resource(idx)),
                 ..Default::default()
@@ -595,10 +620,11 @@ fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
     let pipeline_options = naga::back::msl::PipelineOptions::default();
 
     let (msl, translation_info) =
-        naga::back::msl::write_string(&module, &info, &options, &pipeline_options)
-            .unwrap_or_else(|e| {
+        naga::back::msl::write_string(&module, &info, &options, &pipeline_options).unwrap_or_else(
+            |e| {
                 panic!("Failed to transpile WGSL → MSL: {e}");
-            });
+            },
+        );
 
     // Build entry point name map: WGSL name → MSL name
     let mut entry_point_map = std::collections::HashMap::new();
@@ -954,7 +980,11 @@ impl RenderDevice for MetalDevice {
 
     fn create_shader(&self, desc: &ShaderDesc) -> MetalShaderModule {
         let (msl_source, entry_point_map, binding_map) = match &desc.source {
-            ShaderSource::Msl(src) => (src.to_string(), std::collections::HashMap::new(), std::collections::HashMap::new()),
+            ShaderSource::Msl(src) => (
+                src.to_string(),
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            ),
             ShaderSource::Wgsl(wgsl) => {
                 let result = wgsl_to_msl(wgsl);
                 (result.source, result.entry_point_map, result.binding_map)
@@ -1033,7 +1063,13 @@ impl RenderDevice for MetalDevice {
             let pipeline_desc = MTLRenderPipelineDescriptor::new();
 
             // Vertex function
-            let vs_msl = desc.vertex.module.entry_point_map.get(desc.vertex.entry_point).map(|s| s.as_str()).unwrap_or(desc.vertex.entry_point);
+            let vs_msl = desc
+                .vertex
+                .module
+                .entry_point_map
+                .get(desc.vertex.entry_point)
+                .map(|s| s.as_str())
+                .unwrap_or(desc.vertex.entry_point);
             let vertex_fn = desc
                 .vertex
                 .module
@@ -1044,7 +1080,12 @@ impl RenderDevice for MetalDevice {
 
             // Fragment function
             if let Some(ref frag) = desc.fragment {
-                let fs_msl = frag.module.entry_point_map.get(frag.entry_point).map(|s| s.as_str()).unwrap_or(frag.entry_point);
+                let fs_msl = frag
+                    .module
+                    .entry_point_map
+                    .get(frag.entry_point)
+                    .map(|s| s.as_str())
+                    .unwrap_or(frag.entry_point);
                 let fragment_fn = frag
                     .module
                     .library
@@ -1201,7 +1242,11 @@ impl RenderDevice for MetalDevice {
                 height: size.height as usize,
                 // For non-3D textures (2D, 2D array, multisample), depth must be 1.
                 // Array layers are addressed via the `slice` parameter.
-                depth: if is_3d { size.depth_or_array_layers as usize } else { 1 },
+                depth: if is_3d {
+                    size.depth_or_array_layers as usize
+                } else {
+                    1
+                },
             },
         };
         unsafe {
@@ -1480,11 +1525,7 @@ impl RenderDevice for MetalDevice {
         MetalTextureView(SendSync(texture))
     }
 
-    fn prepare_present(
-        &self,
-        encoder: &mut MetalCommandEncoder,
-        texture: &MetalSurfaceTexture,
-    ) {
+    fn prepare_present(&self, encoder: &mut MetalCommandEncoder, texture: &MetalSurfaceTexture) {
         encoder.schedule_present(texture);
     }
 
@@ -1562,24 +1603,31 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
         // WGSL→MSL transpilation). Falls back to binding index if not found.
         unsafe {
             for (binding, buf) in &bind_group.buffers {
-                let slot = self.binding_map.get(&(index, *binding, 0))
-                    .copied().unwrap_or(*binding as u8) as usize;
+                let slot = self
+                    .binding_map
+                    .get(&(index, *binding, 0))
+                    .copied()
+                    .unwrap_or(*binding as u8) as usize;
                 self.encoder
                     .setVertexBuffer_offset_atIndex(Some(&buf.0), 0, slot);
                 self.encoder
                     .setFragmentBuffer_offset_atIndex(Some(&buf.0), 0, slot);
             }
             for (binding, tex) in &bind_group.textures {
-                let slot = self.binding_map.get(&(index, *binding, 1))
-                    .copied().unwrap_or(*binding as u8) as usize;
-                self.encoder
-                    .setVertexTexture_atIndex(Some(&tex.0), slot);
-                self.encoder
-                    .setFragmentTexture_atIndex(Some(&tex.0), slot);
+                let slot = self
+                    .binding_map
+                    .get(&(index, *binding, 1))
+                    .copied()
+                    .unwrap_or(*binding as u8) as usize;
+                self.encoder.setVertexTexture_atIndex(Some(&tex.0), slot);
+                self.encoder.setFragmentTexture_atIndex(Some(&tex.0), slot);
             }
             for (binding, sam) in &bind_group.samplers {
-                let slot = self.binding_map.get(&(index, *binding, 2))
-                    .copied().unwrap_or(*binding as u8) as usize;
+                let slot = self
+                    .binding_map
+                    .get(&(index, *binding, 2))
+                    .copied()
+                    .unwrap_or(*binding as u8) as usize;
                 self.encoder
                     .setVertexSamplerState_atIndex(Some(&sam.0), slot);
                 self.encoder
@@ -1756,22 +1804,28 @@ impl<'a> ComputePassOps<MetalDevice> for MetalComputePass<'a> {
     fn set_bind_group(&mut self, index: u32, bind_group: &MetalBindGroup, _offsets: &[u32]) {
         unsafe {
             for (binding, buf) in &bind_group.buffers {
-                let slot = self.binding_map.get(&(index, *binding, 0))
-                    .copied().unwrap_or(*binding as u8) as usize;
-                self.encoder
-                    .setBuffer_offset_atIndex(Some(&buf.0), 0, slot);
+                let slot = self
+                    .binding_map
+                    .get(&(index, *binding, 0))
+                    .copied()
+                    .unwrap_or(*binding as u8) as usize;
+                self.encoder.setBuffer_offset_atIndex(Some(&buf.0), 0, slot);
             }
             for (binding, tex) in &bind_group.textures {
-                let slot = self.binding_map.get(&(index, *binding, 1))
-                    .copied().unwrap_or(*binding as u8) as usize;
-                self.encoder
-                    .setTexture_atIndex(Some(&tex.0), slot);
+                let slot = self
+                    .binding_map
+                    .get(&(index, *binding, 1))
+                    .copied()
+                    .unwrap_or(*binding as u8) as usize;
+                self.encoder.setTexture_atIndex(Some(&tex.0), slot);
             }
             for (binding, sam) in &bind_group.samplers {
-                let slot = self.binding_map.get(&(index, *binding, 2))
-                    .copied().unwrap_or(*binding as u8) as usize;
-                self.encoder
-                    .setSamplerState_atIndex(Some(&sam.0), slot);
+                let slot = self
+                    .binding_map
+                    .get(&(index, *binding, 2))
+                    .copied()
+                    .unwrap_or(*binding as u8) as usize;
+                self.encoder.setSamplerState_atIndex(Some(&sam.0), slot);
             }
         }
     }
@@ -2092,7 +2146,11 @@ impl MetalDevice {
                 desc.setLabel(Some(&NSString::from_str(lbl)));
             }
 
-            let tile_msl = shader.entry_point_map.get(tile_entry).map(|s| s.as_str()).unwrap_or(tile_entry);
+            let tile_msl = shader
+                .entry_point_map
+                .get(tile_entry)
+                .map(|s| s.as_str())
+                .unwrap_or(tile_entry);
             let tile_fn = shader
                 .library
                 .newFunctionWithName(&NSString::from_str(tile_msl))

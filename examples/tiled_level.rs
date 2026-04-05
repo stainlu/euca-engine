@@ -74,7 +74,11 @@ impl TiledLevelApp {
         let center_z = level.height as f32 * level.cell_size * 0.5;
         let cam_dist = (level.width.max(level.height) as f32) * level.cell_size * 0.8;
         world.insert_resource(Camera::new(
-            Vec3::new(center_x + cam_dist * 0.5, cam_dist * 0.7, center_z + cam_dist * 0.5),
+            Vec3::new(
+                center_x + cam_dist * 0.5,
+                cam_dist * 0.7,
+                center_z + cam_dist * 0.5,
+            ),
             Vec3::new(center_x, 0.0, center_z),
         ));
 
@@ -142,10 +146,7 @@ impl TiledLevelApp {
             self.world.insert(e, MaterialRef { handle: marker_mat });
         }
 
-        log::info!(
-            "Placed {} entity markers",
-            self.level.entities.len()
-        );
+        log::info!("Placed {} entity markers", self.level.entities.len());
 
         // Directional light
         let dir = Vec3::new(-0.5, -1.0, -0.3).normalize();
@@ -176,8 +177,7 @@ impl TiledLevelApp {
         euca_scene::transform_propagation_system(&mut self.world);
 
         let draw_commands: Vec<DrawCommand> = {
-            let query =
-                Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
+            let query = Query::<(&GlobalTransform, &MeshRenderer, &MaterialRef)>::new(&self.world);
             query
                 .iter()
                 .map(|(gt, mr, mat)| DrawCommand {
@@ -210,9 +210,7 @@ impl ApplicationHandler for TiledLevelApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu.is_none() {
             let (survey, wgpu_instance) = HardwareSurvey::detect();
-            let window = event_loop
-                .create_window(self.window_attrs.clone())
-                .unwrap();
+            let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
             let gpu = GpuContext::new(window, &survey, &wgpu_instance);
             let renderer = Renderer::new(&gpu);
             self.gpu = Some(gpu);
@@ -254,7 +252,9 @@ impl ApplicationHandler for TiledLevelApp {
 
 fn main() {
     env_logger::init();
-    let map_path = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_MAP.to_string());
+    let map_path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| DEFAULT_MAP.to_string());
     let event_loop = EventLoop::new().unwrap();
     let mut app = TiledLevelApp::new(&map_path);
     event_loop.run_app(&mut app).unwrap();

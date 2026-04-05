@@ -211,8 +211,7 @@ impl<T: WebApp> ApplicationHandler for WebAppRunner<T> {
                         self.world.insert_resource(AmbientLight::default());
 
                         let mut renderer = state.renderer;
-                        self.game
-                            .init(&mut self.world, &mut renderer, &state.gpu);
+                        self.game.init(&mut self.world, &mut renderer, &state.gpu);
 
                         self.gpu = Some(state.gpu);
                         self.renderer = Some(renderer);

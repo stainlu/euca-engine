@@ -21,8 +21,8 @@ use euca_gameplay::{
 };
 use euca_math::{Mat4, Quat, Transform, Vec3};
 use euca_physics::PhysicsConfig;
-use euca_render::*;
 use euca_render::euca_rhi::RenderDevice;
+use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
 
 // Backend type alias: Metal on Apple Silicon when the feature is enabled, wgpu otherwise.
@@ -732,7 +732,11 @@ fn apply_hero_template(world: &mut World, entity: Entity, hero_name: &str) {
 
 // ── DefaultAssets setup ─────────────────────────────────────────────────────
 
-fn setup_default_assets(world: &mut World, gpu: &GpuContext<BackendDevice>, renderer: &mut Renderer<BackendDevice>) {
+fn setup_default_assets(
+    world: &mut World,
+    gpu: &GpuContext<BackendDevice>,
+    renderer: &mut Renderer<BackendDevice>,
+) {
     let plane = renderer.upload_mesh(gpu, &Mesh::plane(40.0));
     let cube = renderer.upload_mesh(gpu, &Mesh::cube());
     let sphere = renderer.upload_mesh(gpu, &Mesh::sphere(0.5, 16, 32));
@@ -877,7 +881,11 @@ fn spawn_terrain_quad(
 /// Build the full MOBA terrain: grass base, diagonal river, three L-shaped
 /// lanes, and two base areas. Each zone is a separate entity with its own
 /// material so colours distinguish the different map regions.
-fn spawn_moba_terrain(world: &mut World, gpu: &GpuContext<BackendDevice>, renderer: &mut Renderer<BackendDevice>) {
+fn spawn_moba_terrain(
+    world: &mut World,
+    gpu: &GpuContext<BackendDevice>,
+    renderer: &mut Renderer<BackendDevice>,
+) {
     use euca_terrain::level_data::{LevelData, SurfaceType};
     use euca_terrain::terrain_material::TerrainMaterialSet;
 

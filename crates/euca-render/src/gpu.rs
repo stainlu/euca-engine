@@ -187,7 +187,14 @@ impl GpuContext {
             ..Default::default()
         };
 
-        let rhi = WgpuDevice::new(device, queue, surface, surface_config, window.clone(), capabilities);
+        let rhi = WgpuDevice::new(
+            device,
+            queue,
+            surface,
+            surface_config,
+            window.clone(),
+            capabilities,
+        );
 
         Self {
             rhi,
@@ -312,7 +319,14 @@ impl GpuContext {
             ..Default::default()
         };
 
-        let rhi = WgpuDevice::new(device, queue, surface, surface_config, window.clone(), capabilities);
+        let rhi = WgpuDevice::new(
+            device,
+            queue,
+            surface,
+            surface_config,
+            window.clone(),
+            capabilities,
+        );
 
         Self {
             rhi,
