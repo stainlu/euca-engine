@@ -50,6 +50,7 @@ struct SceneUniforms {
     probe_enabled: vec4<f32>,
     shadow_params: vec4<f32>,
     ibl_params: vec4<f32>,
+    elapsed_time: vec4<f32>,
 }
 
 struct MaterialUniforms {

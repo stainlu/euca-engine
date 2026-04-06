@@ -146,6 +146,7 @@ let draw_commands: Vec<DrawCommand> = {
         material: mat.handle,
         model_matrix: gt.0.to_matrix(),
         aabb: None,
+        is_water: false,
     }).collect()
 };
 renderer.draw(gpu, &camera, &light, &ambient, &draw_commands);

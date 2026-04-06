@@ -182,6 +182,7 @@ impl PhysicsDemoApp {
                     material: mat.handle,
                     model_matrix: gt.0.to_matrix(),
                     aabb: None,
+                    is_water: false,
                 })
                 .collect()
         };

@@ -964,6 +964,7 @@ fn spawn_moba_terrain(
     let terrain_offset = Vec3::new(-half, 0.0, -half);
 
     for chunk in chunks {
+        let is_water = chunk.surface == SurfaceType::Water;
         let mesh_handle = renderer.upload_mesh(gpu, &chunk.mesh);
         let mat = mat_handles
             .get(&chunk.surface)
@@ -977,6 +978,9 @@ fn spawn_moba_terrain(
         world.insert(entity, GlobalTransform::default());
         world.insert(entity, MeshRenderer { mesh: mesh_handle });
         world.insert(entity, MaterialRef { handle: mat });
+        if is_water {
+            world.insert(entity, WaterChunk);
+        }
     }
 
     // ── 6. Physics collider for click-to-move raycasting ─────────────────
@@ -2504,11 +2508,13 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
             model_matrix = from_origin * scale_mat * to_origin * model_matrix;
         }
 
+        let is_water = world.get::<WaterChunk>(e).is_some();
         commands.push(DrawCommand {
             mesh: mr.mesh,
             material: mat.handle,
             model_matrix,
             aabb: None,
+            is_water,
         });
     }
 

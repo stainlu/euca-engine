@@ -49,6 +49,7 @@ struct SceneUniforms {
     float4   probe_enabled;
     float4   shadow_params;
     float4   ibl_params;
+    float4   elapsed_time;
 };
 
 struct MaterialUniforms {
