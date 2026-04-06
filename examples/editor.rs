@@ -8,7 +8,7 @@ use euca_ecs::Events;
 use euca_ecs::{Query, Schedule, SharedWorld, World};
 use euca_editor::{
     EditorState, SceneEntity, SceneFile, SpawnRequest, ToolbarAction, content_browser_panel,
-    find_alive_entity, hierarchy_panel, inspector_panel, toolbar_panel,
+    find_alive_entity, hierarchy_panel, inspector_panel, terrain_panel, toolbar_panel,
 };
 use euca_math::{Transform, Vec3};
 use euca_physics::{
@@ -124,10 +124,7 @@ fn setup_moba_action_map() -> euca_input::ActionMap {
 
 /// Helper: read delta time from the `Time` resource in the world.
 fn world_dt(world: &World) -> f32 {
-    world
-        .resource::<Time>()
-        .map(|t| t.delta as f32)
-        .unwrap_or(0.016)
+    world.resource::<Time>().map(|t| t.delta).unwrap_or(0.016)
 }
 
 /// Build the parallel gameplay schedule.
@@ -491,10 +488,10 @@ fn append_selection_outline(
                 world.get::<MeshRenderer>(entity),
             ) {
                 // Skip outline for ground plane — flat geometry causes z-fighting.
-                if let Some(pm) = plane_mesh {
-                    if mr.mesh == pm {
-                        break;
-                    }
+                if let Some(pm) = plane_mesh
+                    && mr.mesh == pm
+                {
+                    break;
                 }
                 let max_scale = gt.0.scale.x.max(gt.0.scale.y).max(gt.0.scale.z);
                 if max_scale < 5.0 {
@@ -989,15 +986,15 @@ impl EditorApp {
             let changed_files = self.file_watcher.poll().to_vec();
             for path in &changed_files {
                 // Check if the changed file is the currently loaded level
-                if let Some(level_idx) = self.selected_level {
-                    if let Some(level_path) = self.available_levels.get(level_idx) {
-                        let level_canonical = std::path::Path::new(level_path).canonicalize().ok();
-                        let changed_canonical = path.canonicalize().ok();
-                        if level_canonical.is_some() && level_canonical == changed_canonical {
-                            log::info!("Level file changed externally, reloading...");
-                            self.load_selected_level();
-                            break;
-                        }
+                if let Some(level_idx) = self.selected_level
+                    && let Some(level_path) = self.available_levels.get(level_idx)
+                {
+                    let level_canonical = std::path::Path::new(level_path).canonicalize().ok();
+                    let changed_canonical = path.canonicalize().ok();
+                    if level_canonical.is_some() && level_canonical == changed_canonical {
+                        log::info!("Level file changed externally, reloading...");
+                        self.load_selected_level();
+                        break;
                     }
                 }
 
@@ -1056,12 +1053,11 @@ impl EditorApp {
                 let q = Query::<(euca_ecs::Entity, &euca_gameplay::player::PlayerHero)>::new(world);
                 q.iter().map(|(e, _)| e).next()
             };
-            if let Some(hero) = hero {
-                if let Some(cam) = world.resource_mut::<euca_gameplay::camera::MobaCamera>() {
-                    if cam.follow_entity.is_none() {
-                        cam.follow_entity = Some(hero);
-                    }
-                }
+            if let Some(hero) = hero
+                && let Some(cam) = world.resource_mut::<euca_gameplay::camera::MobaCamera>()
+                && cam.follow_entity.is_none()
+            {
+                cam.follow_entity = Some(hero);
             }
             // Auto-initialize navmesh from world geometry if none exists
             if world.resource::<euca_nav::NavMesh>().is_none() {
@@ -1303,6 +1299,7 @@ impl EditorApp {
                     let elapsed = world.resource::<Time>().map(|t| t.elapsed).unwrap_or(0.0);
                     self.editor_state.mark_dirty(elapsed);
                 }
+                terrain_panel(ctx, &mut self.editor_state);
             }
             draw_health_bars(ctx, world, aspect);
             draw_hud_overlay(ctx, world);
@@ -1661,11 +1658,11 @@ impl ApplicationHandler for EditorApp {
                 if let Some(idx) = self.editor_state.primary_selected() {
                     let pool = self.shared.lock_read();
                     let world = pool.world();
-                    if let Some(e) = find_alive_entity(world, idx) {
-                        if let Some(gt) = world.get::<GlobalTransform>(e) {
-                            self.cam_target = gt.0.translation;
-                            self.cam_distance = 5.0;
-                        }
+                    if let Some(e) = find_alive_entity(world, idx)
+                        && let Some(gt) = world.get::<GlobalTransform>(e)
+                    {
+                        self.cam_target = gt.0.translation;
+                        self.cam_distance = 5.0;
                     }
                 }
             }
@@ -1796,21 +1793,20 @@ impl ApplicationHandler for EditorApp {
                         let e = world.spawn(LocalTransform(transform));
                         world.insert(e, GlobalTransform::default());
                         // Resolve mesh handle from the stored mesh string
-                        if se.mesh != "none" {
-                            if let Some(assets) = world
+                        if se.mesh != "none"
+                            && let Some(assets) = world
                                 .resource::<euca_agent::routes::DefaultAssets>()
                                 .cloned()
-                            {
-                                // Try by name first, then by raw handle
-                                let mesh_handle = assets.mesh(&se.mesh).or_else(|| {
-                                    se.mesh
-                                        .strip_prefix("mesh_")
-                                        .and_then(|n| n.parse::<u32>().ok())
-                                        .map(MeshHandle)
-                                });
-                                if let Some(mh) = mesh_handle {
-                                    world.insert(e, MeshRenderer { mesh: mh });
-                                }
+                        {
+                            // Try by name first, then by raw handle
+                            let mesh_handle = assets.mesh(&se.mesh).or_else(|| {
+                                se.mesh
+                                    .strip_prefix("mesh_")
+                                    .and_then(|n| n.parse::<u32>().ok())
+                                    .map(MeshHandle)
+                            });
+                            if let Some(mh) = mesh_handle {
+                                world.insert(e, MeshRenderer { mesh: mh });
                             }
                         }
                         if se.material > 0 {
@@ -2006,10 +2002,11 @@ impl EditorApp {
                 .collect()
         };
         for (entity, pos, collider) in &candidates {
-            if let Some(hit) = raycast_collider(&ray, *pos, collider) {
-                if hit.t >= 0.0 && (closest.is_none() || hit.t < closest.unwrap().1) {
-                    closest = Some((*entity, hit.t));
-                }
+            if let Some(hit) = raycast_collider(&ray, *pos, collider)
+                && hit.t >= 0.0
+                && (closest.is_none() || hit.t < closest.unwrap().1)
+            {
+                closest = Some((*entity, hit.t));
             }
         }
         if let Some((entity, _)) = closest {
@@ -2173,10 +2170,10 @@ impl EditorApp {
                     .copied()
                     .collect();
                 for idx in other_indices {
-                    if let Some(other) = find_alive_entity(world, idx) {
-                        if let Some(lt) = world.get_mut::<LocalTransform>(other) {
-                            lt.0.translation = lt.0.translation + delta;
-                        }
+                    if let Some(other) = find_alive_entity(world, idx)
+                        && let Some(lt) = world.get_mut::<LocalTransform>(other)
+                    {
+                        lt.0.translation = lt.0.translation + delta;
                     }
                 }
             }
