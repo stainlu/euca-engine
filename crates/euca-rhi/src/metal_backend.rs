@@ -18,6 +18,12 @@ unsafe extern "C" {
 }
 const DISPATCH_TIME_FOREVER: u64 = !0;
 const MAX_FRAMES_IN_FLIGHT: usize = 3;
+
+/// Metal buffer index where vertex buffers start.
+/// Argument buffers (uniforms, storage) use indices 0..VERTEX_BUFFER_INDEX_BASE-1.
+/// Vertex buffers use indices VERTEX_BUFFER_INDEX_BASE..30.
+/// This avoids collisions since Metal shares [[buffer(N)]] for both.
+const VERTEX_BUFFER_INDEX_BASE: usize = 24;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::*;
@@ -565,7 +571,8 @@ fn wgsl_to_msl(wgsl_source: &str) -> MslTranspilation {
             });
         }
     }
-    bind_infos.sort_by_key(|b| (b.kind, b.group, b.binding));
+    // DO NOT sort — naga assigns Metal indices in declaration order (handle order),
+    // not by (group, binding). Our ordering must match naga's exactly.
 
     let mut resource_map = std::collections::BTreeMap::new();
     let mut next_idx = [0u8; 3]; // [buffer, texture, sampler]
@@ -685,11 +692,14 @@ fn to_mtl_storage_mode_for_usage(usage: TextureUsages, memoryless: bool) -> MTLS
         && !usage.contains(TextureUsages::COPY_SRC);
 
     if is_render_only && memoryless {
-        // Memoryless: texture lives only in tile memory and is never written to
-        // system RAM. Saves ~20% memory bandwidth for transient G-buffer
-        // attachments (depth, normals, etc.) that are produced and consumed
-        // within a single render pass.
-        MTLStorageMode::Memoryless
+        // Memoryless textures live only in tile memory. They CANNOT be stored
+        // or resolved — only usable as transient attachments within a single
+        // tile-based render pass. Currently disabled because the renderer's
+        // MSAA resolve (MultisampleResolve store action) needs to write the
+        // resolved result to system memory.
+        // TODO: re-enable for true transient attachments (depth-only passes)
+        // that don't use store/resolve.
+        MTLStorageMode::Private
     } else if usage.contains(TextureUsages::RENDER_ATTACHMENT) {
         MTLStorageMode::Private
     } else {
@@ -1004,6 +1014,7 @@ impl RenderDevice for MetalDevice {
                     e
                 )
             });
+
         MetalShaderModule {
             library: SendSync(library),
             entry_point_map,
@@ -1120,28 +1131,30 @@ impl RenderDevice for MetalDevice {
                 }
             }
 
-            // Vertex descriptor — enables hardware vertex fetch + post-transform cache
+            // Vertex descriptor — enables hardware vertex fetch + post-transform cache.
+            // Metal shares [[buffer(N)]] between vertex data and argument buffers.
+            // Vertex buffers go to high indices (24+) to avoid colliding with
+            // shader argument buffers at indices 0-23.
             if !desc.vertex.buffers.is_empty() {
                 let vertex_desc = MTLVertexDescriptor::new();
                 let attrs = vertex_desc.attributes();
                 let layouts = vertex_desc.layouts();
 
                 for (buf_idx, buf_layout) in desc.vertex.buffers.iter().enumerate() {
-                    // Set buffer layout
-                    let layout = layouts.objectAtIndexedSubscript(buf_idx);
+                    let metal_buf_idx = VERTEX_BUFFER_INDEX_BASE + buf_idx;
+                    let layout = layouts.objectAtIndexedSubscript(metal_buf_idx);
                     layout.setStride(buf_layout.array_stride as usize);
                     layout.setStepFunction(match buf_layout.step_mode {
                         VertexStepMode::Vertex => MTLVertexStepFunction::PerVertex,
                         VertexStepMode::Instance => MTLVertexStepFunction::PerInstance,
                     });
 
-                    // Set attributes
                     for attr in buf_layout.attributes {
                         let mtl_attr =
                             attrs.objectAtIndexedSubscript(attr.shader_location as usize);
                         mtl_attr.setFormat(to_mtl_vertex_format(attr.format));
                         mtl_attr.setOffset(attr.offset as usize);
-                        mtl_attr.setBufferIndex(buf_idx);
+                        mtl_attr.setBufferIndex(metal_buf_idx);
                     }
                 }
 
@@ -1598,8 +1611,6 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
     }
 
     fn set_bind_group(&mut self, index: u32, bind_group: &MetalBindGroup, _offsets: &[u32]) {
-        // Look up the Metal slot from the shader's binding map (built during
-        // WGSL→MSL transpilation). Falls back to binding index if not found.
         unsafe {
             for (binding, buf) in &bind_group.buffers {
                 let slot = self
@@ -1640,7 +1651,7 @@ impl<'a> RenderPassOps<MetalDevice> for MetalRenderPass<'a> {
             self.encoder.setVertexBuffer_offset_atIndex(
                 Some(&buffer.0),
                 offset as usize,
-                slot as usize,
+                VERTEX_BUFFER_INDEX_BASE + slot as usize,
             );
         }
     }

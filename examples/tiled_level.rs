@@ -12,8 +12,14 @@ use std::path::Path;
 use euca_core::Time;
 use euca_ecs::{Query, World};
 use euca_math::{Quat, Vec3};
+use euca_render::euca_rhi::RenderDevice;
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
+
+#[cfg(all(target_os = "macos", feature = "metal-native"))]
+type Dev = euca_render::euca_rhi::metal_backend::MetalDevice;
+#[cfg(not(all(target_os = "macos", feature = "metal-native")))]
+type Dev = euca_render::euca_rhi::wgpu_backend::WgpuDevice;
 use euca_terrain::level_data::LevelData;
 use euca_terrain::level_render::{generate_mesh_from_level, surface_color};
 
@@ -46,8 +52,8 @@ fn load_level_from_path(path: &str) -> LevelData {
 struct TiledLevelApp {
     world: World,
     level: LevelData,
-    gpu: Option<GpuContext>,
-    renderer: Option<Renderer>,
+    gpu: Option<GpuContext<Dev>>,
+    renderer: Option<Renderer<Dev>>,
     window_attrs: WindowAttributes,
 }
 
@@ -209,13 +215,21 @@ impl TiledLevelApp {
 impl ApplicationHandler for TiledLevelApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu.is_none() {
-            let (survey, wgpu_instance) = HardwareSurvey::detect();
             let window = event_loop.create_window(self.window_attrs.clone()).unwrap();
-            let gpu = GpuContext::new(window, &survey, &wgpu_instance);
+
+            #[cfg(all(target_os = "macos", feature = "metal-native"))]
+            let gpu = GpuContext::new_metal(std::sync::Arc::new(window));
+            #[cfg(not(all(target_os = "macos", feature = "metal-native")))]
+            let gpu = {
+                let (survey, wgpu_instance) = HardwareSurvey::detect();
+                GpuContext::new(window, &survey, &wgpu_instance)
+            };
+
             let renderer = Renderer::new(&gpu);
             self.gpu = Some(gpu);
             self.renderer = Some(renderer);
             self.setup_scene();
+            self.gpu.as_ref().unwrap().window.request_redraw();
         }
     }
 
