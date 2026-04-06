@@ -370,4 +370,12 @@ impl GpuContext<euca_rhi::metal_backend::MetalDevice> {
             window,
         }
     }
+
+    /// Whether the device supports MetalFX temporal upscaling.
+    ///
+    /// Returns `true` on Apple Silicon (Metal 3+). This is a prerequisite for
+    /// calling [`Renderer::setup_metalfx_upscaling`].
+    pub fn supports_metalfx(&self) -> bool {
+        self.rhi.capabilities().apple_silicon
+    }
 }
