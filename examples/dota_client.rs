@@ -1142,9 +1142,13 @@ impl DotaClientApp {
             width: WINDOW_WIDTH as f32,
             height: WINDOW_HEIGHT as f32,
         });
-        // Use Medium quality but disable SSAO (causes diamond artifacts on flat terrain)
-        let mut pps = euca_render::RenderQuality::Medium.to_settings();
+        // Use High quality with SSR and DoF enabled, but disable SSAO
+        // (causes diamond artifacts on flat terrain).
+        let mut pps = euca_render::RenderQuality::High.to_settings();
         pps.ssao_enabled = false;
+        pps.ssr_enabled = true;
+        // Focal distance matches the MOBA camera height (~40 world units).
+        pps.dof.focus_distance = 40.0;
         world.insert_resource(pps);
 
         // Register items and heroes
@@ -3986,6 +3990,19 @@ impl ApplicationHandler for DotaClientApp {
             self.gpu.as_ref().unwrap(),
             self.renderer.as_mut().unwrap(),
         );
+
+        // Enable volumetric fog for atmospheric MOBA visuals (subtle density
+        // so it reads as atmosphere rather than obstructing gameplay).
+        {
+            let gpu = self.gpu.as_ref().unwrap();
+            let renderer = self.renderer.as_mut().unwrap();
+            renderer.enable_volumetric_fog(gpu);
+            renderer.set_fog_settings(euca_render::VolumetricFogSettings {
+                density: 0.01,
+                scattering: 0.3,
+                ..Default::default()
+            });
+        }
 
         // Kick off the render loop — Metal backend replaces winit's layer,
         // so the initial RedrawRequested may not arrive automatically.
