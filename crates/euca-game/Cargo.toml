@@ -61,6 +61,10 @@ path = "../../examples/tiled_level.rs"
 name = "gpu_benchmark"
 path = "../../examples/gpu_benchmark.rs"
 
+[[example]]
+name = "particle_demo"
+path = "../../examples/particle_demo.rs"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
