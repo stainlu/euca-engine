@@ -12,7 +12,6 @@ use std::path::Path;
 use euca_core::Time;
 use euca_ecs::{Query, World};
 use euca_math::{Quat, Vec3};
-use euca_render::euca_rhi::RenderDevice;
 use euca_render::*;
 use euca_scene::{GlobalTransform, LocalTransform};
 

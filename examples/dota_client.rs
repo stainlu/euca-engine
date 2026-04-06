@@ -864,20 +864,6 @@ fn setup_default_assets(
 
 // ── MOBA terrain generation ────────────────────────────────────────────────
 
-/// Spawn a single flat terrain quad entity with the given transform and material.
-fn spawn_terrain_quad(
-    world: &mut World,
-    mesh: MeshHandle,
-    material: MaterialHandle,
-    transform: Transform,
-) -> Entity {
-    let e = world.spawn(LocalTransform(transform));
-    world.insert(e, GlobalTransform::default());
-    world.insert(e, MeshRenderer { mesh });
-    world.insert(e, MaterialRef { handle: material });
-    e
-}
-
 /// Build the full MOBA terrain: grass base, diagonal river, three L-shaped
 /// lanes, and two base areas. Each zone is a separate entity with its own
 /// material so colours distinguish the different map regions.
