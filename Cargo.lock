@@ -1416,6 +1416,8 @@ dependencies = [
  "criterion",
  "env_logger",
  "euca-agent",
+ "euca-ai",
+ "euca-animation",
  "euca-asset",
  "euca-audio",
  "euca-core",
@@ -1445,6 +1447,7 @@ name = "euca-gameplay"
 version = "1.1.0"
 dependencies = [
  "bincode",
+ "euca-ai",
  "euca-core",
  "euca-ecs",
  "euca-input",

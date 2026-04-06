@@ -14,6 +14,7 @@ euca-math = { path = "../euca-math" }
 euca-physics = { path = "../euca-physics" }
 euca-render = { path = "../euca-render" }
 euca-scene = { path = "../euca-scene" }
+euca-ai = { path = "../euca-ai" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1"

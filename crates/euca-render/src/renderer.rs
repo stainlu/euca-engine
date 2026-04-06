@@ -372,6 +372,10 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     prev_depth_dims: (u32, u32),
     /// TAA resolve pass (temporal anti-aliasing).
     taa_pass: crate::taa::TaaPass<D>,
+    /// Depth-of-field pass (CoC computation + gather blur).
+    dof_pass: crate::dof::DofPass<D>,
+    /// Motion blur pass (tile max velocity + directional blur).
+    motion_blur_pass: crate::motion_blur::MotionBlurPass<D>,
     /// Frame counter for TAA jitter sequence.
     frame_count: u32,
     /// Interpolated SH probe coefficients for indirect lighting (set by caller).
@@ -1107,6 +1111,8 @@ impl<D: RenderDevice> Renderer<D> {
             prev_depth_buffer: Vec::new(),
             prev_depth_dims: (0, 0),
             taa_pass: crate::taa::TaaPass::new(rhi, surface_w, surface_h),
+            dof_pass: crate::dof::DofPass::new(rhi, surface_w, surface_h),
+            motion_blur_pass: crate::motion_blur::MotionBlurPass::new(rhi, surface_w, surface_h),
             frame_count: 0,
             probe_sh: [[0.0; 4]; 9],
             probe_enabled: false,
@@ -1458,6 +1464,8 @@ impl<D: RenderDevice> Renderer<D> {
             fog_pass.resize(&**gpu, fw, fh);
         }
         self.taa_pass.resize(rhi, w, h);
+        self.dof_pass.resize(rhi, w, h);
+        self.motion_blur_pass.resize(rhi, w, h);
         self.velocity_textures.resize(rhi, w, h);
     }
 
@@ -2456,6 +2464,70 @@ impl<D: RenderDevice> Renderer<D> {
                     },
                 );
             }
+        }
+
+        // Motion blur: per-pixel directional blur from velocity buffer.
+        if self.post_process_settings.motion_blur.enabled {
+            self.motion_blur_pass.execute(
+                rhi,
+                encoder,
+                self.post_process_stack.ping_view(),
+                &self.velocity_textures.velocity_view,
+                &self.post_process_settings.motion_blur,
+            );
+            let (copy_w, copy_h) = rhi.surface_size();
+            rhi.copy_texture_to_texture(
+                encoder,
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: self.motion_blur_pass.output_texture(),
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: self.post_process_stack.ping_texture(),
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                euca_rhi::Extent3d {
+                    width: copy_w,
+                    height: copy_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        // Depth of field: CoC computation + variable-radius gather blur.
+        if self.post_process_settings.dof.enabled {
+            self.dof_pass.execute(
+                rhi,
+                encoder,
+                self.post_process_stack.ping_view(),
+                &self.post_process_stack.depth_resolve_view,
+                &self.post_process_settings.dof,
+            );
+            let (copy_w, copy_h) = rhi.surface_size();
+            rhi.copy_texture_to_texture(
+                encoder,
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: self.dof_pass.output_texture(),
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: self.post_process_stack.ping_texture(),
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                euca_rhi::Extent3d {
+                    width: copy_w,
+                    height: copy_h,
+                    depth_or_array_layers: 1,
+                },
+            );
         }
 
         self.frame_count = self.frame_count.wrapping_add(1);

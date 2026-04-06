@@ -18,6 +18,10 @@ pub mod ai;
 pub mod assertions;
 /// Dota 2 hero attribute system — STR/AGI/INT with per-level growth and stat conversions.
 pub mod attributes;
+/// Behavior tree action handlers (MoveTo → velocity).
+pub mod bt_actions;
+/// Perception system for behavior tree AI entities.
+pub mod bt_perception;
 /// Dota 2 tower and building system — types, backdoor, fortification, aggro, bounties.
 pub mod building;
 /// ECS systems for buildings — backdoor protection, fortification, barracks death.
@@ -91,6 +95,8 @@ pub use assertions::{
     AssertCondition, AssertResult, Assertion, CompareOp, EntityFilter, EvaluationReport, Severity,
     evaluate_assertions, parse_entity_filter,
 };
+pub use bt_actions::bt_moveto_system;
+pub use bt_perception::bt_perception_system;
 pub use combat::{
     AttackStyle, AutoCombat, CurrentTarget, EntityRole, MarchDirection, Projectile,
     auto_combat_system, projectile_system,

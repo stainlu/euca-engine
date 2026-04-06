@@ -1155,9 +1155,30 @@ impl DotaClientApp {
         let mut pps = euca_render::RenderQuality::High.to_settings();
         pps.ssao_enabled = false;
         pps.ssr_enabled = true;
+        pps.taa_enabled = true;
         // Focal distance matches the MOBA camera height (~40 world units).
         pps.dof.focus_distance = 40.0;
         world.insert_resource(pps);
+
+        // Audio engine: spatial audio, bus mixing, reverb zones.
+        match euca_audio::AudioEngine::new() {
+            Ok(engine) => {
+                world.insert_resource(engine);
+                world.insert_resource(euca_audio::AudioBusSettings::default());
+                world.insert_resource(euca_audio::AudioSettings::default());
+                log::info!("Audio engine initialized");
+            }
+            Err(e) => {
+                log::warn!("Audio engine failed to initialize: {e}");
+            }
+        }
+
+        // Animation: state machines, blending, montages, IK, root motion.
+        world.insert_resource(euca_asset::AnimationLibrary {
+            clips: Vec::new(),
+            skeletons: Vec::new(),
+        });
+        world.insert_resource(euca_animation::AnimationEventLibrary::new());
 
         // Register items and heroes
         world.insert_resource(define_items());
@@ -1572,6 +1593,10 @@ impl DotaClientApp {
         euca_gameplay::projectile_system(&mut self.world, dt);
         euca_gameplay::trigger_system(&mut self.world);
         euca_gameplay::ai_system(&mut self.world, dt);
+        // Behavior tree AI: perception → tick → action execution.
+        euca_gameplay::bt_perception_system(&mut self.world);
+        euca_ai::behavior_tree_system(&mut self.world, dt);
+        euca_gameplay::bt_moveto_system(&mut self.world);
         euca_gameplay::tower_aggro_system(&mut self.world);
         euca_gameplay::auto_combat_system(&mut self.world, dt);
         euca_gameplay::neutral_camp_system(&mut self.world, dt);
@@ -1714,6 +1739,12 @@ impl DotaClientApp {
             let renderer = self.renderer.as_mut().unwrap();
             euca_agent::routes::drain_pending_mesh_uploads(&mut self.world, renderer, gpu);
         }
+
+        // Animation: evaluate state machines, blend poses, sample clips.
+        euca_animation::animation_evaluate_system(&mut self.world, dt);
+
+        // Audio: update spatial positioning, bus volumes, and playback state.
+        euca_audio::audio_update_system_mut(&mut self.world, dt);
 
         // ── Render ──────────────────────────────────────────────────────
 
