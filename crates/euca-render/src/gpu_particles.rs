@@ -408,6 +408,11 @@ impl<D: RenderDevice> GpuParticleSystem<D> {
         self.position = pos;
     }
 
+    /// Change the emission rate at runtime (particles per second).
+    pub fn set_emit_rate(&mut self, rate: f32) {
+        self.config.emit_rate = rate;
+    }
+
     /// Run the compute emit + update passes.
     pub fn update(&mut self, device: &D, encoder: &mut D::CommandEncoder, dt: f32) {
         self.elapsed += dt;

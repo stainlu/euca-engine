@@ -969,6 +969,7 @@ fn spawn_moba_terrain(
             .get(&chunk.surface)
             .copied()
             .unwrap_or_else(|| renderer.upload_material(gpu, &Material::new([0.5; 4], 0.0, 0.8)));
+        let is_water = chunk.surface == SurfaceType::Water;
         let entity = world.spawn(LocalTransform(Transform {
             translation: terrain_offset,
             rotation: Quat::IDENTITY,
@@ -977,6 +978,9 @@ fn spawn_moba_terrain(
         world.insert(entity, GlobalTransform::default());
         world.insert(entity, MeshRenderer { mesh: mesh_handle });
         world.insert(entity, MaterialRef { handle: mat });
+        if is_water {
+            world.insert(entity, WaterChunk);
+        }
     }
 
     // ── 6. Physics collider for click-to-move raycasting ─────────────────
@@ -1112,6 +1116,10 @@ struct DotaClientApp {
     phase: AppPhase,
     /// Entities that had the `Dead` marker last frame — used to detect respawns.
     previously_dead: HashSet<Entity>,
+    /// GPU particle system indices for tower flame emitters.
+    tower_particles: Vec<usize>,
+    /// GPU particle system index for hero movement dust.
+    hero_dust_particle: Option<usize>,
 }
 
 impl DotaClientApp {
@@ -1174,6 +1182,8 @@ impl DotaClientApp {
                 .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
             phase: AppPhase::WaitingToLoad,
             previously_dead: HashSet::new(),
+            tower_particles: Vec::new(),
+            hero_dust_particle: None,
         }
     }
 
@@ -1330,6 +1340,10 @@ impl DotaClientApp {
         // Add point lights on towers and ancients for atmospheric glow
         add_structure_lights(&mut self.world);
 
+        // Add GPU particle effects on towers (flames) and hero (dust)
+        self.add_tower_flame_particles();
+        self.add_hero_dust_particle();
+
         // Reset the Time resource so the first frame after loading doesn't
         // have a massive delta (30+ seconds of GLB loading). Without this,
         // edge-pan speed * huge_delta drifts the camera hundreds of units.
@@ -1352,6 +1366,80 @@ impl DotaClientApp {
             cam.locked = false;
             log::info!("Camera centered on hero, unlocked for edge-pan");
         }
+    }
+
+    /// Spawn GPU particle flame emitters on every tower.
+    fn add_tower_flame_particles(&mut self) {
+        use euca_gameplay::{EntityRole, Team};
+
+        let gpu = self.gpu.as_ref().unwrap();
+        let renderer = self.renderer.as_mut().unwrap();
+
+        let towers: Vec<(Vec3, u8)> = {
+            let query = Query::<(&GlobalTransform, &Team, &EntityRole)>::new(&self.world);
+            query
+                .iter()
+                .filter(|(_, _, role)| matches!(role, EntityRole::Tower))
+                .map(|(gt, t, _)| (gt.0.translation, t.0))
+                .collect()
+        };
+
+        for &(pos, team) in &towers {
+            let (color_start, color_end) = if team == 1 {
+                // Radiant: warm amber flame
+                ([1.0, 0.7, 0.2, 1.0], [1.0, 0.3, 0.05, 0.0])
+            } else {
+                // Dire: deep red-orange flame
+                ([1.0, 0.25, 0.05, 1.0], [0.6, 0.05, 0.0, 0.0])
+            };
+
+            let config = GpuParticleConfig {
+                max_particles: 5_000,
+                emit_rate: 200.0,
+                speed_range: [0.8, 2.5],
+                size_range: [0.04, 0.12],
+                lifetime_range: [0.6, 1.8],
+                gravity: [0.0, 0.3, 0.0], // Slight upward drift (fire rises)
+                color_start,
+                color_end,
+                emit_direction: [0.0, 1.0, 0.0],
+                cone_half_angle: 0.35,
+            };
+            let idx = renderer.add_gpu_particle_system(gpu, config);
+            if let Some(sys) = renderer.gpu_particle_system_mut(idx) {
+                sys.set_position([pos.x, pos.y + 3.5, pos.z]);
+            }
+            self.tower_particles.push(idx);
+        }
+
+        if !self.tower_particles.is_empty() {
+            log::info!(
+                "Added {} tower flame particle emitters",
+                self.tower_particles.len()
+            );
+        }
+    }
+
+    /// Spawn a dust particle emitter that follows the hero when moving.
+    fn add_hero_dust_particle(&mut self) {
+        let gpu = self.gpu.as_ref().unwrap();
+        let renderer = self.renderer.as_mut().unwrap();
+
+        let config = GpuParticleConfig {
+            max_particles: 2_000,
+            emit_rate: 0.0, // Starts inactive — enabled when hero moves
+            speed_range: [0.3, 1.0],
+            size_range: [0.02, 0.06],
+            lifetime_range: [0.3, 0.8],
+            gravity: [0.0, -1.5, 0.0],
+            color_start: [0.55, 0.45, 0.30, 0.6],
+            color_end: [0.45, 0.38, 0.28, 0.0],
+            emit_direction: [0.0, 0.3, 0.0],
+            cone_half_angle: 1.2, // Wide spread
+        };
+        let idx = renderer.add_gpu_particle_system(gpu, config);
+        self.hero_dust_particle = Some(idx);
+        log::info!("Added hero dust particle emitter");
     }
 
     fn render_frame(&mut self) {
@@ -1592,6 +1680,33 @@ impl DotaClientApp {
 
         // MOBA camera follow
         euca_gameplay::camera::moba_camera_system(&mut self.world);
+
+        // Update hero dust particle emitter: emit only when the hero is moving.
+        if let Some(dust_idx) = self.hero_dust_particle {
+            let hero_state: Option<(Vec3, f32)> = {
+                let q = Query::<(Entity, &euca_gameplay::player::PlayerHero)>::new(&self.world);
+                q.iter().next().and_then(|(e, _)| {
+                    let pos = self.world.get::<GlobalTransform>(e)?.0.translation;
+                    let speed = self
+                        .world
+                        .get::<euca_physics::Velocity>(e)
+                        .map(|v| (v.linear.x * v.linear.x + v.linear.z * v.linear.z).sqrt())
+                        .unwrap_or(0.0);
+                    Some((pos, speed))
+                })
+            };
+            if let Some((pos, speed)) = hero_state {
+                let renderer = self.renderer.as_mut().unwrap();
+                if let Some(sys) = renderer.gpu_particle_system_mut(dust_idx) {
+                    sys.set_position([pos.x, pos.y + 0.1, pos.z]);
+                    if speed > 0.5 {
+                        sys.set_emit_rate(80.0);
+                    } else {
+                        sys.set_emit_rate(0.0);
+                    }
+                }
+            }
+        }
 
         // Upload GLB meshes that were loaded by the spawn handler.
         {
@@ -2504,11 +2619,13 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
             model_matrix = from_origin * scale_mat * to_origin * model_matrix;
         }
 
+        let is_water = world.get::<WaterChunk>(e).is_some();
         commands.push(DrawCommand {
             mesh: mr.mesh,
             material: mat.handle,
             model_matrix,
             aabb: None,
+            is_water,
         });
     }
 
