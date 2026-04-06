@@ -19,7 +19,7 @@ use euca_scene::{GlobalTransform, LocalTransform};
 type Dev = euca_render::euca_rhi::metal_backend::MetalDevice;
 #[cfg(not(all(target_os = "macos", feature = "metal-native")))]
 type Dev = euca_render::euca_rhi::wgpu_backend::WgpuDevice;
-use euca_terrain::level_data::LevelData;
+use euca_terrain::level_data::{LevelData, SurfaceType};
 use euca_terrain::level_render::{generate_mesh_from_level, surface_color};
 
 use winit::application::ApplicationHandler;
@@ -153,6 +153,9 @@ impl TiledLevelApp {
 
         log::info!("Placed {} entity markers", self.level.entities.len());
 
+        // Foliage: scatter grass blades on cells with SurfaceType::Grass
+        scatter_grass(&self.level, &mut self.world, gpu, renderer);
+
         // Directional light
         let dir = Vec3::new(-0.5, -1.0, -0.3).normalize();
         self.world.spawn(DirectionalLight {
@@ -261,6 +264,70 @@ impl ApplicationHandler for TiledLevelApp {
             _ => {}
         }
     }
+}
+
+/// Scatter procedural grass blade entities on all cells with [`SurfaceType::Grass`].
+///
+/// Uses [`scatter_foliage`] (Poisson-disk sampling) over the full map area,
+/// then retains only those instances whose XZ position falls on a grass cell.
+/// Each surviving instance becomes an ECS entity with a thin, tall cube mesh
+/// and a green material.
+fn scatter_grass(
+    level: &LevelData,
+    world: &mut World,
+    gpu: &GpuContext<Dev>,
+    renderer: &mut Renderer<Dev>,
+) {
+    let cell = level.cell_size;
+    let area_min = Vec3::ZERO;
+    let area_max = Vec3::new(level.width as f32 * cell, 0.0, level.height as f32 * cell);
+
+    let grass_mesh = renderer.upload_mesh(gpu, &Mesh::cube());
+    let grass_mat = renderer.upload_material(
+        gpu,
+        &Material {
+            albedo: [0.18, 0.52, 0.10, 1.0],
+            metallic: 0.0,
+            roughness: 0.85,
+            ..Material::default()
+        },
+    );
+
+    // Fixed seed ensures deterministic placement across runs.
+    let mut layer = FoliageLayer {
+        mesh: grass_mesh,
+        material: grass_mat,
+        density: 2.0, // instances per square unit
+        min_scale: 0.08,
+        max_scale: 0.18,
+        max_distance: 200.0,
+        instances: Vec::new(),
+    };
+    scatter_foliage(&mut layer, area_min, area_max, 42);
+
+    layer.instances.retain(|inst| {
+        let col = (inst.position.x / cell) as u32;
+        let row = (inst.position.z / cell) as u32;
+        level.surface_at(col, row) == SurfaceType::Grass
+    });
+
+    for inst in &layer.instances {
+        let transform = euca_math::Transform {
+            translation: inst.position,
+            rotation: Quat::from_axis_angle(Vec3::Y, inst.rotation),
+            // Thin in X/Z, taller in Y to look like a grass blade.
+            scale: Vec3::new(inst.scale * 0.3, inst.scale * 2.5, inst.scale * 0.3),
+        };
+        let e = world.spawn(LocalTransform(transform));
+        world.insert(e, GlobalTransform::default());
+        world.insert(e, MeshRenderer { mesh: grass_mesh });
+        world.insert(e, MaterialRef { handle: grass_mat });
+    }
+
+    log::info!(
+        "Scattered {} grass blade instances on grass cells",
+        layer.instances.len(),
+    );
 }
 
 fn main() {
