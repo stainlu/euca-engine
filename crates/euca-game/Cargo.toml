@@ -57,6 +57,10 @@ path = "../../examples/dota_client.rs"
 name = "tiled_level"
 path = "../../examples/tiled_level.rs"
 
+[[example]]
+name = "gpu_benchmark"
+path = "../../examples/gpu_benchmark.rs"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
