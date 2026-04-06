@@ -122,6 +122,7 @@ impl RenderExtractor {
                         material: mat_ref.handle,
                         model_matrix,
                         aabb: None,
+                        is_water: false,
                     };
                     self.entities[slot] = Some(RenderEntity {
                         mesh: mesh_renderer.mesh,
@@ -136,6 +137,7 @@ impl RenderExtractor {
                         material: mat_ref.handle,
                         model_matrix,
                         aabb: None,
+                        is_water: false,
                     };
                     self.entities[free] = Some(RenderEntity {
                         mesh: mesh_renderer.mesh,
@@ -149,6 +151,7 @@ impl RenderExtractor {
                         material: mat_ref.handle,
                         model_matrix,
                         aabb: None,
+                        is_water: false,
                     });
                     self.entities.push(Some(RenderEntity {
                         mesh: mesh_renderer.mesh,

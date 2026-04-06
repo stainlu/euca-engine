@@ -139,6 +139,7 @@ pub fn gizmo_draw_commands(
                         shaft_center,
                     ),
                     aabb: None,
+                    is_water: false,
                 });
 
                 // Arrow tip
@@ -152,6 +153,7 @@ pub fn gizmo_draw_commands(
                         tip_center,
                     ),
                     aabb: None,
+                    is_water: false,
                 });
             }
             cmds
@@ -196,6 +198,7 @@ pub fn gizmo_draw_commands(
                             pos,
                         ),
                         aabb: None,
+                        is_water: false,
                     });
                 }
             }
@@ -229,6 +232,7 @@ pub fn gizmo_draw_commands(
                         shaft_center,
                     ),
                     aabb: None,
+                    is_water: false,
                 });
 
                 // Cube endpoint (instead of arrow tip)
@@ -242,6 +246,7 @@ pub fn gizmo_draw_commands(
                         cube_center,
                     ),
                     aabb: None,
+                    is_water: false,
                 });
             }
             cmds

@@ -139,6 +139,7 @@ impl GltfViewerApp {
                         material: mat.handle,
                         model_matrix,
                         aabb: None,
+                        is_water: false,
                     }
                 })
                 .collect()

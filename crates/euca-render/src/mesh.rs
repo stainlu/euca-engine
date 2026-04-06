@@ -12,6 +12,14 @@ pub struct MeshRenderer {
     pub mesh: MeshHandle,
 }
 
+/// Marker component indicating this entity's mesh should be rendered with
+/// the water shader pipeline instead of the standard PBR pipeline.
+///
+/// When present alongside [`MeshRenderer`] and [`MaterialRef`], the draw
+/// command collector should set [`DrawCommand::is_water`] to `true`.
+#[derive(Clone, Copy, Debug)]
+pub struct WaterChunk;
+
 /// Visual vertical offset applied at render time so that a mesh's bottom
 /// sits on the ground plane, without altering the entity's logical position.
 ///

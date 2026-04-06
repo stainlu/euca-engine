@@ -40,7 +40,7 @@ use euca_render::*;
 let renderer = Renderer::new(&gpu_context);
 let mesh = renderer.upload_mesh(&gpu_context, &mesh_data);
 let material = renderer.upload_material(&gpu_context, &material_data);
-let cmd = DrawCommand { mesh, material, model_matrix, aabb: None };
+let cmd = DrawCommand { mesh, material, model_matrix, aabb: None, is_water: false };
 ```
 
 ## License

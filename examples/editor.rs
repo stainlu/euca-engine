@@ -460,6 +460,7 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
                 material: mat.handle,
                 model_matrix,
                 aabb: None,
+                is_water: false,
             }
         })
         .collect()
@@ -503,6 +504,7 @@ fn append_selection_outline(
                         material: mat,
                         model_matrix: t.to_matrix(),
                         aabb: None,
+                        is_water: false,
                     });
                 }
             }
@@ -546,6 +548,7 @@ fn append_foliage_instances(world: &World, gpu: &GpuContext, cmds: &mut Vec<Draw
                 material: layer.material,
                 model_matrix,
                 aabb: None,
+                is_water: false,
             });
         }
     }
@@ -1247,6 +1250,7 @@ impl EditorApp {
                     material: mat_handle,
                     model_matrix: euca_math::Mat4::IDENTITY,
                     aabb: None,
+                    is_water: false,
                 });
             }
         }
@@ -1504,6 +1508,7 @@ impl EditorApp {
                             material: mat.handle,
                             model_matrix,
                             aabb: None,
+                            is_water: false,
                         }
                     })
                     .collect()

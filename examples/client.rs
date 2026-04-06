@@ -311,6 +311,7 @@ fn collect_draw_commands(world: &World) -> Vec<DrawCommand> {
                 material: mat.handle,
                 model_matrix,
                 aabb: None,
+                is_water: false,
             }
         })
         .collect()

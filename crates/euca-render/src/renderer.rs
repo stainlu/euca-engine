@@ -207,6 +207,9 @@ pub struct DrawCommand {
     /// When provided and occlusion culling is enabled, objects fully behind
     /// previously rendered geometry are skipped.
     pub aabb: Option<(euca_math::Vec3, euca_math::Vec3)>,
+    /// When true, this command is rendered with the water shader pipeline
+    /// instead of the standard PBR pipeline.
+    pub is_water: bool,
 }
 
 #[repr(C)]
@@ -272,6 +275,8 @@ struct SceneUniforms {
     shadow_params: [f32; 4],
     /// IBL parameters: x=enabled (0.0 or 1.0), y=intensity, z=unused, w=unused.
     ibl_params: [f32; 4],
+    /// Elapsed time: x=seconds since renderer creation, y/z/w=padding.
+    elapsed_time: [f32; 4],
 }
 
 struct GpuMaterial<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
@@ -411,6 +416,10 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     // Keep fallback textures alive so their views remain valid.
     _ibl_dummy_cube: D::Texture,
     _ibl_dummy_brdf: D::Texture,
+    /// Water shader render pipeline (alpha blend, depth read, no depth write).
+    water_pipeline: D::RenderPipeline,
+    /// Instant at which the renderer was created, used to compute elapsed time.
+    start_time: std::time::Instant,
     /// Whether MetalFX temporal upscaling is requested.
     ///
     /// Only meaningful when `D = MetalDevice` on macOS with the `metal-native`
@@ -931,6 +940,47 @@ impl<D: RenderDevice> Renderer<D> {
             },
         });
 
+        let water_shader = rhi.create_shader(&euca_rhi::ShaderDesc {
+            label: Some("Water Shader"),
+            source: euca_rhi::ShaderSource::Wgsl(WATER_SHADER.into()),
+        });
+        let water_pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
+            label: Some("Water Pipeline"),
+            layout: &[&instance_bgl, &scene_bgl],
+            vertex: euca_rhi::VertexState {
+                module: &water_shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::RHI_LAYOUT],
+            },
+            fragment: Some(euca_rhi::FragmentState {
+                module: &water_shader,
+                entry_point: "fs_main",
+                targets: &[Some(euca_rhi::ColorTargetState {
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    blend: Some(euca_rhi::BlendState::ALPHA_BLENDING),
+                    write_mask: euca_rhi::ColorWrites::ALL,
+                })],
+            }),
+            primitive: euca_rhi::PrimitiveState {
+                topology: euca_rhi::PrimitiveTopology::TriangleList,
+                front_face: euca_rhi::FrontFace::Ccw,
+                cull_mode: Some(euca_rhi::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(euca_rhi::DepthStencilState {
+                format: euca_rhi::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: euca_rhi::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: euca_rhi::MultisampleState {
+                count: MSAA_SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        });
+
         let sky_pipeline = rhi.create_render_pipeline(&euca_rhi::RenderPipelineDesc {
             label: Some("Sky Pipeline"),
             layout: &[&scene_bgl],
@@ -1076,6 +1126,8 @@ impl<D: RenderDevice> Renderer<D> {
             ibl_intensity: 1.0,
             _ibl_dummy_cube: ibl_dummy_cube,
             _ibl_dummy_brdf: ibl_dummy_brdf,
+            water_pipeline,
+            start_time: std::time::Instant::now(),
             metalfx_enabled: false,
         }
     }
@@ -1689,11 +1741,18 @@ impl<D: RenderDevice> Renderer<D> {
         &self,
         commands: &'a [DrawCommand],
         camera_pos: euca_math::Vec3,
-    ) -> (Vec<&'a DrawCommand>, Vec<&'a DrawCommand>) {
+    ) -> (
+        Vec<&'a DrawCommand>,
+        Vec<&'a DrawCommand>,
+        Vec<&'a DrawCommand>,
+    ) {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
+        let mut water = Vec::new();
         for cmd in commands {
-            if self.materials[cmd.material.0 as usize].is_transparent {
+            if cmd.is_water {
+                water.push(cmd);
+            } else if self.materials[cmd.material.0 as usize].is_transparent {
                 transparent.push(cmd);
             } else {
                 opaque.push(cmd);
@@ -1704,7 +1763,7 @@ impl<D: RenderDevice> Renderer<D> {
             let db = Self::distance_to_camera(&b.model_matrix, camera_pos);
             db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
         });
-        (opaque, transparent)
+        (opaque, transparent, water)
     }
 
     fn distance_to_camera(model_matrix: &Mat4, camera_pos: euca_math::Vec3) -> f32 {
@@ -1862,7 +1921,8 @@ impl<D: RenderDevice> Renderer<D> {
         let rhi: &D = gpu;
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
-        let (opaque_cmds, transparent_cmds) = self.partition_commands(commands, camera.eye);
+        let (opaque_cmds, transparent_cmds, water_cmds) =
+            self.partition_commands(commands, camera.eye);
         let opaque_cmds = self.apply_occlusion_culling(&opaque_cmds, vp);
         let (opaque_instances, opaque_batches) = Self::build_batches_from_refs(&opaque_cmds);
         // Pre-build transparent batches so we can ensure capacity before
@@ -1872,8 +1932,17 @@ impl<D: RenderDevice> Renderer<D> {
         } else {
             (Vec::new(), Vec::new())
         };
-        // Ensure capacity for the larger of opaque/transparent sets.
-        let max_needed = opaque_instances.len().max(trans_instances.len());
+        // Pre-build water batches.
+        let (water_instances, water_batches) = if !water_cmds.is_empty() {
+            Self::build_batches_from_refs(&water_cmds)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        // Ensure capacity for the largest of opaque/transparent/water sets.
+        let max_needed = opaque_instances
+            .len()
+            .max(trans_instances.len())
+            .max(water_instances.len());
         if max_needed > 0 {
             self.ensure_instance_capacity(rhi, max_needed);
         }
@@ -2007,6 +2076,7 @@ impl<D: RenderDevice> Renderer<D> {
                 0.0,
                 0.0,
             ],
+            elapsed_time: [self.start_time.elapsed().as_secs_f32(), 0.0, 0.0, 0.0],
         };
         self.scene_buffer
             .write_bytes(&**gpu, bytemuck::bytes_of(&scene));
@@ -2242,6 +2312,31 @@ impl<D: RenderDevice> Renderer<D> {
                 for batch in &trans_batches {
                     let gpu_mat = &self.materials[batch.material.0 as usize];
                     pass.set_bind_group(2, &gpu_mat.bind_group, &[]);
+                    let mesh = &self.meshes[batch.mesh.0 as usize];
+                    pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
+                    pass.set_index_buffer(
+                        &mesh.index_buffer,
+                        euca_rhi::IndexFormat::Uint32,
+                        0,
+                        mesh.index_buffer_size,
+                    );
+                    pass.draw_indexed(
+                        0..mesh.index_count,
+                        0,
+                        batch.instance_start..batch.instance_start + batch.instance_count,
+                    );
+                }
+            }
+
+            // ── Water pass: rendered after opaque + transparent with its own shader ──
+            if !water_cmds.is_empty() {
+                if !water_instances.is_empty() {
+                    self.instance_buffer.write(&**gpu, &water_instances);
+                }
+                pass.set_pipeline(&self.water_pipeline);
+                pass.set_bind_group(0, &self.instance_bind_group, &[]);
+                pass.set_bind_group(1, &self.scene_bind_group, &[]);
+                for batch in &water_batches {
                     let mesh = &self.meshes[batch.mesh.0 as usize];
                     pass.set_vertex_buffer(0, &mesh.vertex_buffer, 0, mesh.vertex_buffer_size);
                     pass.set_index_buffer(
@@ -2572,6 +2667,8 @@ const PBR_BINDLESS_SHADER: &str = include_str!("../shaders/pbr_bindless.wgsl");
 
 const SKY_SHADER: &str = include_str!("../shaders/sky.wgsl");
 
+const WATER_SHADER: &str = include_str!("../shaders/water.wgsl");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2817,7 +2914,7 @@ mod tests {
         );
     }
 
-    /// `SceneUniforms` must include the `ibl_params` field as the last vec4.
+    /// `SceneUniforms` must include the `ibl_params` field.
     #[test]
     fn scene_uniforms_contains_ibl_params() {
         let uniforms = SceneUniforms {
@@ -2838,6 +2935,7 @@ mod tests {
             probe_enabled: [0.0; 4],
             shadow_params: [1.0, 0.01, 0.03, 0.5],
             ibl_params: [1.0, 0.8, 0.0, 0.0],
+            elapsed_time: [0.0; 4],
         };
         assert_eq!(uniforms.ibl_params[0], 1.0, "ibl enabled flag");
         assert!((uniforms.ibl_params[1] - 0.8).abs() < 1e-6, "ibl intensity");
