@@ -1565,6 +1565,30 @@ impl RenderDevice for MetalDevice {
     fn surface_size(&self) -> (u32, u32) {
         (self.surface_width, self.surface_height)
     }
+
+    /// Encode a MetalFX temporal upscale pass.
+    ///
+    /// Downcasts `upscaler` to `MetalFXUpscaler` and calls its `encode` method.
+    /// No-op (logs a warning) if the downcast fails.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_metalfx_upscale(
+        &self,
+        encoder: &mut MetalCommandEncoder,
+        upscaler: &dyn std::any::Any,
+        color: &MetalTexture,
+        depth: &MetalTexture,
+        motion: &MetalTexture,
+        output: &MetalTexture,
+        jitter_x: f32,
+        jitter_y: f32,
+        reset: bool,
+    ) {
+        if let Some(scaler) = upscaler.downcast_ref::<MetalFXUpscaler>() {
+            scaler.encode(encoder, color, depth, motion, output, jitter_x, jitter_y, reset);
+        } else {
+            log::warn!("encode_metalfx_upscale: upscaler is not a MetalFXUpscaler — skipping");
+        }
+    }
 }
 
 // ===========================================================================

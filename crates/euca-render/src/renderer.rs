@@ -427,12 +427,28 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     // Keep fallback textures alive so their views remain valid.
     _ibl_dummy_cube: D::Texture,
     _ibl_dummy_brdf: D::Texture,
-    /// Whether MetalFX temporal upscaling is requested.
+    /// Whether MetalFX temporal upscaling is active.
     ///
     /// Only meaningful when `D = MetalDevice` on macOS with the `metal-native`
     /// feature.  On other backends this flag is stored but has no effect --
     /// `enable_metalfx` will log a warning.
     metalfx_enabled: bool,
+    /// Half-resolution (50%) HDR color texture — PBR renders here when MetalFX is active.
+    metalfx_low_res_color: Option<D::Texture>,
+    metalfx_low_res_color_view: Option<D::TextureView>,
+    /// Half-resolution depth texture for MetalFX temporal accumulation.
+    metalfx_low_res_depth: Option<D::Texture>,
+    metalfx_low_res_depth_view: Option<D::TextureView>,
+    /// Full-resolution MetalFX output texture — receives the upscaled image and
+    /// is then copied to the post-process ping buffer.
+    metalfx_output: Option<D::Texture>,
+    metalfx_output_view: Option<D::TextureView>,
+    /// Type-erased `MetalFXUpscaler` (only set when `metalfx_enabled` is true
+    /// and the backend is MetalDevice).
+    metalfx_upscaler_raw: Option<Box<dyn std::any::Any>>,
+    /// Signals to MetalFX that temporal history should be reset on the next frame
+    /// (set on initialisation and after every resize).
+    metalfx_reset_history: bool,
     /// Creation time — used to compute `elapsed_time` in [`SceneUniforms`].
     start_time: std::time::Instant,
     /// Water render pipeline (alpha blend, no depth write).
@@ -1156,6 +1172,14 @@ impl<D: RenderDevice> Renderer<D> {
             _ibl_dummy_cube: ibl_dummy_cube,
             _ibl_dummy_brdf: ibl_dummy_brdf,
             metalfx_enabled: false,
+            metalfx_low_res_color: None,
+            metalfx_low_res_color_view: None,
+            metalfx_low_res_depth: None,
+            metalfx_low_res_depth_view: None,
+            metalfx_output: None,
+            metalfx_output_view: None,
+            metalfx_upscaler_raw: None,
+            metalfx_reset_history: false,
             start_time: std::time::Instant::now(),
             water_pipeline,
             ssgi_pass: crate::ssgi::SsgiPass::new(rhi, surface_w, surface_h),
@@ -2275,14 +2299,38 @@ impl<D: RenderDevice> Renderer<D> {
         // Resolve MSAA into the post-process stack's ping buffer.
         let resolve_target = self.post_process_stack.ping_view();
 
+        // When MetalFX is active the PBR pass renders at 50 % resolution into
+        // the dedicated low-res targets (no MSAA needed — MetalFX handles
+        // temporal reconstruction).  Otherwise use the full-res MSAA path.
+        let use_metalfx = self.metalfx_enabled
+            && self.metalfx_low_res_color_view.is_some()
+            && self.metalfx_low_res_depth_view.is_some();
+        let (pbr_color_view, pbr_resolve, pbr_depth_view): (
+            &D::TextureView,
+            Option<&D::TextureView>,
+            &D::TextureView,
+        ) = if use_metalfx {
+            (
+                self.metalfx_low_res_color_view.as_ref().unwrap(),
+                None,
+                self.metalfx_low_res_depth_view.as_ref().unwrap(),
+            )
+        } else {
+            (&self.msaa_hdr_view, Some(resolve_target), &self.depth_texture)
+        };
+
         {
             let mut pass = rhi.begin_render_pass(
                 encoder,
                 &euca_rhi::RenderPassDesc {
-                    label: Some("PBR Pass (MSAA)"),
+                    label: Some(if use_metalfx {
+                        "PBR Pass (MetalFX low-res)"
+                    } else {
+                        "PBR Pass (MSAA)"
+                    }),
                     color_attachments: &[Some(euca_rhi::RenderPassColorAttachment {
-                        view: &self.msaa_hdr_view,
-                        resolve_target: Some(resolve_target),
+                        view: pbr_color_view,
+                        resolve_target: pbr_resolve,
                         ops: euca_rhi::Operations {
                             load: euca_rhi::LoadOp::Clear(euca_rhi::Color {
                                 r: 0.05,
@@ -2294,7 +2342,7 @@ impl<D: RenderDevice> Renderer<D> {
                         },
                     })],
                     depth_stencil_attachment: Some(euca_rhi::RenderPassDepthStencilAttachment {
-                        view: &self.depth_texture,
+                        view: pbr_depth_view,
                         depth_ops: Some(euca_rhi::Operations {
                             load: euca_rhi::LoadOp::Clear(1.0),
                             store: euca_rhi::StoreOp::Store,
@@ -2479,6 +2527,57 @@ impl<D: RenderDevice> Renderer<D> {
 
         // Clear pending decals after rendering — they must be re-submitted each frame.
         self.pending_decals.clear();
+
+        // MetalFX temporal upscale: take the half-res PBR output and upscale to
+        // full-res via the MetalFX temporal scaler.  The upscaled result is
+        // copied into the post-process ping buffer so that TAA, motion blur,
+        // DoF, and the post-process stack all operate at full resolution.
+        if use_metalfx
+            && let (Some(upscaler), Some(low_color), Some(low_depth), Some(output_tex)) = (
+                &self.metalfx_upscaler_raw,
+                &self.metalfx_low_res_color,
+                &self.metalfx_low_res_depth,
+                &self.metalfx_output,
+            )
+        {
+                let (jitter_x, jitter_y) = (camera.jitter[0], camera.jitter[1]);
+                rhi.encode_metalfx_upscale(
+                    encoder,
+                    upscaler.as_ref(),
+                    low_color,
+                    low_depth,
+                    &self.velocity_textures.velocity_texture,
+                    output_tex,
+                    jitter_x,
+                    jitter_y,
+                    self.metalfx_reset_history,
+                );
+                self.metalfx_reset_history = false;
+
+                // Blit MetalFX output into the post-process ping buffer so
+                // downstream passes (TAA, motion blur, DoF) read the upscaled image.
+                let (sw, sh) = rhi.surface_size();
+                rhi.copy_texture_to_texture(
+                    encoder,
+                    &euca_rhi::TexelCopyTextureInfo {
+                        texture: output_tex,
+                        mip_level: 0,
+                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                        aspect: euca_rhi::TextureAspect::All,
+                    },
+                    &euca_rhi::TexelCopyTextureInfo {
+                        texture: self.post_process_stack.ping_texture(),
+                        mip_level: 0,
+                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                        aspect: euca_rhi::TextureAspect::All,
+                    },
+                    euca_rhi::Extent3d {
+                        width: sw,
+                        height: sh,
+                        depth_or_array_layers: 1,
+                    },
+                );
+        }
 
         // GPU compute particles: update (compute dispatch) then draw (render pass).
         if !self.gpu_particle_systems.is_empty() {
@@ -2829,9 +2928,68 @@ impl Renderer<euca_rhi::metal_backend::MetalDevice> {
         let (sw, sh) = rhi.surface_size();
         let (rw, rh) = (sw / 2, sh / 2);
 
-        // Validate that the device can create a MetalFX temporal scaler.
-        // The upscaler is not yet stored -- see TODO below.
-        let _upscaler = rhi.create_temporal_upscaler(
+        // Create half-resolution HDR color target (no MSAA — MetalFX handles
+        // temporal reconstruction instead).
+        let low_color = rhi.create_texture(&euca_rhi::TextureDesc {
+            label: Some("MetalFX Low-Res Color"),
+            size: euca_rhi::Extent3d {
+                width: rw.max(1),
+                height: rh.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let low_color_view =
+            rhi.create_texture_view(&low_color, &euca_rhi::TextureViewDesc::default());
+
+        // Create half-resolution depth target.
+        let low_depth = rhi.create_texture(&euca_rhi::TextureDesc {
+            label: Some("MetalFX Low-Res Depth"),
+            size: euca_rhi::Extent3d {
+                width: rw.max(1),
+                height: rh.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Depth32Float,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let low_depth_view =
+            rhi.create_texture_view(&low_depth, &euca_rhi::TextureViewDesc::default());
+
+        // Create full-resolution MetalFX output — the upscaler writes here and
+        // the result is copied into the post-process ping buffer.
+        let output = rhi.create_texture(&euca_rhi::TextureDesc {
+            label: Some("MetalFX Upscale Output"),
+            size: euca_rhi::Extent3d {
+                width: sw,
+                height: sh,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: euca_rhi::TextureDimension::D2,
+            format: euca_rhi::TextureFormat::Rgba16Float,
+            usage: euca_rhi::TextureUsages::RENDER_ATTACHMENT
+                | euca_rhi::TextureUsages::COPY_SRC
+                | euca_rhi::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let output_view =
+            rhi.create_texture_view(&output, &euca_rhi::TextureViewDesc::default());
+
+        // Create the MetalFX temporal scaler (panics on unsupported hardware).
+        let upscaler = rhi.create_temporal_upscaler(
             rw.max(1),
             rh.max(1),
             sw,
@@ -2841,6 +2999,14 @@ impl Renderer<euca_rhi::metal_backend::MetalDevice> {
             euca_rhi::TextureFormat::Rg16Float,
         );
 
+        self.metalfx_low_res_color = Some(low_color);
+        self.metalfx_low_res_color_view = Some(low_color_view);
+        self.metalfx_low_res_depth = Some(low_depth);
+        self.metalfx_low_res_depth_view = Some(low_depth_view);
+        self.metalfx_output = Some(output);
+        self.metalfx_output_view = Some(output_view);
+        self.metalfx_upscaler_raw = Some(Box::new(upscaler));
+        self.metalfx_reset_history = true;
         self.metalfx_enabled = true;
 
         log::info!(
@@ -2850,16 +3016,6 @@ impl Renderer<euca_rhi::metal_backend::MetalDevice> {
             sw,
             sh,
         );
-
-        // TODO: Store the upscaler and low-res render targets in the Renderer.
-        //
-        // Full integration requires:
-        //   - Storing `MetalFXUpscaler` + low-res color/depth/motion textures
-        //     as cfg-gated fields on `Renderer`.
-        //   - Branching in `render_to_view_with_lights`: render PBR into
-        //     low-res targets, encode the upscale pass, copy result into
-        //     `post_process_stack.ping_view()`.
-        //   - Recreating low-res targets and upscaler in `resize`.
     }
 
     /// Recreate the MetalFX upscaler after a window resize.

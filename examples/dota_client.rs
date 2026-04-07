@@ -1612,6 +1612,7 @@ impl DotaClientApp {
         euca_ai::behavior_tree_system(&mut self.world, dt);
         euca_gameplay::bt_moveto_system(&mut self.world);
         euca_gameplay::tower_aggro_system(&mut self.world);
+        euca_gameplay::building_tower_aggro_system(&mut self.world);
         euca_gameplay::auto_combat_system(&mut self.world, dt);
         euca_gameplay::neutral_camp_system(&mut self.world, dt);
 

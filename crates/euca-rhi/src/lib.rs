@@ -146,4 +146,33 @@ pub trait RenderDevice: 'static {
         let (w, h) = self.surface_size();
         w as f32 / h as f32
     }
+
+    /// Encode a MetalFX temporal upscale pass.
+    ///
+    /// Default implementation is a no-op (non-Metal backends). `MetalDevice`
+    /// overrides this to invoke the MetalFX temporal scaler.
+    ///
+    /// - `upscaler`: type-erased `MetalFXUpscaler` created by
+    ///   `MetalDevice::create_temporal_upscaler`
+    /// - `color`: low-resolution rendered HDR color texture
+    /// - `depth`: low-resolution depth texture
+    /// - `motion`: screen-space motion vectors (RG16Float, in pixels)
+    /// - `output`: full-resolution output texture (input to post-processing)
+    /// - `jitter_x/y`: sub-pixel jitter for TAA convergence
+    /// - `reset`: true on first frame or after a camera cut
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    fn encode_metalfx_upscale(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        upscaler: &dyn std::any::Any,
+        color: &Self::Texture,
+        depth: &Self::Texture,
+        motion: &Self::Texture,
+        output: &Self::Texture,
+        jitter_x: f32,
+        jitter_y: f32,
+        reset: bool,
+    ) {
+        // No-op: non-Metal backends do not support MetalFX.
+    }
 }
