@@ -173,6 +173,9 @@ struct GpuMesh<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevice> {
     index_count: u32,
     /// Allocation in the global geometry pool (present when GPU-driven is active).
     pool_alloc: Option<crate::geometry_pool::MeshAllocation>,
+    /// Meshlet decomposition for fine-grained GPU culling.
+    #[allow(dead_code)]
+    meshlet_data: Option<crate::meshlet::MeshletMesh>,
 }
 
 #[repr(C)]
@@ -434,6 +437,22 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     start_time: std::time::Instant,
     /// Water render pipeline (alpha blend, no depth write).
     water_pipeline: D::RenderPipeline,
+    /// SSGI pass (screen-space global illumination with temporal accumulation).
+    ssgi_pass: crate::ssgi::SsgiPass<D>,
+    /// Previous frame HDR color for SSGI temporal reprojection.
+    prev_color_texture: D::Texture,
+    prev_color_view: D::TextureView,
+    /// Previous frame depth for SSGI temporal reprojection.
+    prev_depth_texture: D::Texture,
+    prev_depth_view: D::TextureView,
+    /// Previous frame view-projection matrix for SSGI reprojection.
+    prev_vp: Mat4,
+    /// Prepass textures (depth + normals) for SSGI input.
+    prepass_textures: crate::prepass::PrepassTextures<D>,
+    /// Optional deferred shading pipeline (G-buffer + fullscreen lighting).
+    deferred_pipeline: Option<crate::deferred::DeferredPipeline<D>>,
+    /// Render path: Forward (default) or Deferred.
+    render_path: crate::deferred::RenderPath,
 }
 
 const MSAA_SAMPLE_COUNT: u32 = 4;
@@ -1139,6 +1158,81 @@ impl<D: RenderDevice> Renderer<D> {
             metalfx_enabled: false,
             start_time: std::time::Instant::now(),
             water_pipeline,
+            ssgi_pass: crate::ssgi::SsgiPass::new(rhi, surface_w, surface_h),
+            prev_color_texture: {
+                rhi.create_texture(&euca_rhi::TextureDesc {
+                    label: Some("Prev Frame Color"),
+                    size: euca_rhi::Extent3d {
+                        width: surface_w,
+                        height: surface_h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: euca_rhi::TextureDimension::D2,
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    usage: euca_rhi::TextureUsages::TEXTURE_BINDING
+                        | euca_rhi::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                })
+            },
+            prev_color_view: {
+                let t = rhi.create_texture(&euca_rhi::TextureDesc {
+                    label: Some("Prev Frame Color View"),
+                    size: euca_rhi::Extent3d {
+                        width: surface_w,
+                        height: surface_h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: euca_rhi::TextureDimension::D2,
+                    format: euca_rhi::TextureFormat::Rgba16Float,
+                    usage: euca_rhi::TextureUsages::TEXTURE_BINDING
+                        | euca_rhi::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                rhi.create_texture_view(&t, &euca_rhi::TextureViewDesc::default())
+            },
+            prev_depth_texture: {
+                rhi.create_texture(&euca_rhi::TextureDesc {
+                    label: Some("Prev Frame Depth"),
+                    size: euca_rhi::Extent3d {
+                        width: surface_w,
+                        height: surface_h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: euca_rhi::TextureDimension::D2,
+                    format: euca_rhi::TextureFormat::Depth32Float,
+                    usage: euca_rhi::TextureUsages::TEXTURE_BINDING
+                        | euca_rhi::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                })
+            },
+            prev_depth_view: {
+                let t = rhi.create_texture(&euca_rhi::TextureDesc {
+                    label: Some("Prev Frame Depth View"),
+                    size: euca_rhi::Extent3d {
+                        width: surface_w,
+                        height: surface_h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: euca_rhi::TextureDimension::D2,
+                    format: euca_rhi::TextureFormat::Depth32Float,
+                    usage: euca_rhi::TextureUsages::TEXTURE_BINDING
+                        | euca_rhi::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                rhi.create_texture_view(&t, &euca_rhi::TextureViewDesc::default())
+            },
+            prev_vp: Mat4::IDENTITY,
+            prepass_textures: crate::prepass::PrepassTextures::new(rhi, surface_w, surface_h),
+            deferred_pipeline: None,
+            render_path: crate::deferred::RenderPath::Forward,
         }
     }
 
@@ -1301,6 +1395,18 @@ impl<D: RenderDevice> Renderer<D> {
             .as_mut()
             .map(|pool| pool.allocate(rhi, &mesh.vertices, &mesh.indices));
 
+        // Meshletize for fine-grained GPU culling (64 triangles / 64 vertices per meshlet).
+        let meshlet_data = if mesh.indices.len() >= 3 {
+            Some(crate::meshlet::meshletize(
+                &mesh.vertices,
+                &mesh.indices,
+                crate::meshlet::MAX_MESHLET_TRIANGLES,
+                crate::meshlet::MAX_MESHLET_VERTICES,
+            ))
+        } else {
+            None
+        };
+
         let handle = MeshHandle(self.meshes.len() as u32);
         self.meshes.push(GpuMesh {
             vertex_buffer: vb,
@@ -1309,6 +1415,7 @@ impl<D: RenderDevice> Renderer<D> {
             index_buffer_size: idata.len() as u64,
             index_count: mesh.indices.len() as u32,
             pool_alloc,
+            meshlet_data,
         });
         handle
     }
@@ -1466,6 +1573,11 @@ impl<D: RenderDevice> Renderer<D> {
         self.taa_pass.resize(rhi, w, h);
         self.dof_pass.resize(rhi, w, h);
         self.motion_blur_pass.resize(rhi, w, h);
+        self.ssgi_pass.resize(rhi, w, h);
+        self.prepass_textures.resize(rhi, w, h);
+        if let Some(ref mut dp) = self.deferred_pipeline {
+            dp.resize(rhi, w, h);
+        }
         self.velocity_textures.resize(rhi, w, h);
     }
 
@@ -2529,6 +2641,31 @@ impl<D: RenderDevice> Renderer<D> {
                 },
             );
         }
+
+        // SSGI: screen-space global illumination with temporal accumulation.
+        if self.post_process_settings.ssgi_enabled {
+            let inv_vp = vp.inverse();
+            let ssgi_settings = crate::ssgi::SsgiSettings {
+                enabled: true,
+                ray_count: self.post_process_settings.ssgi_ray_count,
+                max_distance: self.post_process_settings.ssgi_max_distance,
+                intensity: self.post_process_settings.ssgi_intensity,
+                temporal_blend: self.post_process_settings.ssgi_temporal_blend,
+            };
+            self.ssgi_pass.execute(crate::ssgi::SsgiExecuteParams {
+                device: rhi,
+                encoder,
+                depth_view: &self.post_process_stack.depth_resolve_view,
+                normal_view: &self.prepass_textures.normal_view,
+                prev_color_view: &self.prev_color_view,
+                prev_depth_view: &self.prev_depth_view,
+                inv_view_proj: &inv_vp,
+                prev_view_proj: &self.prev_vp,
+                settings: &ssgi_settings,
+            });
+        }
+        // Store current frame state for next frame's SSGI temporal reprojection.
+        self.prev_vp = vp;
 
         self.frame_count = self.frame_count.wrapping_add(1);
 

@@ -28,6 +28,8 @@ euca-nav = { path = "../euca-nav" }
 euca-asset = { path = "../euca-asset" }
 euca-terrain = { path = "../euca-terrain", features = ["level-render"] }
 euca-particle = { path = "../euca-particle" }
+euca-ui = { path = "../euca-ui" }
+euca-script = { path = "../euca-script" }
 winit = "0.30"
 wgpu = "27"
 log = "0.4"

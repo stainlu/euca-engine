@@ -1180,6 +1180,20 @@ impl DotaClientApp {
         });
         world.insert_resource(euca_animation::AnimationEventLibrary::new());
 
+        // Lua scripting: ECS bridge, hot reload, sandboxed VM.
+        match euca_script::ScriptEngine::new(100_000) {
+            Ok(engine) => {
+                world.insert_resource(engine);
+                log::info!("Lua scripting engine initialized");
+            }
+            Err(e) => {
+                log::warn!("Lua scripting unavailable: {e}");
+            }
+        }
+
+        // UI framework: flex layout, widgets, input routing.
+        world.insert_resource(euca_ui::UiViewport::default());
+
         // Register items and heroes
         world.insert_resource(define_items());
         world.insert_resource(define_heroes());
@@ -1742,6 +1756,16 @@ impl DotaClientApp {
 
         // Animation: evaluate state machines, blend poses, sample clips.
         euca_animation::animation_evaluate_system(&mut self.world, dt);
+
+        // Lua scripting: tick all ScriptComponent entities.
+        euca_script::script_tick_system(&mut self.world, dt);
+
+        // UI layout and input: resolve positions, hit-test buttons.
+        euca_ui::ui_layout_system(&mut self.world);
+        euca_ui::ui_input_system(&mut self.world);
+
+        // HLOD selection: swap individual entities for merged clusters at distance.
+        euca_render::hlod_select_system(&mut self.world);
 
         // Audio: update spatial positioning, bus volumes, and playback state.
         euca_audio::audio_update_system_mut(&mut self.world, dt);
