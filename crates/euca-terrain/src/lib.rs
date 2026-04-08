@@ -53,3 +53,7 @@ pub use lod::{ChunkLod, LodConfig, select_all_lods, select_chunk_lod};
 pub use mesh::{TerrainMesh, TerrainVertex, generate_terrain_mesh};
 pub use physics::{HeightfieldTile, generate_heightfield_colliders, height_at};
 pub use splat::SplatMap;
+
+// GPU terrain generation (requires the `gpu-terrain` feature).
+#[cfg(feature = "gpu-terrain")]
+pub use gpu_terrain::{GpuTerrainChunkOutput, GpuTerrainGenerator, TerrainGenParams};
