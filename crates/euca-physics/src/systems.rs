@@ -149,11 +149,11 @@ fn apply_external_forces(world: &mut World, dt: f32) {
             vel.angular = vel.angular + torque * inv_inertia * dt;
         }
 
-        if !persistent {
-            if let Some(ef) = world.get_mut::<ExternalForce>(entity) {
-                ef.force = Vec3::ZERO;
-                ef.torque = Vec3::ZERO;
-            }
+        if !persistent
+            && let Some(ef) = world.get_mut::<ExternalForce>(entity)
+        {
+            ef.force = Vec3::ZERO;
+            ef.torque = Vec3::ZERO;
         }
     }
 }
