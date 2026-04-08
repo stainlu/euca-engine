@@ -2316,7 +2316,11 @@ impl<D: RenderDevice> Renderer<D> {
                 self.metalfx_low_res_depth_view.as_ref().unwrap(),
             )
         } else {
-            (&self.msaa_hdr_view, Some(resolve_target), &self.depth_texture)
+            (
+                &self.msaa_hdr_view,
+                Some(resolve_target),
+                &self.depth_texture,
+            )
         };
 
         {
@@ -2540,43 +2544,43 @@ impl<D: RenderDevice> Renderer<D> {
                 &self.metalfx_output,
             )
         {
-                let (jitter_x, jitter_y) = (camera.jitter[0], camera.jitter[1]);
-                rhi.encode_metalfx_upscale(
-                    encoder,
-                    upscaler.as_ref(),
-                    low_color,
-                    low_depth,
-                    &self.velocity_textures.velocity_texture,
-                    output_tex,
-                    jitter_x,
-                    jitter_y,
-                    self.metalfx_reset_history,
-                );
-                self.metalfx_reset_history = false;
+            let (jitter_x, jitter_y) = (camera.jitter[0], camera.jitter[1]);
+            rhi.encode_metalfx_upscale(
+                encoder,
+                upscaler.as_ref(),
+                low_color,
+                low_depth,
+                &self.velocity_textures.velocity_texture,
+                output_tex,
+                jitter_x,
+                jitter_y,
+                self.metalfx_reset_history,
+            );
+            self.metalfx_reset_history = false;
 
-                // Blit MetalFX output into the post-process ping buffer so
-                // downstream passes (TAA, motion blur, DoF) read the upscaled image.
-                let (sw, sh) = rhi.surface_size();
-                rhi.copy_texture_to_texture(
-                    encoder,
-                    &euca_rhi::TexelCopyTextureInfo {
-                        texture: output_tex,
-                        mip_level: 0,
-                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
-                        aspect: euca_rhi::TextureAspect::All,
-                    },
-                    &euca_rhi::TexelCopyTextureInfo {
-                        texture: self.post_process_stack.ping_texture(),
-                        mip_level: 0,
-                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
-                        aspect: euca_rhi::TextureAspect::All,
-                    },
-                    euca_rhi::Extent3d {
-                        width: sw,
-                        height: sh,
-                        depth_or_array_layers: 1,
-                    },
-                );
+            // Blit MetalFX output into the post-process ping buffer so
+            // downstream passes (TAA, motion blur, DoF) read the upscaled image.
+            let (sw, sh) = rhi.surface_size();
+            rhi.copy_texture_to_texture(
+                encoder,
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: output_tex,
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: self.post_process_stack.ping_texture(),
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                euca_rhi::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+            );
         }
 
         // GPU compute particles: update (compute dispatch) then draw (render pass).
@@ -2985,8 +2989,7 @@ impl Renderer<euca_rhi::metal_backend::MetalDevice> {
                 | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let output_view =
-            rhi.create_texture_view(&output, &euca_rhi::TextureViewDesc::default());
+        let output_view = rhi.create_texture_view(&output, &euca_rhi::TextureViewDesc::default());
 
         // Create the MetalFX temporal scaler (panics on unsupported hardware).
         let upscaler = rhi.create_temporal_upscaler(

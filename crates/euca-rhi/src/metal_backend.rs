@@ -1584,7 +1584,9 @@ impl RenderDevice for MetalDevice {
         reset: bool,
     ) {
         if let Some(scaler) = upscaler.downcast_ref::<MetalFXUpscaler>() {
-            scaler.encode(encoder, color, depth, motion, output, jitter_x, jitter_y, reset);
+            scaler.encode(
+                encoder, color, depth, motion, output, jitter_x, jitter_y, reset,
+            );
         } else {
             log::warn!("encode_metalfx_upscale: upscaler is not a MetalFXUpscaler — skipping");
         }

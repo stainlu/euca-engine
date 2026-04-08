@@ -19,7 +19,7 @@ pub use components::{
     CachedColliderShape, Collider, ColliderShape, CollisionEvent, Gravity, Mass, PhysicsBody,
     RigidBodyType, SLEEP_THRESHOLD, Sleeping, Velocity, layers_interact,
 };
-pub use joints::{Joint, JointKind};
+pub use joints::{Joint, JointKind, JointMotor};
 pub use raycast::{
     OverlapHit, Ray, RayHit, SweepHit, WorldRayHit, overlap_sphere, raycast_aabb, raycast_collider,
     raycast_sphere, raycast_world, sweep_sphere,
