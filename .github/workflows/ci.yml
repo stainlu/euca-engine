@@ -78,13 +78,76 @@ jobs:
   bench:
     name: Benchmarks (macOS)
     runs-on: macos-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
+
+      # On PR: restore the latest baseline so criterion can compare
+      - name: Restore benchmark baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: target/criterion
+          key: criterion-baseline-latest
+
       - name: Run benchmarks
         run: cargo bench --workspace
+
+      # On push to main: persist baselines for future PR comparisons
+      - name: Save benchmark baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: target/criterion
+          key: criterion-baseline-${{ github.sha }}
+
+      - name: Save latest baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: target/criterion
+          key: criterion-baseline-latest
+
+      # On PR: compare against baseline and report regressions
+      - name: Install critcmp
+        if: github.event_name == 'pull_request'
+        run: cargo install critcmp --locked
+
+      - name: Compare benchmarks
+        if: github.event_name == 'pull_request'
+        id: bench-compare
+        run: |
+          RESULT=$(critcmp target/criterion --threshold 10 2>&1) || true
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          if echo "$RESULT" | grep -q "Regressed"; then
+            echo "has_regression=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_regression=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post benchmark results
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## Benchmark Results
+
+            ```
+            ${{ steps.bench-compare.outputs.result }}
+            ```
+
+            ${{ steps.bench-compare.outputs.has_regression == 'true' && '⚠️ **Performance regression detected** (>10% slower)' || '✅ No significant regressions' }}
+
+      - name: Fail on regression
+        if: github.event_name == 'pull_request' && steps.bench-compare.outputs.has_regression == 'true'
+        run: |
+          echo "::error::Benchmark regression detected (>10% threshold exceeded)"
+          exit 1
+
       - name: Upload benchmark reports
         uses: actions/upload-artifact@v4
         if: always()
