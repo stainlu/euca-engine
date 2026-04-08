@@ -18,10 +18,11 @@ pub async fn profile(State(world): State<SharedWorld>) -> Json<serde_json::Value
         let sections: Vec<serde_json::Value> = profiler
             .frame_summary()
             .iter()
-            .map(|(name, us)| {
+            .map(|(name, us, kind)| {
                 serde_json::json!({
                     "name": name,
                     "us": (*us * 10.0).round() / 10.0,
+                    "kind": format!("{kind:?}"),
                 })
             })
             .collect();

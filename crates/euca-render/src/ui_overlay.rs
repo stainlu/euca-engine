@@ -173,6 +173,7 @@ impl<D: euca_rhi::RenderDevice> UiOverlayRenderer<D> {
                     },
                 })],
                 depth_stencil_attachment: None, // no depth testing for UI
+                timestamp_writes: None,
             },
         );
 

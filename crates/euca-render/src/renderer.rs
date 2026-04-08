@@ -311,6 +311,123 @@ const SHADOW_MAP_SIZE: u32 = 2048;
 const NUM_SHADOW_CASCADES: u32 = 3;
 const CASCADE_ORTHO_SIZES: [f32; 3] = [8.0, 20.0, 50.0];
 
+/// Maximum number of GPU-timed sections per frame.
+///
+/// Each section uses two timestamp queries (start + end), so the query set
+/// holds `MAX_GPU_TIMER_SECTIONS * 2` entries.
+const MAX_GPU_TIMER_SECTIONS: u32 = 32;
+
+/// Per-pass GPU timing state using timestamp queries.
+///
+/// Implements a 2-frame readback pipeline to avoid GPU pipeline stalls:
+/// frame N writes timestamps and resolves them into `resolve_buffer`, then
+/// copies to `readback_buffer`. Frame N+1 maps `readback_buffer` to read
+/// the previous frame's timestamps while the current frame's queries land
+/// in the resolve buffer.
+struct GpuTimerState<D: RenderDevice> {
+    /// GPU query set holding raw timestamp values.
+    query_set: D::QuerySet,
+    /// GPU buffer that receives resolved u64 tick values
+    /// (QUERY_RESOLVE | COPY_SRC).
+    resolve_buffer: D::Buffer,
+    /// CPU-readable staging buffer (MAP_READ | COPY_DST).
+    readback_buffer: D::Buffer,
+    /// Sections being timed this frame: (name, query_start_index).
+    sections: Vec<(&'static str, u32)>,
+    /// Number of timestamps written this frame (each section uses 2).
+    timestamp_count: u32,
+    /// Nanoseconds per GPU timestamp tick.
+    timestamp_period_ns: f32,
+    /// Previous frame's section metadata, paired with the readback buffer
+    /// that should now contain their resolved timestamps.
+    prev_sections: Vec<(&'static str, u32)>,
+    /// Previous frame's timestamp count.
+    prev_timestamp_count: u32,
+}
+
+impl<D: RenderDevice> GpuTimerState<D> {
+    /// Try to create GPU timer state. Returns `None` if timestamps are unsupported.
+    fn new(rhi: &D) -> Option<Self> {
+        let query_count = MAX_GPU_TIMER_SECTIONS * 2;
+        let query_set = rhi.create_query_set(query_count)?;
+        let buf_size = (query_count as u64) * std::mem::size_of::<u64>() as u64;
+
+        let resolve_buffer = rhi.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("GPU Timer Resolve"),
+            size: buf_size,
+            usage: euca_rhi::BufferUsages::QUERY_RESOLVE | euca_rhi::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let readback_buffer = rhi.create_buffer(&euca_rhi::BufferDesc {
+            label: Some("GPU Timer Readback"),
+            size: buf_size,
+            usage: euca_rhi::BufferUsages::MAP_READ | euca_rhi::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let timestamp_period_ns = rhi.timestamp_period_ns();
+
+        Some(Self {
+            query_set,
+            resolve_buffer,
+            readback_buffer,
+            sections: Vec::with_capacity(MAX_GPU_TIMER_SECTIONS as usize),
+            timestamp_count: 0,
+            timestamp_period_ns,
+            prev_sections: Vec::new(),
+            prev_timestamp_count: 0,
+        })
+    }
+
+    /// Register a section to be timed this frame.
+    ///
+    /// Returns the query index pair (begin, end) for use in
+    /// `RenderPassTimestampWrites`, or `None` if the section limit is reached.
+    fn begin_section(&mut self, name: &'static str) -> Option<(u32, u32)> {
+        if self.timestamp_count + 2 > MAX_GPU_TIMER_SECTIONS * 2 {
+            return None;
+        }
+        let begin_idx = self.timestamp_count;
+        let end_idx = begin_idx + 1;
+        self.sections.push((name, begin_idx));
+        self.timestamp_count += 2;
+        Some((begin_idx, end_idx))
+    }
+
+    /// Resolve this frame's queries and copy to the readback buffer.
+    ///
+    /// Must be called before submitting the encoder so the resolve and copy
+    /// commands are part of the same submission.
+    fn resolve_and_copy(&self, rhi: &D, encoder: &mut D::CommandEncoder) {
+        if self.timestamp_count == 0 {
+            return;
+        }
+        rhi.resolve_query_set(
+            encoder,
+            &self.query_set,
+            0..self.timestamp_count,
+            &self.resolve_buffer,
+        );
+        let byte_count = (self.timestamp_count as u64) * std::mem::size_of::<u64>() as u64;
+        rhi.copy_buffer_to_buffer(
+            encoder,
+            &self.resolve_buffer,
+            0,
+            &self.readback_buffer,
+            0,
+            byte_count,
+        );
+    }
+
+    /// Rotate frame state: move current sections to `prev_*` for next frame's readback.
+    fn end_frame(&mut self) {
+        self.prev_sections = std::mem::take(&mut self.sections);
+        self.prev_timestamp_count = self.timestamp_count;
+        self.timestamp_count = 0;
+    }
+}
+
 /// The main PBR forward renderer.
 ///
 /// Owns all GPU pipeline state, uploaded meshes, materials, textures, and
@@ -453,6 +570,8 @@ pub struct Renderer<D: euca_rhi::RenderDevice = euca_rhi::wgpu_backend::WgpuDevi
     start_time: std::time::Instant,
     /// Water render pipeline (alpha blend, no depth write).
     water_pipeline: D::RenderPipeline,
+    /// Optional GPU timestamp timer. `None` when the backend lacks timestamp queries.
+    gpu_timer: Option<GpuTimerState<D>>,
     /// SSGI pass (screen-space global illumination with temporal accumulation).
     ssgi_pass: crate::ssgi::SsgiPass<D>,
     /// Previous frame HDR color for SSGI temporal reprojection.
@@ -1182,6 +1301,7 @@ impl<D: RenderDevice> Renderer<D> {
             metalfx_reset_history: false,
             start_time: std::time::Instant::now(),
             water_pipeline,
+            gpu_timer: GpuTimerState::new(rhi),
             ssgi_pass: crate::ssgi::SsgiPass::new(rhi, surface_w, surface_h),
             prev_color_texture: {
                 rhi.create_texture(&euca_rhi::TextureDesc {
@@ -1257,6 +1377,37 @@ impl<D: RenderDevice> Renderer<D> {
             prepass_textures: crate::prepass::PrepassTextures::new(rhi, surface_w, surface_h),
             deferred_pipeline: None,
             render_path: crate::deferred::RenderPath::Forward,
+        }
+    }
+
+    /// Read back the previous frame's GPU timestamps and record them in the profiler.
+    ///
+    /// Call this once per frame, before `end_frame()`, to populate the profiler
+    /// with GPU-side pass timings. Does nothing when timestamp queries are
+    /// unsupported or no previous frame data is available.
+    pub fn read_gpu_timings(&self, rhi: &D, profiler: &mut euca_core::Profiler) {
+        let timer = match &self.gpu_timer {
+            Some(t) if t.prev_timestamp_count > 0 => t,
+            _ => return,
+        };
+
+        let timestamps =
+            rhi.read_timestamp_buffer(&timer.readback_buffer, timer.prev_timestamp_count);
+        if timestamps.is_empty() {
+            return;
+        }
+
+        let period_ns = timer.timestamp_period_ns;
+        for &(name, begin_idx) in &timer.prev_sections {
+            let end_idx = begin_idx + 1;
+            if (end_idx as usize) < timestamps.len() {
+                let begin_tick = timestamps[begin_idx as usize];
+                let end_tick = timestamps[end_idx as usize];
+                if end_tick >= begin_tick {
+                    let duration_us = (end_tick - begin_tick) as f64 * (period_ns as f64) / 1000.0;
+                    profiler.record_gpu_section(name, duration_us);
+                }
+            }
         }
     }
 
@@ -2067,6 +2218,21 @@ impl<D: RenderDevice> Renderer<D> {
         encoder: &mut D::CommandEncoder,
     ) {
         let rhi: &D = gpu;
+
+        // ── GPU timestamp setup ──
+        // Register sections for GPU timing; allocate query indices up front.
+        // Post-process timing is not attached here because PostProcessStack
+        // runs many internal sub-passes; per-pass timing can be threaded
+        // through PostProcessStack::execute in a future enhancement.
+        let shadow_ts = self
+            .gpu_timer
+            .as_mut()
+            .and_then(|t| t.begin_section("gpu:shadow"));
+        let pbr_ts = self
+            .gpu_timer
+            .as_mut()
+            .and_then(|t| t.begin_section("gpu:pbr"));
+
         let vp = camera.view_projection_matrix(gpu.aspect_ratio());
         let light_vp = Self::light_vp(light);
         let (opaque_cmds, transparent_cmds, water_cmds) =
@@ -2115,6 +2281,22 @@ impl<D: RenderDevice> Renderer<D> {
                 self.ensure_shadow_instance_capacity(rhi, shadow_instances.len());
                 self.shadow_instance_buffer.write(&**gpu, &shadow_instances);
             }
+            // Attach shadow timestamps: begin on the first cascade, end on the last.
+            let is_first_cascade = cascade_idx == 0;
+            let is_last_cascade = cascade_idx == CASCADE_ORTHO_SIZES.len() - 1;
+            let shadow_ts_writes = shadow_ts.and_then(|(begin_idx, end_idx)| {
+                self.gpu_timer
+                    .as_ref()
+                    .map(|t| euca_rhi::RenderPassTimestampWrites {
+                        query_set: &t.query_set,
+                        beginning_of_pass_write_index: if is_first_cascade {
+                            Some(begin_idx)
+                        } else {
+                            None
+                        },
+                        end_of_pass_write_index: if is_last_cascade { Some(end_idx) } else { None },
+                    })
+            });
             let mut pass = rhi.begin_render_pass(
                 encoder,
                 &euca_rhi::RenderPassDesc {
@@ -2128,6 +2310,7 @@ impl<D: RenderDevice> Renderer<D> {
                         }),
                         stencil_ops: None,
                     }),
+                    timestamp_writes: shadow_ts_writes,
                 },
             );
             pass.set_pipeline(&self.shadow_pipeline);
@@ -2316,10 +2499,23 @@ impl<D: RenderDevice> Renderer<D> {
                 self.metalfx_low_res_depth_view.as_ref().unwrap(),
             )
         } else {
-            (&self.msaa_hdr_view, Some(resolve_target), &self.depth_texture)
+            (
+                &self.msaa_hdr_view,
+                Some(resolve_target),
+                &self.depth_texture,
+            )
         };
 
         {
+            let pbr_ts_writes = pbr_ts.and_then(|(begin_idx, end_idx)| {
+                self.gpu_timer
+                    .as_ref()
+                    .map(|t| euca_rhi::RenderPassTimestampWrites {
+                        query_set: &t.query_set,
+                        beginning_of_pass_write_index: Some(begin_idx),
+                        end_of_pass_write_index: Some(end_idx),
+                    })
+            });
             let mut pass = rhi.begin_render_pass(
                 encoder,
                 &euca_rhi::RenderPassDesc {
@@ -2349,6 +2545,7 @@ impl<D: RenderDevice> Renderer<D> {
                         }),
                         stencil_ops: None,
                     }),
+                    timestamp_writes: pbr_ts_writes,
                 },
             );
             pass.set_pipeline(&self.sky_pipeline);
@@ -2540,43 +2737,43 @@ impl<D: RenderDevice> Renderer<D> {
                 &self.metalfx_output,
             )
         {
-                let (jitter_x, jitter_y) = (camera.jitter[0], camera.jitter[1]);
-                rhi.encode_metalfx_upscale(
-                    encoder,
-                    upscaler.as_ref(),
-                    low_color,
-                    low_depth,
-                    &self.velocity_textures.velocity_texture,
-                    output_tex,
-                    jitter_x,
-                    jitter_y,
-                    self.metalfx_reset_history,
-                );
-                self.metalfx_reset_history = false;
+            let (jitter_x, jitter_y) = (camera.jitter[0], camera.jitter[1]);
+            rhi.encode_metalfx_upscale(
+                encoder,
+                upscaler.as_ref(),
+                low_color,
+                low_depth,
+                &self.velocity_textures.velocity_texture,
+                output_tex,
+                jitter_x,
+                jitter_y,
+                self.metalfx_reset_history,
+            );
+            self.metalfx_reset_history = false;
 
-                // Blit MetalFX output into the post-process ping buffer so
-                // downstream passes (TAA, motion blur, DoF) read the upscaled image.
-                let (sw, sh) = rhi.surface_size();
-                rhi.copy_texture_to_texture(
-                    encoder,
-                    &euca_rhi::TexelCopyTextureInfo {
-                        texture: output_tex,
-                        mip_level: 0,
-                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
-                        aspect: euca_rhi::TextureAspect::All,
-                    },
-                    &euca_rhi::TexelCopyTextureInfo {
-                        texture: self.post_process_stack.ping_texture(),
-                        mip_level: 0,
-                        origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
-                        aspect: euca_rhi::TextureAspect::All,
-                    },
-                    euca_rhi::Extent3d {
-                        width: sw,
-                        height: sh,
-                        depth_or_array_layers: 1,
-                    },
-                );
+            // Blit MetalFX output into the post-process ping buffer so
+            // downstream passes (TAA, motion blur, DoF) read the upscaled image.
+            let (sw, sh) = rhi.surface_size();
+            rhi.copy_texture_to_texture(
+                encoder,
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: output_tex,
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                &euca_rhi::TexelCopyTextureInfo {
+                    texture: self.post_process_stack.ping_texture(),
+                    mip_level: 0,
+                    origin: euca_rhi::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: euca_rhi::TextureAspect::All,
+                },
+                euca_rhi::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+            );
         }
 
         // GPU compute particles: update (compute dispatch) then draw (render pass).
@@ -2610,6 +2807,7 @@ impl<D: RenderDevice> Renderer<D> {
                                 stencil_ops: None,
                             },
                         ),
+                        timestamp_writes: None,
                     },
                 );
                 for system in &self.gpu_particle_systems {
@@ -2769,6 +2967,8 @@ impl<D: RenderDevice> Renderer<D> {
         self.frame_count = self.frame_count.wrapping_add(1);
 
         // Post-processing via the modular stack.
+        // (Note: post_process_ts is attached to the last fullscreen pass internally
+        //  via the post_process_stack; here we time it at the GPU level.)
         {
             let proj = camera.projection_matrix(gpu.aspect_ratio());
             let inv_projection = proj.inverse().to_cols_array_2d();
@@ -2781,6 +2981,18 @@ impl<D: RenderDevice> Renderer<D> {
                 &inv_projection,
                 &projection,
             );
+        }
+
+        // ── GPU timestamp resolve ──
+        // Resolve this frame's queries and copy to readback buffer. This must
+        // happen before the encoder is submitted by the caller.
+        if let Some(ref timer) = self.gpu_timer {
+            timer.resolve_and_copy(rhi, encoder);
+        }
+
+        // Rotate GPU timer frame state so next frame reads this frame's data.
+        if let Some(ref mut timer) = self.gpu_timer {
+            timer.end_frame();
         }
     }
 
@@ -2985,8 +3197,7 @@ impl Renderer<euca_rhi::metal_backend::MetalDevice> {
                 | euca_rhi::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let output_view =
-            rhi.create_texture_view(&output, &euca_rhi::TextureViewDesc::default());
+        let output_view = rhi.create_texture_view(&output, &euca_rhi::TextureViewDesc::default());
 
         // Create the MetalFX temporal scaler (panics on unsupported hardware).
         let upscaler = rhi.create_temporal_upscaler(

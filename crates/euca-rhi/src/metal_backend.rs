@@ -844,6 +844,7 @@ impl RenderDevice for MetalDevice {
     type RenderPass<'a> = MetalRenderPass<'a>;
     type ComputePass<'a> = MetalComputePass<'a>;
     type SurfaceTexture = MetalSurfaceTexture;
+    type QuerySet = ();
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
@@ -1422,6 +1423,31 @@ impl RenderDevice for MetalDevice {
         }
     }
 
+    fn copy_buffer_to_buffer(
+        &self,
+        encoder: &mut MetalCommandEncoder,
+        src: &MetalBuffer,
+        src_offset: u64,
+        dst: &MetalBuffer,
+        dst_offset: u64,
+        size: u64,
+    ) {
+        unsafe {
+            let blit = encoder
+                .command_buffer
+                .blitCommandEncoder()
+                .expect("Failed to create Metal blit encoder for buffer copy");
+            blit.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
+                &src.0,
+                src_offset as usize,
+                &dst.0,
+                dst_offset as usize,
+                size as usize,
+            );
+            blit.endEncoding();
+        }
+    }
+
     fn copy_texture_to_texture(
         &self,
         encoder: &mut MetalCommandEncoder,
@@ -1584,7 +1610,9 @@ impl RenderDevice for MetalDevice {
         reset: bool,
     ) {
         if let Some(scaler) = upscaler.downcast_ref::<MetalFXUpscaler>() {
-            scaler.encode(encoder, color, depth, motion, output, jitter_x, jitter_y, reset);
+            scaler.encode(
+                encoder, color, depth, motion, output, jitter_x, jitter_y, reset,
+            );
         } else {
             log::warn!("encode_metalfx_upscale: upscaler is not a MetalFXUpscaler — skipping");
         }

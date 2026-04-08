@@ -520,6 +520,7 @@ impl<D: RenderDevice> DeferredPipeline<D> {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: None,
             },
         );
         pass.set_pipeline(&self.gbuffer_pipeline);
@@ -546,6 +547,7 @@ impl<D: RenderDevice> DeferredPipeline<D> {
                     },
                 })],
                 depth_stencil_attachment: None,
+                timestamp_writes: None,
             },
         );
         pass.set_pipeline(&self.lighting_pipeline);

@@ -990,6 +990,7 @@ fn run_fullscreen_pass<D: euca_rhi::RenderDevice>(
                 },
             })],
             depth_stencil_attachment: None,
+            timestamp_writes: None,
         },
     );
     pass.set_pipeline(pipeline);

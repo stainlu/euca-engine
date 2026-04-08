@@ -406,6 +406,7 @@ fn main() {
                                     }),
                                     stencil_ops: None,
                                 }),
+                                timestamp_writes: None,
                             },
                         );
                         pass.set_pipeline(pipeline);

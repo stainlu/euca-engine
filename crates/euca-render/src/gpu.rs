@@ -108,6 +108,12 @@ impl GpuContext {
             required_features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
         }
 
+        // GPU timestamp queries for per-pass GPU profiling.
+        if supported.contains(wgpu::Features::TIMESTAMP_QUERY) {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
+            log::info!("GPU supports TIMESTAMP_QUERY — GPU pass timing enabled");
+        }
+
         // Bindless materials: texture binding arrays + non-uniform indexing.
         let bindless_features = wgpu::Features::TEXTURE_BINDING_ARRAY
             | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
@@ -173,6 +179,8 @@ impl GpuContext {
 
         let unified_memory = survey.supports_unified_memory();
 
+        let has_timestamp_query = required_features.contains(wgpu::Features::TIMESTAMP_QUERY);
+
         let capabilities = Capabilities {
             unified_memory,
             multi_draw_indirect: has_multi_draw_indirect,
@@ -184,6 +192,7 @@ impl GpuContext {
             max_bindings_per_bind_group: cap_max_bindings,
             max_binding_array_elements: cap_max_binding_array,
             device_name: adapter_info.name.clone(),
+            timestamp_query: has_timestamp_query,
             ..Default::default()
         };
 
@@ -248,6 +257,10 @@ impl GpuContext {
             required_features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
         }
 
+        if supported.contains(wgpu::Features::TIMESTAMP_QUERY) {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
+        }
+
         let bindless_features = wgpu::Features::TEXTURE_BINDING_ARRAY
             | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
         if supported.contains(bindless_features) {
@@ -305,6 +318,8 @@ impl GpuContext {
 
         let unified_memory = survey.supports_unified_memory();
 
+        let has_timestamp_query_async = required_features.contains(wgpu::Features::TIMESTAMP_QUERY);
+
         let capabilities = Capabilities {
             unified_memory,
             multi_draw_indirect: has_multi_draw_indirect,
@@ -316,6 +331,7 @@ impl GpuContext {
             max_bindings_per_bind_group: cap_max_bindings,
             max_binding_array_elements: cap_max_binding_array,
             device_name: adapter_info.name.clone(),
+            timestamp_query: has_timestamp_query_async,
             ..Default::default()
         };
 

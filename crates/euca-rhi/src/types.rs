@@ -270,6 +270,7 @@ bitflags! {
     UNIFORM       = 1 << 6;
     STORAGE       = 1 << 7;
     INDIRECT      = 1 << 8;
+    QUERY_RESOLVE = 1 << 9;
 }
 
 bitflags! {
@@ -855,10 +856,25 @@ pub struct RenderPassDepthStencilAttachment<'a, D: RenderDevice + ?Sized> {
     pub stencil_ops: Option<Operations<u32>>,
 }
 
+/// Timestamp query writes for a render or compute pass.
+///
+/// When attached to a pass descriptor, the GPU writes timestamps at the
+/// beginning and/or end of the pass into the given query set indices.
+pub struct RenderPassTimestampWrites<'a, D: RenderDevice + ?Sized> {
+    /// The query set that receives the timestamp values.
+    pub query_set: &'a D::QuerySet,
+    /// Query index for the beginning-of-pass timestamp, or `None` to skip.
+    pub beginning_of_pass_write_index: Option<u32>,
+    /// Query index for the end-of-pass timestamp, or `None` to skip.
+    pub end_of_pass_write_index: Option<u32>,
+}
+
 pub struct RenderPassDesc<'a, D: RenderDevice + ?Sized> {
     pub label: Option<&'a str>,
     pub color_attachments: &'a [Option<RenderPassColorAttachment<'a, D>>],
     pub depth_stencil_attachment: Option<RenderPassDepthStencilAttachment<'a, D>>,
+    /// Optional GPU timestamp writes for per-pass timing.
+    pub timestamp_writes: Option<RenderPassTimestampWrites<'a, D>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -930,6 +946,8 @@ pub struct Capabilities {
     /// Whether memoryless render targets are supported (tile memory only,
     /// saves ~20% bandwidth for transient G-buffer attachments).
     pub memoryless_render_targets: bool,
+    /// Whether GPU timestamp queries are supported for per-pass timing.
+    pub timestamp_query: bool,
 }
 
 impl Default for Capabilities {
@@ -948,6 +966,7 @@ impl Default for Capabilities {
             apple_silicon: false,
             max_buffer_length: 256 * 1024 * 1024, // 256 MiB conservative default
             memoryless_render_targets: false,
+            timestamp_query: false,
         }
     }
 }

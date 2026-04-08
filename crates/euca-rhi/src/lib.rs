@@ -49,6 +49,7 @@ pub trait RenderDevice: 'static {
     where
         Self: 'a;
     type SurfaceTexture;
+    type QuerySet: 'static;
 
     // -- Capabilities --
 
@@ -106,6 +107,16 @@ pub trait RenderDevice: 'static {
         size: Option<u64>,
     );
 
+    fn copy_buffer_to_buffer(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        src: &Self::Buffer,
+        src_offset: u64,
+        dst: &Self::Buffer,
+        dst_offset: u64,
+        size: u64,
+    );
+
     fn copy_texture_to_texture(
         &self,
         encoder: &mut Self::CommandEncoder,
@@ -145,6 +156,48 @@ pub trait RenderDevice: 'static {
     fn aspect_ratio(&self) -> f32 {
         let (w, h) = self.surface_size();
         w as f32 / h as f32
+    }
+
+    // -- Timestamp queries --
+
+    /// Create a timestamp query set with `count` slots.
+    ///
+    /// Returns `None` if the backend does not support timestamp queries.
+    #[allow(unused_variables)]
+    fn create_query_set(&self, count: u32) -> Option<Self::QuerySet> {
+        None
+    }
+
+    /// Resolve timestamp queries into a destination buffer for CPU readback.
+    ///
+    /// Copies the raw u64 tick values for indices in `range` into `dest` at
+    /// offset 0. No-op on backends that do not support timestamp queries.
+    #[allow(unused_variables)]
+    fn resolve_query_set(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        query_set: &Self::QuerySet,
+        range: std::ops::Range<u32>,
+        dest: &Self::Buffer,
+    ) {
+    }
+
+    /// Nanoseconds per GPU timestamp tick.
+    ///
+    /// Used to convert raw tick differences into wall-clock durations.
+    /// Returns `1.0` by default (backends override with the actual period).
+    fn timestamp_period_ns(&self) -> f32 {
+        1.0
+    }
+
+    /// Read resolved timestamp data from a MAP_READ buffer.
+    ///
+    /// Returns the raw u64 tick values for `count` timestamps. This may
+    /// block briefly while the GPU finishes writing the buffer. Returns
+    /// an empty vec if the buffer is not ready or timestamps are unsupported.
+    #[allow(unused_variables)]
+    fn read_timestamp_buffer(&self, buffer: &Self::Buffer, count: u32) -> Vec<u64> {
+        Vec::new()
     }
 
     /// Encode a MetalFX temporal upscale pass.

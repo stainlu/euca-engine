@@ -367,6 +367,7 @@ impl<D: euca_rhi::RenderDevice> VelocityPipeline<D> {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: None,
             },
         );
         pass.set_pipeline(&self.pipeline);

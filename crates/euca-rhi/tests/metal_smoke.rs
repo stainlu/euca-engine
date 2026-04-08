@@ -267,6 +267,7 @@ fn metal_offscreen_render_pass() {
                     },
                 })],
                 depth_stencil_attachment: None,
+                timestamp_writes: None,
             },
         );
         pass.set_pipeline(&pipeline);

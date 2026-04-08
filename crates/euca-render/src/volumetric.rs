@@ -425,6 +425,7 @@ impl<D: RenderDevice> VolumetricFogPass<D> {
                         },
                     })],
                     depth_stencil_attachment: None,
+                    timestamp_writes: None,
                 },
             );
             pass.set_pipeline(&self.composite_pipeline);
