@@ -48,6 +48,7 @@ pub fn physics_step_system(world: &mut World) {
 fn physics_step_single(world: &mut World, dt: f32, gravity: Vec3) {
     sync_cached_shapes(world);
     apply_gravity(world, gravity, dt);
+    apply_external_forces(world, dt);
     integrate_positions(world, dt);
     resolve_collisions_and_joints(world);
     update_sleep_states(world);
@@ -98,6 +99,61 @@ fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
         let g = world.get::<Gravity>(entity).map(|g| g.0).unwrap_or(gravity);
         if let Some(vel) = world.get_mut::<Velocity>(entity) {
             vel.linear = vel.linear + g * dt;
+        }
+    }
+}
+
+/// Apply external forces and torques to dynamic bodies.
+///
+/// For each entity with `ExternalForce`, `Mass`, and `Velocity`:
+///   - Static/kinematic bodies are skipped (their inverse mass is zero anyway).
+///   - Sleeping bodies are skipped unless the force or torque is nonzero, in
+///     which case the body is woken first.
+///   - Linear:  `v += F * inverse_mass * dt`
+///   - Angular: `w += T * inverse_inertia * dt`
+///   - One-shot forces (`persistent == false`) are zeroed after application.
+fn apply_external_forces(world: &mut World, dt: f32) {
+    let entities: Vec<Entity> = {
+        let query = Query::<(Entity, &PhysicsBody, &ExternalForce)>::new(world);
+        query
+            .iter()
+            .filter(|(_, body, _)| body.body_type == RigidBodyType::Dynamic)
+            .map(|(e, _, _)| e)
+            .collect()
+    };
+
+    for entity in entities {
+        // Single immutable read to extract all needed fields.
+        let (force, torque, persistent) = match world.get::<ExternalForce>(entity) {
+            Some(ef) => (ef.force, ef.torque, ef.persistent),
+            None => continue,
+        };
+
+        let has_force = force.length_squared() > 0.0 || torque.length_squared() > 0.0;
+
+        // Skip sleeping bodies unless external force/torque is nonzero.
+        if world.get::<Sleeping>(entity).is_some() {
+            if !has_force {
+                continue;
+            }
+            world.remove::<Sleeping>(entity);
+        }
+
+        let (inv_mass, inv_inertia) = match world.get::<Mass>(entity) {
+            Some(m) => (m.inverse_mass, m.inverse_inertia),
+            None => continue,
+        };
+
+        if let Some(vel) = world.get_mut::<Velocity>(entity) {
+            vel.linear = vel.linear + force * inv_mass * dt;
+            vel.angular = vel.angular + torque * inv_inertia * dt;
+        }
+
+        if !persistent {
+            if let Some(ef) = world.get_mut::<ExternalForce>(entity) {
+                ef.force = Vec3::ZERO;
+                ef.torque = Vec3::ZERO;
+            }
         }
     }
 }
@@ -1362,4 +1418,219 @@ mod tests {
         );
         assert!(events[0].penetration > 0.0);
     }
+
+    // ---- ExternalForce tests ------------------------------------------------
+
+    /// Helper: create a zero-gravity world with a single dynamic body that has
+    /// the given mass/inertia and an `ExternalForce` component. Returns the
+    /// entity.
+    fn spawn_forced_body(world: &mut World, mass: f32, inertia: f32) -> Entity {
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(entity, GlobalTransform::default());
+        world.insert(entity, PhysicsBody::dynamic());
+        world.insert(entity, Mass::new(mass, inertia));
+        world.insert(entity, Velocity::default());
+        world.insert(entity, ExternalForce::default());
+        entity
+    }
+
+    #[test]
+    fn constant_force_linear_velocity_grows_linearly() {
+        let mut world = World::new();
+        let entity = spawn_forced_body(&mut world, 1.0, 1.0);
+
+        // Persistent force of 10 N in +X.
+        world.insert(
+            entity,
+            ExternalForce {
+                force: Vec3::new(10.0, 0.0, 0.0),
+                torque: Vec3::ZERO,
+                persistent: true,
+            },
+        );
+
+        let dt = 1.0 / 60.0;
+        let n = 10;
+        for _ in 0..n {
+            physics_step_system(&mut world);
+        }
+
+        let vel = world.get::<Velocity>(entity).unwrap();
+        let expected = 10.0 * dt * n as f32; // F * inv_mass(=1) * dt * steps
+        assert!(
+            (vel.linear.x - expected).abs() < 1e-4,
+            "Expected vx ~ {expected}, got {}",
+            vel.linear.x
+        );
+    }
+
+    #[test]
+    fn constant_torque_angular_velocity_grows_linearly() {
+        let mut world = World::new();
+        let entity = spawn_forced_body(&mut world, 1.0, 2.0);
+
+        world.insert(
+            entity,
+            ExternalForce {
+                force: Vec3::ZERO,
+                torque: Vec3::new(0.0, 6.0, 0.0),
+                persistent: true,
+            },
+        );
+
+        let dt = 1.0 / 60.0;
+        let inv_inertia = 1.0 / 2.0;
+        let n = 10;
+        for _ in 0..n {
+            physics_step_system(&mut world);
+        }
+
+        let vel = world.get::<Velocity>(entity).unwrap();
+        let expected = 6.0 * inv_inertia * dt * n as f32;
+        assert!(
+            (vel.angular.y - expected).abs() < 1e-4,
+            "Expected wy ~ {expected}, got {}",
+            vel.angular.y
+        );
+    }
+
+    #[test]
+    fn oneshot_force_cleared_after_one_step() {
+        let mut world = World::new();
+        let entity = spawn_forced_body(&mut world, 1.0, 1.0);
+
+        world.insert(
+            entity,
+            ExternalForce {
+                force: Vec3::new(60.0, 0.0, 0.0),
+                torque: Vec3::ZERO,
+                persistent: false,
+            },
+        );
+
+        // First step applies the force.
+        physics_step_system(&mut world);
+        let vel_after_1 = world.get::<Velocity>(entity).unwrap().linear.x;
+        assert!(vel_after_1 > 0.0, "Force should have been applied");
+
+        // Second step: force was cleared, so velocity should not increase.
+        physics_step_system(&mut world);
+        let vel_after_2 = world.get::<Velocity>(entity).unwrap().linear.x;
+        assert!(
+            (vel_after_2 - vel_after_1).abs() < 1e-6,
+            "One-shot force should not re-apply: v1={vel_after_1}, v2={vel_after_2}"
+        );
+    }
+
+    #[test]
+    fn persistent_force_persists_across_steps() {
+        let mut world = World::new();
+        let entity = spawn_forced_body(&mut world, 1.0, 1.0);
+
+        world.insert(
+            entity,
+            ExternalForce {
+                force: Vec3::new(10.0, 0.0, 0.0),
+                torque: Vec3::ZERO,
+                persistent: true,
+            },
+        );
+
+        physics_step_system(&mut world);
+        let v1 = world.get::<Velocity>(entity).unwrap().linear.x;
+
+        physics_step_system(&mut world);
+        let v2 = world.get::<Velocity>(entity).unwrap().linear.x;
+
+        // Velocity should keep growing each step.
+        assert!(
+            v2 > v1,
+            "Persistent force should keep accelerating: v1={v1}, v2={v2}"
+        );
+        // And force component should still be set.
+        let ef = world.get::<ExternalForce>(entity).unwrap();
+        assert!(
+            ef.force.length_squared() > 0.0,
+            "Persistent force should not be cleared"
+        );
+    }
+
+    #[test]
+    fn force_on_sleeping_body_wakes_it() {
+        let mut world = World::new();
+        let entity = spawn_forced_body(&mut world, 1.0, 1.0);
+        world.insert(entity, Sleeping);
+
+        world.insert(
+            entity,
+            ExternalForce {
+                force: Vec3::new(5.0, 0.0, 0.0),
+                torque: Vec3::ZERO,
+                persistent: false,
+            },
+        );
+
+        physics_step_system(&mut world);
+
+        assert!(
+            world.get::<Sleeping>(entity).is_none(),
+            "Body should have been woken by external force"
+        );
+        let vel = world.get::<Velocity>(entity).unwrap();
+        assert!(vel.linear.x > 0.0, "Force should have been applied");
+    }
+
+    #[test]
+    fn force_on_static_body_is_ignored() {
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        let entity = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(entity, GlobalTransform::default());
+        world.insert(entity, PhysicsBody::fixed());
+        world.insert(entity, Mass::infinite());
+        world.insert(entity, Velocity::default());
+        world.insert(
+            entity,
+            ExternalForce {
+                force: Vec3::new(100.0, 0.0, 0.0),
+                torque: Vec3::ZERO,
+                persistent: true,
+            },
+        );
+
+        physics_step_system(&mut world);
+
+        let vel = world.get::<Velocity>(entity).unwrap();
+        assert!(
+            vel.linear.x.abs() < 1e-8,
+            "Static body should not be affected by external force, vx={}",
+            vel.linear.x
+        );
+    }
+
+    #[test]
+    fn zero_force_on_sleeping_body_does_not_wake_it() {
+        let mut world = World::new();
+        let entity = spawn_forced_body(&mut world, 1.0, 1.0);
+        world.insert(entity, Sleeping);
+        // ExternalForce is default (zero), so the body should stay asleep.
+
+        physics_step_system(&mut world);
+
+        assert!(
+            world.get::<Sleeping>(entity).is_some(),
+            "Zero external force should not wake a sleeping body"
+        );
+    }
+
 }
