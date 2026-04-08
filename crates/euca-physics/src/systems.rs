@@ -50,7 +50,7 @@ fn physics_step_single(world: &mut World, dt: f32, gravity: Vec3) {
     apply_gravity(world, gravity, dt);
     apply_external_forces(world, dt);
     integrate_positions(world, dt);
-    resolve_collisions_and_joints(world);
+    resolve_collisions_and_joints(world, dt);
     update_sleep_states(world);
 }
 
@@ -71,14 +71,14 @@ pub fn sync_cached_shapes(world: &mut World) {
     }
 }
 
-fn resolve_collisions_and_joints(world: &mut World) {
+fn resolve_collisions_and_joints(world: &mut World, dt: f32) {
     // Collect joints (if any)
     let joints = world
         .resource::<crate::world::Joints>()
         .map(|j| j.joints.clone())
         .unwrap_or_default();
 
-    resolve_collisions_with_joints(world, &joints);
+    resolve_collisions_with_joints(world, &joints, dt);
 }
 
 fn apply_gravity(world: &mut World, gravity: Vec3, dt: f32) {
@@ -776,7 +776,7 @@ fn solve_island(
     }
 }
 
-fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Joint]) {
+fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Joint], dt: f32) {
     // ── Iterative constraint solver ──
     // Collect bodies once, iterate position corrections in-place,
     // write back to world at the end.
@@ -914,6 +914,14 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
             .map(|(i, b)| (b.entity, i))
             .collect();
 
+        // Read current rotations for joint entities (needed for angle limits).
+        let entity_rotations: std::collections::HashMap<Entity, euca_math::Quat> = joints
+            .iter()
+            .flat_map(|j| [j.entity_a, j.entity_b])
+            .filter_map(|e| world.get::<LocalTransform>(e).map(|lt| (e, lt.0.rotation)))
+            .collect();
+
+        // Position solving iterations.
         for _iter in 0..SOLVER_ITERATIONS {
             for joint in joints {
                 let idx_a = entity_to_idx.get(&joint.entity_a).copied();
@@ -928,7 +936,16 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
                     None => continue,
                 };
 
-                let (ca, cb) = joint.solve(pos_a, pos_b, is_a_dyn, is_b_dyn);
+                let rot_a = entity_rotations
+                    .get(&joint.entity_a)
+                    .copied()
+                    .unwrap_or(euca_math::Quat::IDENTITY);
+                let rot_b = entity_rotations
+                    .get(&joint.entity_b)
+                    .copied()
+                    .unwrap_or(euca_math::Quat::IDENTITY);
+
+                let (ca, cb) = joint.solve(pos_a, pos_b, rot_a, rot_b, is_a_dyn, is_b_dyn);
 
                 if let Some(i) = idx_a {
                     bodies[i].pos = bodies[i].pos + ca;
@@ -936,6 +953,41 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
                 if let Some(i) = idx_b {
                     bodies[i].pos = bodies[i].pos + cb;
                 }
+            }
+        }
+
+        // Velocity solving: apply motor impulses (skip joints without motors).
+        for joint in joints.iter().filter(|j| j.has_motor()) {
+            let idx_a = entity_to_idx.get(&joint.entity_a).copied();
+            let idx_b = entity_to_idx.get(&joint.entity_b).copied();
+
+            let is_a_dyn = idx_a
+                .map(|i| bodies[i].body_type == RigidBodyType::Dynamic)
+                .unwrap_or(false);
+            let is_b_dyn = idx_b
+                .map(|i| bodies[i].body_type == RigidBodyType::Dynamic)
+                .unwrap_or(false);
+
+            let ang_vel_a = world
+                .get::<Velocity>(joint.entity_a)
+                .map(|v| v.angular)
+                .unwrap_or(Vec3::ZERO);
+            let ang_vel_b = world
+                .get::<Velocity>(joint.entity_b)
+                .map(|v| v.angular)
+                .unwrap_or(Vec3::ZERO);
+
+            let (imp_a, imp_b) = joint.solve_velocity(ang_vel_a, ang_vel_b, is_a_dyn, is_b_dyn, dt);
+
+            if imp_a.length_squared() > 1e-12
+                && let Some(vel) = world.get_mut::<Velocity>(joint.entity_a)
+            {
+                vel.angular = vel.angular + imp_a;
+            }
+            if imp_b.length_squared() > 1e-12
+                && let Some(vel) = world.get_mut::<Velocity>(joint.entity_b)
+            {
+                vel.angular = vel.angular + imp_b;
             }
         }
     }
