@@ -16,6 +16,10 @@ pub struct CollisionPair {
 }
 
 /// Test if two AABBs overlap given their centers and half-extents.
+///
+/// Returns `(normal_A_to_B, penetration_depth, contact_point)` on overlap.
+/// The contact point is the midpoint of the two centers, offset to lie on the
+/// overlap face along the minimum penetration axis.
 // clippy::too_many_arguments — separating position and per-axis half-extents
 // avoids allocating intermediate AABB structs in the hot collision loop.
 #[allow(clippy::too_many_arguments)]
@@ -28,7 +32,7 @@ pub fn intersect_aabb(
     hx_b: f32,
     hy_b: f32,
     hz_b: f32,
-) -> Option<(Vec3, f32)> {
+) -> Option<(Vec3, f32, Vec3)> {
     let dx = (pos_b.x - pos_a.x).abs() - (hx_a + hx_b);
     let dy = (pos_b.y - pos_a.y).abs() - (hy_a + hy_b);
     let dz = (pos_b.z - pos_a.z).abs() - (hz_a + hz_b);
@@ -42,25 +46,39 @@ pub fn intersect_aabb(
     let overlap_y = -dy;
     let overlap_z = -dz;
 
+    // Contact point: midpoint of the overlap region along the penetration axis.
+    // On the minimum-penetration axis, the contact sits at the boundary between
+    // the two AABBs. On the other two axes, use the midpoint of the centers.
+    let mid = (pos_a + pos_b) * 0.5;
+
     if overlap_x <= overlap_y && overlap_x <= overlap_z {
         let sign = if pos_b.x > pos_a.x { 1.0 } else { -1.0 };
-        Some((Vec3::new(sign, 0.0, 0.0), overlap_x))
+        let contact_x = pos_a.x + sign * hx_a;
+        let contact = Vec3::new(contact_x, mid.y, mid.z);
+        Some((Vec3::new(sign, 0.0, 0.0), overlap_x, contact))
     } else if overlap_y <= overlap_z {
         let sign = if pos_b.y > pos_a.y { 1.0 } else { -1.0 };
-        Some((Vec3::new(0.0, sign, 0.0), overlap_y))
+        let contact_y = pos_a.y + sign * hy_a;
+        let contact = Vec3::new(mid.x, contact_y, mid.z);
+        Some((Vec3::new(0.0, sign, 0.0), overlap_y, contact))
     } else {
         let sign = if pos_b.z > pos_a.z { 1.0 } else { -1.0 };
-        Some((Vec3::new(0.0, 0.0, sign), overlap_z))
+        let contact_z = pos_a.z + sign * hz_a;
+        let contact = Vec3::new(mid.x, mid.y, contact_z);
+        Some((Vec3::new(0.0, 0.0, sign), overlap_z, contact))
     }
 }
 
 /// Test if two spheres overlap.
+///
+/// Returns `(normal_A_to_B, penetration_depth, contact_point)` on overlap.
+/// The contact point lies on the line between centers at A's surface.
 pub fn intersect_spheres(
     pos_a: Vec3,
     radius_a: f32,
     pos_b: Vec3,
     radius_b: f32,
-) -> Option<(Vec3, f32)> {
+) -> Option<(Vec3, f32, Vec3)> {
     let diff = pos_b - pos_a;
     let dist_sq = diff.length_squared();
     let sum_r = radius_a + radius_b;
@@ -71,15 +89,20 @@ pub fn intersect_spheres(
 
     let dist = dist_sq.sqrt();
     if dist < 1e-6 {
-        return Some((Vec3::Y, sum_r)); // Degenerate: same position
+        // Degenerate: same position. Pick arbitrary normal, contact at center.
+        return Some((Vec3::Y, sum_r, pos_a));
     }
 
     let normal = diff * (1.0 / dist);
     let depth = sum_r - dist;
-    Some((normal, depth))
+    let contact = pos_a + normal * radius_a;
+    Some((normal, depth, contact))
 }
 
 /// Test AABB vs Sphere overlap.
+///
+/// Returns `(normal_AABB_to_Sphere, penetration_depth, contact_point)` on overlap.
+/// The contact point is the closest point on the AABB surface to the sphere center.
 pub fn intersect_aabb_sphere(
     aabb_pos: Vec3,
     hx: f32,
@@ -87,7 +110,7 @@ pub fn intersect_aabb_sphere(
     hz: f32,
     sphere_pos: Vec3,
     radius: f32,
-) -> Option<(Vec3, f32)> {
+) -> Option<(Vec3, f32, Vec3)> {
     // Find closest point on AABB to sphere center
     let closest = Vec3::new(
         sphere_pos.x.clamp(aabb_pos.x - hx, aabb_pos.x + hx),
@@ -105,12 +128,12 @@ pub fn intersect_aabb_sphere(
     let dist = dist_sq.sqrt();
     if dist < 1e-6 {
         // Sphere center is inside AABB
-        return Some((Vec3::Y, radius));
+        return Some((Vec3::Y, radius, closest));
     }
 
     let normal = diff * (1.0 / dist);
     let depth = radius - dist;
-    Some((normal, depth))
+    Some((normal, depth, closest))
 }
 
 // ── Capsule collision helpers ──
@@ -181,7 +204,18 @@ fn closest_points_segments(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> (Vec3, Vec3) {
     (closest_a, closest_c)
 }
 
+/// Shift a sphere-vs-sphere contact point from A's surface to the midpoint
+/// of the overlap region. Used by capsule tests that delegate to `intersect_spheres`.
+fn midpoint_contact(result: (Vec3, f32, Vec3)) -> (Vec3, f32, Vec3) {
+    let (normal, depth, surface_a) = result;
+    let contact = surface_a + normal * (depth * 0.5);
+    (normal, depth, contact)
+}
+
 /// Test two capsules for overlap.
+///
+/// Returns `(normal_A_to_B, penetration_depth, contact_point)` on overlap.
+/// The contact point is the midpoint of the overlap between the two capsule surfaces.
 pub fn intersect_capsules(
     pos_a: Vec3,
     radius_a: f32,
@@ -189,29 +223,35 @@ pub fn intersect_capsules(
     pos_b: Vec3,
     radius_b: f32,
     half_height_b: f32,
-) -> Option<(Vec3, f32)> {
+) -> Option<(Vec3, f32, Vec3)> {
     let (a0, a1) = capsule_segment(pos_a, half_height_a);
     let (b0, b1) = capsule_segment(pos_b, half_height_b);
 
     let (ca, cb) = closest_points_segments(a0, a1, b0, b1);
-    intersect_spheres(ca, radius_a, cb, radius_b)
+    intersect_spheres(ca, radius_a, cb, radius_b).map(midpoint_contact)
 }
 
 /// Test capsule vs sphere overlap.
+///
+/// Returns `(normal_capsule_to_sphere, penetration_depth, contact_point)`.
+/// The contact point is the midpoint of the overlap between the capsule
+/// surface and the sphere surface.
 pub fn intersect_capsule_sphere(
     cap_pos: Vec3,
     cap_radius: f32,
     cap_half_height: f32,
     sphere_pos: Vec3,
     sphere_radius: f32,
-) -> Option<(Vec3, f32)> {
+) -> Option<(Vec3, f32, Vec3)> {
     let (a, b) = capsule_segment(cap_pos, cap_half_height);
     let closest = closest_point_on_segment(a, b, sphere_pos);
-    intersect_spheres(closest, cap_radius, sphere_pos, sphere_radius)
+    intersect_spheres(closest, cap_radius, sphere_pos, sphere_radius).map(midpoint_contact)
 }
 
 /// Test capsule vs AABB overlap (approximate: finds closest point on capsule
 /// spine to AABB, then does sphere-AABB test at that point).
+///
+/// Returns `(normal_AABB_to_capsule, penetration_depth, contact_point)`.
 pub fn intersect_capsule_aabb(
     cap_pos: Vec3,
     cap_radius: f32,
@@ -220,22 +260,25 @@ pub fn intersect_capsule_aabb(
     hx: f32,
     hy: f32,
     hz: f32,
-) -> Option<(Vec3, f32)> {
+) -> Option<(Vec3, f32, Vec3)> {
     let (a, b) = capsule_segment(cap_pos, cap_half_height);
     // Find the point on the capsule spine closest to the AABB center
     let closest_on_spine = closest_point_on_segment(a, b, aabb_pos);
-    // Now test that sphere against the AABB
+    // Now test that sphere against the AABB — contact point is already the
+    // closest point on the AABB surface from intersect_aabb_sphere.
     intersect_aabb_sphere(aabb_pos, hx, hy, hz, closest_on_spine, cap_radius)
 }
 
 /// Test two collider shapes for overlap. Dispatches to the correct narrow-phase
-/// test based on shape types. Returns `(normal_A_to_B, penetration_depth)` on overlap.
+/// test based on shape types.
+///
+/// Returns `(normal_A_to_B, penetration_depth, contact_point)` on overlap.
 pub fn intersect_shapes(
     pos_a: Vec3,
     shape_a: &ColliderShape,
     pos_b: Vec3,
     shape_b: &ColliderShape,
-) -> Option<(Vec3, f32)> {
+) -> Option<(Vec3, f32, Vec3)> {
     match (shape_a, shape_b) {
         // AABB vs AABB
         (
@@ -259,7 +302,8 @@ pub fn intersect_shapes(
             intersect_aabb_sphere(pos_a, *hx, *hy, *hz, pos_b, *radius)
         }
         (ColliderShape::Sphere { radius }, ColliderShape::Aabb { hx, hy, hz }) => {
-            intersect_aabb_sphere(pos_b, *hx, *hy, *hz, pos_a, *radius).map(|(n, d)| (-n, d))
+            intersect_aabb_sphere(pos_b, *hx, *hy, *hz, pos_a, *radius)
+                .map(|(n, d, cp)| (-n, d, cp))
         }
         // Capsule vs Capsule
         (
@@ -286,9 +330,8 @@ pub fn intersect_shapes(
                 radius,
                 half_height,
             },
-        ) => {
-            intersect_capsule_sphere(pos_b, *radius, *half_height, pos_a, *sr).map(|(n, d)| (-n, d))
-        }
+        ) => intersect_capsule_sphere(pos_b, *radius, *half_height, pos_a, *sr)
+            .map(|(n, d, cp)| (-n, d, cp)),
         // Capsule vs AABB
         (
             ColliderShape::Capsule {
@@ -304,7 +347,7 @@ pub fn intersect_shapes(
                 half_height,
             },
         ) => intersect_capsule_aabb(pos_b, *radius, *half_height, pos_a, *hx, *hy, *hz)
-            .map(|(n, d)| (-n, d)),
+            .map(|(n, d, cp)| (-n, d, cp)),
     }
 }
 
@@ -325,9 +368,11 @@ mod tests {
             1.0,
         );
         assert!(r.is_some());
-        let (normal, depth) = r.unwrap();
+        let (normal, depth, contact) = r.unwrap();
         assert!((normal.x - 1.0).abs() < 1e-6);
         assert!(depth > 0.0);
+        // Contact should be on A's +X face (x = 1.0), centered on YZ.
+        assert!((contact.x - 1.0).abs() < 1e-6, "contact.x = {}", contact.x);
     }
 
     #[test]
@@ -349,8 +394,10 @@ mod tests {
     fn sphere_overlap() {
         let r = intersect_spheres(Vec3::ZERO, 1.0, Vec3::new(1.5, 0.0, 0.0), 1.0);
         assert!(r.is_some());
-        let (_, depth) = r.unwrap();
+        let (_, depth, contact) = r.unwrap();
         assert!((depth - 0.5).abs() < 1e-5);
+        // Contact is on A's surface toward B: x = radius_a = 1.0.
+        assert!((contact.x - 1.0).abs() < 1e-5, "contact.x = {}", contact.x);
     }
 
     #[test]
@@ -363,6 +410,9 @@ mod tests {
     fn aabb_sphere_overlap() {
         let r = intersect_aabb_sphere(Vec3::ZERO, 1.0, 1.0, 1.0, Vec3::new(1.5, 0.0, 0.0), 1.0);
         assert!(r.is_some());
+        let (_, _, contact) = r.unwrap();
+        // Contact is closest AABB point to sphere center = (1.0, 0.0, 0.0).
+        assert!((contact.x - 1.0).abs() < 1e-5, "contact.x = {}", contact.x);
     }
 
     // ── Capsule tests ──
@@ -372,7 +422,7 @@ mod tests {
         // Two vertical capsules side by side
         let r = intersect_capsules(Vec3::ZERO, 0.5, 1.0, Vec3::new(0.8, 0.0, 0.0), 0.5, 1.0);
         assert!(r.is_some());
-        let (_, depth) = r.unwrap();
+        let (_, depth, _contact) = r.unwrap();
         assert!(depth > 0.0);
     }
 

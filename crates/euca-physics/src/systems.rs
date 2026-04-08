@@ -362,6 +362,8 @@ struct Body {
     layer: u32,
     mask: u32,
     inverse_mass: f32,
+    /// Diagonal of the inverse inertia tensor in body frame.
+    inverse_inertia_tensor: Vec3,
 }
 
 /// Spatial hash broadphase: returns candidate pairs (indices into bodies slice).
@@ -630,6 +632,16 @@ struct DeferredVelocityResponse {
     friction: f32,
     inv_mass_a: f32,
     inv_mass_b: f32,
+    /// Diagonal of inverse inertia tensor for body A.
+    inv_inertia_a: Vec3,
+    /// Diagonal of inverse inertia tensor for body B.
+    inv_inertia_b: Vec3,
+    /// World-space contact point.
+    contact_point: Vec3,
+    /// Center of body A at collision time.
+    pos_a: Vec3,
+    /// Center of body B at collision time.
+    pos_b: Vec3,
 }
 
 /// Solve a single island's position constraints. Returns collision events and
@@ -655,7 +667,7 @@ fn solve_island(
                 continue;
             }
 
-            if let Some((normal, depth)) = intersect_shapes(
+            if let Some((normal, depth, contact_point)) = intersect_shapes(
                 bodies[gi].pos,
                 &bodies[gi].shape,
                 bodies[gj].pos,
@@ -668,6 +680,7 @@ fn solve_island(
                         entity_b: bodies[gj].entity,
                         normal,
                         penetration: depth,
+                        contact_point,
                     });
                 }
 
@@ -695,6 +708,11 @@ fn solve_island(
                         friction: (bodies[gi].friction * bodies[gj].friction).sqrt(),
                         inv_mass_a,
                         inv_mass_b,
+                        inv_inertia_a: bodies[gi].inverse_inertia_tensor,
+                        inv_inertia_b: bodies[gj].inverse_inertia_tensor,
+                        contact_point,
+                        pos_a: bodies[gi].pos,
+                        pos_b: bodies[gj].pos,
                     });
                 }
             }
@@ -717,14 +735,22 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
                 if world.get::<Sleeping>(e).is_some() {
                     return None;
                 }
-                let inv_mass = world
-                    .get::<Mass>(e)
-                    .map(|m| m.inverse_mass)
+                let mass_comp = world.get::<Mass>(e);
+                let inv_mass = mass_comp.map(|m| m.inverse_mass).unwrap_or_else(|| {
+                    if body.body_type == RigidBodyType::Dynamic {
+                        1.0 // default: 1 kg
+                    } else {
+                        0.0 // static/kinematic: immovable
+                    }
+                });
+                let inv_inertia_tensor = mass_comp
+                    .map(|m| m.inverse_inertia_tensor)
                     .unwrap_or_else(|| {
                         if body.body_type == RigidBodyType::Dynamic {
-                            1.0 // default: 1 kg
+                            // Default: unit sphere-like inertia (1/6 for a unit cube)
+                            Vec3::new(6.0, 6.0, 6.0)
                         } else {
-                            0.0 // static/kinematic: immovable
+                            Vec3::ZERO
                         }
                     });
                 Some(Body {
@@ -737,6 +763,7 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
                     layer: col.layer,
                     mask: col.mask,
                     inverse_mass: inv_mass,
+                    inverse_inertia_tensor: inv_inertia_tensor,
                 })
             })
             .collect()
@@ -819,18 +846,7 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
 
     // Apply deferred velocity responses (needs &mut World).
     for resp in &all_velocity_responses {
-        apply_velocity_response(
-            world,
-            resp.entity_a,
-            resp.type_a,
-            resp.entity_b,
-            resp.type_b,
-            resp.normal,
-            resp.restitution,
-            resp.friction,
-            resp.inv_mass_a,
-            resp.inv_mass_b,
-        );
+        apply_velocity_response(world, resp);
     }
 
     // ── Solve joint constraints (using body positions from the solver) ──
@@ -883,92 +899,113 @@ fn resolve_collisions_with_joints(world: &mut World, joints: &[crate::joints::Jo
     }
 }
 
+/// Component-wise multiply: `Vec3(a.x*b.x, a.y*b.y, a.z*b.z)`.
+/// Used for applying diagonal inverse inertia tensors.
+fn vec3_comp_mul(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(a.x * b.x, a.y * b.y, a.z * b.z)
+}
+
 /// Apply impulse-based velocity response between two colliding bodies.
-/// Uses mass-weighted impulse distribution.
-// clippy::too_many_arguments — all parameters come from the two colliding
-// bodies and the contact manifold; bundling them into a struct would add
-// a throwaway allocation per collision pair with no clarity gain.
-#[allow(clippy::too_many_arguments)]
-fn apply_velocity_response(
-    world: &mut World,
-    entity_a: Entity,
-    type_a: RigidBodyType,
-    entity_b: Entity,
-    type_b: RigidBodyType,
-    normal: Vec3,
-    restitution: f32,
-    friction: f32,
-    inv_mass_a: f32,
-    inv_mass_b: f32,
-) {
+///
+/// Uses the standard rigid-body contact impulse formula including angular
+/// terms: off-center contacts generate torque, and the effective mass
+/// denominator accounts for rotational inertia.
+fn apply_velocity_response(world: &mut World, resp: &DeferredVelocityResponse) {
+    let inv_mass_a = resp.inv_mass_a;
+    let inv_mass_b = resp.inv_mass_b;
     let total_inv_mass = inv_mass_a + inv_mass_b;
     if total_inv_mass < 1e-12 {
         return; // Both immovable
     }
 
-    // Read velocities
-    let vel_a = if type_a == RigidBodyType::Dynamic {
+    let normal = resp.normal;
+    let inv_i_a = resp.inv_inertia_a;
+    let inv_i_b = resp.inv_inertia_b;
+
+    // Lever arms from body centers to contact point
+    let r_a = resp.contact_point - resp.pos_a;
+    let r_b = resp.contact_point - resp.pos_b;
+
+    // Read full velocities (linear + angular)
+    let (lin_a, ang_a) = if resp.type_a == RigidBodyType::Dynamic {
         world
-            .get::<Velocity>(entity_a)
-            .map(|v| v.linear)
-            .unwrap_or(Vec3::ZERO)
+            .get::<Velocity>(resp.entity_a)
+            .map(|v| (v.linear, v.angular))
+            .unwrap_or((Vec3::ZERO, Vec3::ZERO))
     } else {
-        Vec3::ZERO
+        (Vec3::ZERO, Vec3::ZERO)
     };
-    let vel_b = if type_b == RigidBodyType::Dynamic {
+    let (lin_b, ang_b) = if resp.type_b == RigidBodyType::Dynamic {
         world
-            .get::<Velocity>(entity_b)
-            .map(|v| v.linear)
-            .unwrap_or(Vec3::ZERO)
+            .get::<Velocity>(resp.entity_b)
+            .map(|v| (v.linear, v.angular))
+            .unwrap_or((Vec3::ZERO, Vec3::ZERO))
     } else {
-        Vec3::ZERO
+        (Vec3::ZERO, Vec3::ZERO)
     };
 
-    // Relative velocity of B with respect to A along normal
-    let relative_vel = vel_b - vel_a;
-    let vn = relative_vel.dot(normal);
+    // Velocity at contact point = linear + angular x r
+    let v_a_contact = lin_a + ang_a.cross(r_a);
+    let v_b_contact = lin_b + ang_b.cross(r_b);
+    let v_rel = v_b_contact - v_a_contact;
+    let v_rel_n = v_rel.dot(normal);
 
-    // Only resolve if bodies are approaching
-    if vn >= 0.0 {
+    // Only resolve if bodies are approaching at the contact
+    if v_rel_n >= 0.0 {
         return;
     }
 
-    let approach_speed = -vn;
+    let approach_speed = -v_rel_n;
     let bounce_factor = if approach_speed < REST_VELOCITY_THRESHOLD {
         0.0
     } else {
-        restitution
+        resp.restitution
     };
 
-    // Impulse magnitude: j = -(1 + e) * v_rel . n / (1/m_a + 1/m_b)
-    let j = -(1.0 + bounce_factor) * vn / total_inv_mass;
+    // Impulse denominator includes rotational terms:
+    //   denom = 1/m_a + 1/m_b + n . ((I_a^-1 * (r_a x n)) x r_a)
+    //                               + n . ((I_b^-1 * (r_b x n)) x r_b)
+    let rn_a = r_a.cross(normal);
+    let rn_b = r_b.cross(normal);
+    let denom = total_inv_mass
+        + normal.dot(vec3_comp_mul(inv_i_a, rn_a).cross(r_a))
+        + normal.dot(vec3_comp_mul(inv_i_b, rn_b).cross(r_b));
+
+    if denom < 1e-12 {
+        return;
+    }
+
+    // Normal impulse magnitude
+    let j = -(1.0 + bounce_factor) * v_rel_n / denom;
     let impulse = normal * j;
 
-    // Friction impulse (tangent direction)
-    let tangent_vel = relative_vel - normal * vn;
-    let tangent_speed = tangent_vel.length();
-    let friction_impulse = if tangent_speed > 1e-6 {
-        let tangent_dir = tangent_vel * (1.0 / tangent_speed);
-        // Coulomb friction: clamp tangential impulse to ±(mu * normal impulse)
-        let jt_max = friction * j.abs();
-        let jt = (-tangent_speed / total_inv_mass).clamp(-jt_max, jt_max);
-        tangent_dir * jt
+    // Friction impulse (tangential)
+    let v_tangent = v_rel - normal * v_rel_n;
+    let tangent_speed_sq = v_tangent.length_squared();
+    let friction_impulse = if tangent_speed_sq > 1e-12 {
+        let tangent = v_tangent * (1.0 / tangent_speed_sq.sqrt());
+        let jt = (-v_rel.dot(tangent) / denom).clamp(-j * resp.friction, j * resp.friction);
+        tangent * jt
     } else {
         Vec3::ZERO
     };
 
+    // Total impulse (normal + friction) applied once for both linear and angular.
     let total_impulse = impulse + friction_impulse;
 
-    // Apply impulses (v += impulse * inverse_mass)
-    if type_a == RigidBodyType::Dynamic
-        && let Some(vel) = world.get_mut::<Velocity>(entity_a)
+    if resp.type_a == RigidBodyType::Dynamic
+        && let Some(vel) = world.get_mut::<Velocity>(resp.entity_a)
     {
         vel.linear = vel.linear - total_impulse * inv_mass_a;
+        let torque_a = r_a.cross(total_impulse);
+        vel.angular = vel.angular - vec3_comp_mul(inv_i_a, torque_a);
     }
-    if type_b == RigidBodyType::Dynamic
-        && let Some(vel) = world.get_mut::<Velocity>(entity_b)
+    if resp.type_b == RigidBodyType::Dynamic
+        && let Some(vel) = world.get_mut::<Velocity>(resp.entity_b)
     {
         vel.linear = vel.linear + total_impulse * inv_mass_b;
+        let torque_b = r_b.cross(total_impulse);
+        vel.angular = vel.angular + vec3_comp_mul(inv_i_b, torque_b);
     }
 }
 
@@ -1361,5 +1398,163 @@ mod tests {
             "Should have emitted at least one collision event"
         );
         assert!(events[0].penetration > 0.0);
+    }
+
+    // ── Angular impulse tests ──
+
+    #[test]
+    fn sphere_head_on_no_angular_velocity() {
+        // Two spheres colliding head-on along the X axis.
+        // The contact point lies on the line between centers, so r x n == 0
+        // and no angular velocity should be generated.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        let a = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(a, GlobalTransform::default());
+        world.insert(a, PhysicsBody::dynamic());
+        world.insert(a, Mass::from_sphere(1.0, 1.0));
+        world.insert(
+            a,
+            Velocity {
+                linear: Vec3::new(5.0, 0.0, 0.0),
+                angular: Vec3::ZERO,
+            },
+        );
+        world.insert(a, Collider::sphere(1.0).with_restitution(0.5));
+
+        let b = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            1.5, 0.0, 0.0,
+        ))));
+        world.insert(b, GlobalTransform::default());
+        world.insert(b, PhysicsBody::dynamic());
+        world.insert(b, Mass::from_sphere(1.0, 1.0));
+        world.insert(
+            b,
+            Velocity {
+                linear: Vec3::new(-5.0, 0.0, 0.0),
+                angular: Vec3::ZERO,
+            },
+        );
+        world.insert(b, Collider::sphere(1.0).with_restitution(0.5));
+
+        physics_step_system(&mut world);
+
+        let vel_a = world.get::<Velocity>(a).unwrap();
+        let vel_b = world.get::<Velocity>(b).unwrap();
+
+        // Angular velocity should remain ~zero for head-on sphere collision
+        assert!(
+            vel_a.angular.length() < 0.1,
+            "Sphere A should have no angular vel, got {:?}",
+            vel_a.angular
+        );
+        assert!(
+            vel_b.angular.length() < 0.1,
+            "Sphere B should have no angular vel, got {:?}",
+            vel_b.angular
+        );
+    }
+
+    #[test]
+    fn sphere_hits_aabb_edge_gains_angular_velocity() {
+        // A sphere moving in +X hits the corner/edge of an AABB offset in Y.
+        // The off-center contact should produce angular velocity on the AABB.
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::ZERO,
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        // Static wall (AABB) at x=2
+        let wall = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            2.0, 0.0, 0.0,
+        ))));
+        world.insert(wall, GlobalTransform::default());
+        world.insert(wall, PhysicsBody::fixed());
+        world.insert(wall, Collider::aabb(0.5, 2.0, 2.0).with_restitution(0.5));
+
+        // Dynamic AABB approaching the wall, offset in Y so contact is off-center
+        let box_e = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 0.5, 0.0,
+        ))));
+        world.insert(box_e, GlobalTransform::default());
+        world.insert(box_e, PhysicsBody::dynamic());
+        world.insert(box_e, Mass::from_aabb(1.0, 0.5, 0.5, 0.5));
+        world.insert(
+            box_e,
+            Velocity {
+                linear: Vec3::new(10.0, 0.0, 0.0),
+                angular: Vec3::ZERO,
+            },
+        );
+        world.insert(box_e, Collider::aabb(0.5, 0.5, 0.5).with_restitution(0.5));
+
+        // Run enough steps for the box to reach and collide with the wall
+        for _ in 0..20 {
+            physics_step_system(&mut world);
+        }
+
+        let vel = world.get::<Velocity>(box_e).unwrap();
+        // The box should have gained some angular velocity from the off-center
+        // collision. The exact axis depends on contact geometry, but it shouldn't
+        // be zero.
+        let ang_speed = vel.angular.length();
+        assert!(
+            ang_speed > 0.01,
+            "Off-center AABB-wall collision should produce angular velocity, got {}",
+            ang_speed
+        );
+    }
+
+    #[test]
+    fn off_center_box_wall_collision_bounces_and_spins() {
+        // A box hits a static floor off-center. It should both bounce (positive
+        // Y velocity after collision) and spin (non-zero angular velocity).
+        let mut world = World::new();
+        world.insert_resource(PhysicsConfig {
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            fixed_dt: 1.0 / 60.0,
+            max_substeps: 1,
+        });
+
+        // Static ground at y=0
+        let ground = world.spawn(LocalTransform(Transform::from_translation(Vec3::ZERO)));
+        world.insert(ground, GlobalTransform::default());
+        world.insert(ground, PhysicsBody::fixed());
+        world.insert(
+            ground,
+            Collider::aabb(10.0, 0.5, 10.0).with_restitution(0.8),
+        );
+
+        // Box falling with offset X velocity (so contact is off-center)
+        let box_e = world.spawn(LocalTransform(Transform::from_translation(Vec3::new(
+            0.0, 3.0, 0.0,
+        ))));
+        world.insert(box_e, GlobalTransform::default());
+        world.insert(box_e, PhysicsBody::dynamic());
+        world.insert(box_e, Mass::from_aabb(1.0, 0.5, 0.5, 0.5));
+        world.insert(
+            box_e,
+            Velocity {
+                linear: Vec3::new(5.0, 0.0, 0.0),
+                angular: Vec3::ZERO,
+            },
+        );
+        world.insert(box_e, Collider::aabb(0.5, 0.5, 0.5).with_restitution(0.8));
+
+        // Let the box fall and hit the ground
+        for _ in 0..120 {
+            physics_step_system(&mut world);
+        }
+
+        let pos = world.get::<LocalTransform>(box_e).unwrap().0.translation;
+        // Box should not have fallen through the ground
+        assert!(pos.y > -1.0, "Box fell through ground, y={}", pos.y);
     }
 }
