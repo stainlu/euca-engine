@@ -9,7 +9,8 @@ pub use panels::{
     hierarchy_panel, inspector_panel, terrain_panel, toolbar_panel,
 };
 pub use scene_file::{
-    PrefabRegistry, SCENE_VERSION, SceneEntity, SceneFile, load_scene_into_world,
+    PrefabRegistry, ReflectSceneEntity, SCENE_VERSION, SceneEntity, SceneFile, SceneFileV3,
+    load_scene_into_world, load_scene_v3_into_world,
 };
 pub use undo::UndoHistory;
 

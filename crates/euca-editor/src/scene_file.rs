@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+
 use euca_ecs::{Entity, Query, World};
+use euca_reflect::TypeRegistry;
+use euca_reflect::json::{reflect_from_json, reflect_to_json};
 use euca_render::{MaterialRef, MeshRenderer};
 use euca_scene::{GlobalTransform, LocalTransform};
 use serde::{Deserialize, Serialize};
@@ -105,7 +109,23 @@ impl SceneFile {
     }
 
     /// Deserialize from JSON with automatic version migration.
+    ///
+    /// Detects the format version:
+    /// - v1/v2: parsed as [`SceneFile`] (legacy hardcoded components)
+    /// - v3+: parsed as [`SceneFileV3`] (reflection-based), **not** returned
+    ///   here. Use [`SceneFileV3::from_json`] directly for v3 scenes.
+    ///
+    /// Returns `Err` if the JSON is v3+ (callers should use `SceneFileV3::from_json`).
     pub fn from_json(json: &str) -> Result<Self, String> {
+        // Peek at version to reject v3+ scenes that should use SceneFileV3.
+        if let Ok(v) = serde_json::from_str::<VersionProbe>(json)
+            && v.version >= 3
+        {
+            return Err(format!(
+                "Scene version {} requires SceneFileV3::from_json",
+                v.version
+            ));
+        }
         let mut scene: SceneFile =
             serde_json::from_str(json).map_err(|e| format!("Scene deserialization failed: {e}"))?;
         scene.migrate();
@@ -258,6 +278,134 @@ impl PrefabRegistry {
     }
 }
 
+// ── V3 Scene Format (reflection-driven) ──
+
+/// Helper for peeking at the `version` field without fully parsing.
+#[derive(Deserialize)]
+struct VersionProbe {
+    #[serde(default = "default_version")]
+    version: u32,
+}
+
+/// V3 entity: stores components as `type_name -> JSON object`.
+///
+/// Each value is the output of [`reflect_to_json`], which includes a
+/// `__type` discriminator for struct-typed components.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ReflectSceneEntity {
+    pub components: HashMap<String, serde_json::Value>,
+}
+
+/// Reflection-based scene file (v3+).
+///
+/// Unlike the legacy [`SceneFile`] which hardcodes a fixed set of
+/// components, `SceneFileV3` serializes *any* component that has been
+/// registered for reflection via [`World::register_reflect`].
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SceneFileV3 {
+    /// Format version. Always `3` for this format.
+    pub version: u32,
+    /// Entities and their reflected components.
+    pub entities: Vec<ReflectSceneEntity>,
+}
+
+impl SceneFileV3 {
+    /// Capture the current world state using reflection.
+    ///
+    /// For each alive entity, iterates all reflection-registered component
+    /// names and serializes whichever ones the entity actually has.
+    /// Components that are registered but absent on a given entity are
+    /// silently skipped.
+    pub fn capture(world: &World) -> Self {
+        let entities = world
+            .all_entities()
+            .into_iter()
+            .filter_map(|entity| {
+                let mut components = HashMap::new();
+                for name in world.reflect_component_names() {
+                    if let Some(val) = world.get_reflect(entity, name)
+                        && let Ok(json) = reflect_to_json(val.as_ref())
+                    {
+                        components.insert(name.to_string(), json);
+                    }
+                }
+                // Only include entities that have at least one reflected component.
+                if components.is_empty() {
+                    None
+                } else {
+                    Some(ReflectSceneEntity { components })
+                }
+            })
+            .collect();
+
+        Self {
+            version: 3,
+            entities,
+        }
+    }
+
+    /// Serialize to pretty JSON.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("Scene V3 serialization failed")
+    }
+
+    /// Deserialize a v3 scene from JSON.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        let scene: SceneFileV3 = serde_json::from_str(json)
+            .map_err(|e| format!("Scene V3 deserialization failed: {e}"))?;
+        if scene.version < 3 {
+            return Err(format!(
+                "Expected scene version >= 3, got {}. Use SceneFile::from_json for v1/v2.",
+                scene.version
+            ));
+        }
+        Ok(scene)
+    }
+}
+
+/// Load a v3 scene into the world using reflection.
+///
+/// For each entity in the scene, spawns a new empty entity and inserts
+/// components via [`World::insert_reflect`]. Components whose `__type`
+/// is not found in the `type_registry` are skipped with a log warning.
+///
+/// Returns the list of spawned entities.
+pub fn load_scene_v3_into_world(
+    world: &mut World,
+    scene: &SceneFileV3,
+    type_registry: &TypeRegistry,
+) -> Vec<Entity> {
+    let mut spawned = Vec::new();
+    for re in &scene.entities {
+        let entity = world.spawn_empty();
+        for json_val in re.components.values() {
+            // The __type field inside the JSON object tells us the type name.
+            let type_name = match json_val.get("__type").and_then(|v| v.as_str()) {
+                Some(tn) => tn,
+                None => {
+                    // Primitive component stored without __type — skip.
+                    log::info!("Skipping component without __type field");
+                    continue;
+                }
+            };
+            match reflect_from_json(json_val, type_registry) {
+                Some(val) => {
+                    if !world.insert_reflect(entity, type_name, val) {
+                        log::info!(
+                            "Skipping unregistered reflect component '{type_name}' during scene load"
+                        );
+                    }
+                }
+                None => {
+                    log::info!("Failed to deserialize component '{type_name}' from scene JSON");
+                }
+            }
+        }
+        spawned.push(entity);
+    }
+    spawned
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,5 +466,172 @@ mod tests {
 
         assert!(registry.prefabs.contains_key("soldier"));
         assert_eq!(registry.prefabs["soldier"].entities.len(), 1);
+    }
+
+    // ── V3 reflection-driven tests ──
+
+    /// Test component with Reflect derive.
+    #[derive(Clone, Debug, Default, PartialEq, euca_reflect::Reflect)]
+    struct TestHealth {
+        current: f32,
+        max: f32,
+    }
+
+    /// Test tuple-struct component with Reflect derive.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, euca_reflect::Reflect)]
+    struct TestTeam(u8);
+
+    #[test]
+    fn v3_capture_and_load_roundtrip() {
+        let mut world = World::new();
+        let mut type_reg = TypeRegistry::new();
+
+        // Register types for both the ECS reflection bridge and the type registry.
+        world.register_reflect::<TestHealth>();
+        world.register_reflect::<TestTeam>();
+        type_reg.register::<TestHealth>();
+        type_reg.register::<TestTeam>();
+
+        // Spawn an entity with both components.
+        let e = world.spawn(TestHealth {
+            current: 80.0,
+            max: 100.0,
+        });
+        world.insert(e, TestTeam(2));
+
+        // Capture.
+        let scene = SceneFileV3::capture(&world);
+        assert_eq!(scene.version, 3);
+        assert_eq!(scene.entities.len(), 1);
+        assert!(scene.entities[0].components.contains_key("TestHealth"));
+        assert!(scene.entities[0].components.contains_key("TestTeam"));
+
+        // Serialize and deserialize.
+        let json = scene.to_json();
+        let restored = SceneFileV3::from_json(&json).unwrap();
+        assert_eq!(restored.entities.len(), 1);
+
+        // Load into a fresh world.
+        let mut world2 = World::new();
+        world2.register_reflect::<TestHealth>();
+        world2.register_reflect::<TestTeam>();
+        let spawned = load_scene_v3_into_world(&mut world2, &restored, &type_reg);
+        assert_eq!(spawned.len(), 1);
+
+        let loaded_health = world2
+            .get_reflect(spawned[0], "TestHealth")
+            .expect("TestHealth should exist");
+        let h = loaded_health.as_any().downcast_ref::<TestHealth>().unwrap();
+        assert_eq!(h.current, 80.0);
+        assert_eq!(h.max, 100.0);
+
+        let loaded_team = world2
+            .get_reflect(spawned[0], "TestTeam")
+            .expect("TestTeam should exist");
+        let t = loaded_team.as_any().downcast_ref::<TestTeam>().unwrap();
+        assert_eq!(t.0, 2);
+    }
+
+    #[test]
+    fn v2_scene_still_loads() {
+        // V2 JSON should parse normally.
+        let v2_json = r#"{"version": 2, "entities": [{"position": [1, 2, 3], "scale": [1, 1, 1], "rotation": [0, 0, 0, 1], "mesh": "cube", "material": 0}]}"#;
+        let scene = SceneFile::from_json(v2_json).unwrap();
+        assert_eq!(scene.version, SCENE_VERSION);
+        assert_eq!(scene.entities.len(), 1);
+    }
+
+    #[test]
+    fn v3_json_rejected_by_v2_parser() {
+        let v3_json = r#"{"version": 3, "entities": []}"#;
+        assert!(SceneFile::from_json(v3_json).is_err());
+    }
+
+    #[test]
+    fn v3_multiple_components_on_same_entity() {
+        #[derive(Clone, Debug, Default, PartialEq, euca_reflect::Reflect)]
+        struct Score {
+            value: f32,
+        }
+
+        let mut world = World::new();
+        let mut type_reg = TypeRegistry::new();
+
+        world.register_reflect::<TestHealth>();
+        world.register_reflect::<TestTeam>();
+        world.register_reflect::<Score>();
+        type_reg.register::<TestHealth>();
+        type_reg.register::<TestTeam>();
+        type_reg.register::<Score>();
+
+        let e = world.spawn(TestHealth {
+            current: 50.0,
+            max: 50.0,
+        });
+        world.insert(e, TestTeam(1));
+        world.insert(e, Score { value: 42.0 });
+
+        let scene = SceneFileV3::capture(&world);
+        assert_eq!(scene.entities[0].components.len(), 3);
+
+        let json = scene.to_json();
+        let restored = SceneFileV3::from_json(&json).unwrap();
+
+        let mut world2 = World::new();
+        world2.register_reflect::<TestHealth>();
+        world2.register_reflect::<TestTeam>();
+        world2.register_reflect::<Score>();
+        let spawned = load_scene_v3_into_world(&mut world2, &restored, &type_reg);
+
+        let s = world2
+            .get_reflect(spawned[0], "Score")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Score>()
+            .unwrap()
+            .clone();
+        assert_eq!(s.value, 42.0);
+    }
+
+    #[test]
+    fn unregistered_components_skipped_in_capture() {
+        #[derive(Clone, Debug, Default)]
+        struct Invisible {
+            _data: f32,
+        }
+
+        let mut world = World::new();
+        let type_reg = TypeRegistry::new();
+
+        world.register_reflect::<TestHealth>();
+
+        let e = world.spawn(TestHealth {
+            current: 10.0,
+            max: 10.0,
+        });
+        // Invisible is not registered for reflection.
+        world.insert(e, Invisible { _data: 999.0 });
+
+        let scene = SceneFileV3::capture(&world);
+        assert_eq!(scene.entities.len(), 1);
+        // Only TestHealth should be captured.
+        assert!(scene.entities[0].components.contains_key("TestHealth"));
+        assert_eq!(scene.entities[0].components.len(), 1);
+    }
+
+    #[test]
+    fn get_reflect_returns_none_without_component() {
+        let mut world = World::new();
+        world.register_reflect::<TestHealth>();
+        let e = world.spawn_empty();
+        assert!(world.get_reflect(e, "TestHealth").is_none());
+    }
+
+    #[test]
+    fn insert_reflect_returns_false_for_unregistered() {
+        let mut world = World::new();
+        let e = world.spawn_empty();
+        let val: Box<dyn euca_reflect::Reflect> = Box::new(42_f32);
+        assert!(!world.insert_reflect(e, "NotRegistered", val));
     }
 }

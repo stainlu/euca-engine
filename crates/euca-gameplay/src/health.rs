@@ -5,6 +5,7 @@
 //! Systems: `apply_damage_system`, `death_check_system`.
 
 use euca_ecs::{Entity, Events, Query, World};
+use euca_reflect::Reflect;
 
 use crate::combat_math::{self, DamageType};
 use crate::stats::DamageResistance;
@@ -13,12 +14,21 @@ use crate::stats::DamageResistance;
 ///
 /// Damage pipeline: `DamageEvent` -> `apply_damage_system` reduces `current`
 /// -> `death_check_system` adds `Dead` marker + emits `DeathEvent` when `current <= 0`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Reflect)]
 pub struct Health {
     /// Current hit points (clamped to `[0, max]` by systems).
     pub current: f32,
     /// Maximum hit points. Healing cannot exceed this value.
     pub max: f32,
+}
+
+impl Default for Health {
+    fn default() -> Self {
+        Self {
+            current: 100.0,
+            max: 100.0,
+        }
+    }
 }
 
 impl Health {

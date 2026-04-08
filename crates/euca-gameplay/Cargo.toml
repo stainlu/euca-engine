@@ -12,6 +12,7 @@ euca-ecs = { path = "../euca-ecs" }
 euca-input = { path = "../euca-input" }
 euca-math = { path = "../euca-math" }
 euca-physics = { path = "../euca-physics" }
+euca-reflect = { path = "../euca-reflect" }
 euca-render = { path = "../euca-render" }
 euca-scene = { path = "../euca-scene" }
 euca-ai = { path = "../euca-ai" }

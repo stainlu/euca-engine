@@ -34,4 +34,4 @@ pub use shared::SharedWorld;
 pub use snapshot::{EntitySnapshot, WorldSnapshot};
 pub use system::{AccessSystem, IntoSystem, LabeledSystem, System};
 pub use system_param::{Res, ResMut, SystemAccess};
-pub use world::World;
+pub use world::{ReflectComponentFns, World};
