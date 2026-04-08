@@ -104,6 +104,8 @@ impl_reflect_primitive!(i32, "i32");
 impl_reflect_primitive!(u32, "u32");
 impl_reflect_primitive!(i64, "i64");
 impl_reflect_primitive!(u64, "u64");
+impl_reflect_primitive!(u8, "u8");
+impl_reflect_primitive!(u16, "u16");
 impl_reflect_primitive!(bool, "bool");
 impl_reflect_primitive!(String, "String");
 
@@ -123,6 +125,8 @@ pub mod json {
             "u32" => Ok(any.downcast_ref::<u32>().copied().unwrap().into()),
             "i64" => Ok(any.downcast_ref::<i64>().copied().unwrap().into()),
             "u64" => Ok(any.downcast_ref::<u64>().copied().unwrap().into()),
+            "u8" => Ok(any.downcast_ref::<u8>().copied().unwrap().into()),
+            "u16" => Ok(any.downcast_ref::<u16>().copied().unwrap().into()),
             "bool" => Ok(any.downcast_ref::<bool>().copied().unwrap().into()),
             "String" => Ok(any.downcast_ref::<String>().cloned().unwrap().into()),
             other => Err(format!("unsupported reflect type: {other}")),
@@ -153,6 +157,12 @@ pub mod json {
             Ok(serde_json::Value::Object(map))
         }
     }
+    /// Deserialize a [`Reflect`] value from a JSON object.
+    ///
+    /// The JSON must contain a `__type` field matching a registered type name.
+    /// Remaining fields are deserialized and applied via [`Reflect::set_field`].
+    /// Field type hints from the default instance guide numeric coercion so
+    /// that `u8`, `u16`, `i32` etc. are restored with the correct concrete type.
     pub fn reflect_from_json(
         json: &serde_json::Value,
         registry: &TypeRegistry,
@@ -164,27 +174,47 @@ pub mod json {
             if k == "__type" {
                 continue;
             }
-            if let Some(fv) = json_to_val(v, registry) {
+            // Use field type info from the default instance to guide
+            // numeric coercion so that u8/u16/i32/etc. round-trip correctly.
+            let type_hint = inst.field_ref(k).map(|f| f.type_name());
+            if let Some(fv) = json_to_val_hinted(v, registry, type_hint) {
                 inst.set_field(k, fv.as_ref());
             }
         }
         Some(inst)
     }
-    fn json_to_val(v: &serde_json::Value, reg: &TypeRegistry) -> Option<Box<dyn Reflect>> {
+
+    /// Convert a JSON value to a boxed [`Reflect`] value.
+    ///
+    /// When `type_hint` is provided (from the target field's `type_name()`),
+    /// numeric values are coerced to the exact primitive type expected.
+    fn json_to_val_hinted(
+        v: &serde_json::Value,
+        reg: &TypeRegistry,
+        type_hint: Option<&str>,
+    ) -> Option<Box<dyn Reflect>> {
         match v {
-            serde_json::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Some(Box::new(f as f32))
-                } else if let Some(i) = n.as_i64() {
-                    Some(Box::new(i))
-                } else {
-                    n.as_u64().map(|u| Box::new(u) as Box<dyn Reflect>)
-                }
-            }
+            serde_json::Value::Number(n) => coerce_number(n, type_hint),
             serde_json::Value::Bool(b) => Some(Box::new(*b)),
             serde_json::Value::String(s) => Some(Box::new(s.clone())),
             serde_json::Value::Object(_) => reflect_from_json(v, reg),
             _ => None,
+        }
+    }
+
+    /// Coerce a JSON number to the concrete numeric [`Reflect`] type
+    /// indicated by `type_hint`. Falls back to `f32` when no hint is given.
+    fn coerce_number(n: &serde_json::Number, type_hint: Option<&str>) -> Option<Box<dyn Reflect>> {
+        match type_hint {
+            Some("u8") => Some(Box::new(n.as_u64()? as u8)),
+            Some("u16") => Some(Box::new(n.as_u64()? as u16)),
+            Some("u32") => Some(Box::new(n.as_u64()? as u32)),
+            Some("u64") => Some(Box::new(n.as_u64()?)),
+            Some("i32") => Some(Box::new(n.as_i64()? as i32)),
+            Some("i64") => Some(Box::new(n.as_i64()?)),
+            Some("f64") => Some(Box::new(n.as_f64()?)),
+            // Unknown type hint or no hint: default to f32.
+            _ => Some(Box::new(n.as_f64()? as f32)),
         }
     }
 }

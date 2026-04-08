@@ -7,11 +7,29 @@ use crate::entity::{Entity, EntityAllocator};
 use crate::event::Events;
 use crate::query::QueryCache;
 use crate::resource::Resources;
+use euca_reflect::Reflect;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EntityLocation {
     pub archetype_id: ArchetypeId,
     pub row: usize,
+}
+
+/// Type-erased accessor for getting/inserting a component via [`Reflect`].
+///
+/// Registered once per component type via [`World::register_reflect`]. Stores
+/// function pointers that close over the concrete type, allowing the world to
+/// read and write components without knowing `T` at the call site.
+#[derive(Clone, Copy)]
+pub struct ReflectComponentFns {
+    /// The `Reflect::type_name()` of this component.
+    pub type_name: &'static str,
+    /// The ECS component id for this type.
+    pub component_id: ComponentId,
+    /// Clone the component out of the world as a boxed `Reflect` value.
+    get_fn: fn(&World, Entity) -> Option<Box<dyn Reflect>>,
+    /// Insert a component from a boxed `Reflect` value.
+    insert_fn: fn(&mut World, Entity, Box<dyn Reflect>),
 }
 
 /// The ECS world: owns all entities, components, archetypes, resources, and events.
@@ -58,6 +76,8 @@ pub struct World {
     /// `Query::new_cached(&World)` can update the cache through a shared reference.
     /// `RwLock` (unlike `RefCell`) is `Sync`, required for `par_for_each`.
     pub(crate) query_cache: RwLock<QueryCache>,
+    /// Reflection bridge: type-erased accessors keyed by `Reflect::type_name()`.
+    reflect_components: HashMap<&'static str, ReflectComponentFns>,
 }
 
 impl World {
@@ -75,6 +95,7 @@ impl World {
             resources: Resources::new(),
             events: Events::new(),
             query_cache: crate::query::new_query_cache_lock(),
+            reflect_components: HashMap::new(),
         }
     }
 
@@ -307,6 +328,17 @@ impl World {
         self.entities.alive_count()
     }
 
+    /// Returns all currently alive entities in the world.
+    ///
+    /// Collects entities from all archetypes. The order is deterministic
+    /// for a given world state but should not be relied upon.
+    pub fn all_entities(&self) -> Vec<Entity> {
+        self.archetypes
+            .iter()
+            .flat_map(|arch| arch.entities.iter().copied())
+            .collect()
+    }
+
     /// Returns the number of distinct archetypes in the world.
     #[inline]
     pub fn archetype_count(&self) -> usize {
@@ -448,6 +480,66 @@ impl World {
     /// Swap event buffers. Call once per tick to age out old events.
     pub fn update_events(&mut self) {
         self.events.update();
+    }
+
+    // ── Reflection bridge ──
+
+    /// Register a component type for reflection-based (type-erased) access.
+    ///
+    /// After registration, [`get_reflect`](Self::get_reflect) and
+    /// [`insert_reflect`](Self::insert_reflect) can read/write this component
+    /// using only the type name string (no generic parameter needed).
+    ///
+    /// The type must implement [`Reflect`] and [`Clone`] so that values can be
+    /// extracted from the world without moving them.
+    pub fn register_reflect<T: 'static + Send + Sync + Reflect + Clone + Default>(&mut self) {
+        let comp_id = self.components.register::<T>();
+        let sample = T::default();
+        let name = sample.type_name();
+        self.reflect_components.insert(
+            name,
+            ReflectComponentFns {
+                type_name: name,
+                component_id: comp_id,
+                get_fn: |world, entity| world.get::<T>(entity).map(|c| c.clone_reflect()),
+                insert_fn: |world, entity, val| {
+                    if let Some(concrete) = val.as_any().downcast_ref::<T>() {
+                        world.insert(entity, concrete.clone());
+                    }
+                },
+            },
+        );
+    }
+
+    /// Iterate the type names of all reflection-registered component types.
+    pub fn reflect_component_names(&self) -> impl Iterator<Item = &str> {
+        self.reflect_components.keys().copied()
+    }
+
+    /// Get a component from an entity by type name, returning a cloned
+    /// boxed [`Reflect`] value. Returns `None` if the entity does not
+    /// have the component or the type name is not registered.
+    pub fn get_reflect(&self, entity: Entity, type_name: &str) -> Option<Box<dyn Reflect>> {
+        let fns = self.reflect_components.get(type_name)?;
+        (fns.get_fn)(self, entity)
+    }
+
+    /// Insert a component into an entity by type name. The boxed value
+    /// must be the correct concrete type (matching what was registered).
+    ///
+    /// Returns `false` if the type name is not registered.
+    pub fn insert_reflect(
+        &mut self,
+        entity: Entity,
+        type_name: &str,
+        value: Box<dyn Reflect>,
+    ) -> bool {
+        let fns = match self.reflect_components.get(type_name) {
+            Some(f) => *f,
+            None => return false,
+        };
+        (fns.insert_fn)(self, entity, value);
+        true
     }
 
     // ── Internals ──

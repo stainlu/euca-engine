@@ -9,7 +9,7 @@ categories = ["game-development"]
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
 euca-math = { path = "../euca-math" }
-euca-reflect = { path = "../euca-reflect" }
+euca-reflect = { path = "../euca-reflect", features = ["json"] }
 euca-scene = { path = "../euca-scene" }
 euca-core = { path = "../euca-core" }
 euca-render = { path = "../euca-render" }

@@ -5,6 +5,7 @@
 
 use euca_ecs::{Entity, Events, Query, World};
 use euca_math::Vec3;
+use euca_reflect::Reflect;
 use euca_scene::LocalTransform;
 
 use crate::cleanup::CorpseTimer;
@@ -12,7 +13,7 @@ use crate::combat::{CurrentTarget, EntityRole};
 use crate::health::{Dead, DeathEvent, Health, LastAttacker};
 
 /// Which team this entity belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
 pub struct Team(pub u8);
 
 /// Marks an entity as a spawn location for a specific team.
