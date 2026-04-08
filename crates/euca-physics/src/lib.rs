@@ -16,8 +16,8 @@ mod world;
 pub use character::{CharacterController, character_controller_system};
 pub use collision::{CollisionPair, intersect_aabb};
 pub use components::{
-    CachedColliderShape, Collider, ColliderShape, CollisionEvent, Gravity, Mass, PhysicsBody,
-    RigidBodyType, SLEEP_THRESHOLD, Sleeping, Velocity, layers_interact,
+    CachedColliderShape, Collider, ColliderShape, CollisionEvent, ExternalForce, Gravity, Mass,
+    PhysicsBody, RigidBodyType, SLEEP_THRESHOLD, Sleeping, Velocity, layers_interact,
 };
 pub use joints::{Joint, JointKind};
 pub use raycast::{

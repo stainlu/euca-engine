@@ -100,6 +100,22 @@ pub struct Velocity {
     pub angular: Vec3,
 }
 
+/// Accumulated external force and torque applied to a physics body.
+///
+/// Gameplay code, wind, thrusters, and other systems write force/torque here;
+/// the physics step reads it, applies `F = m*a` integration, then optionally
+/// clears it (one-shot mode) so the caller does not need to reset it each frame.
+#[derive(Clone, Copy, Debug, Default, Reflect)]
+pub struct ExternalForce {
+    /// World-space force in Newtons.
+    pub force: Vec3,
+    /// World-space torque in Newton-meters.
+    pub torque: Vec3,
+    /// If `true`, force and torque persist across physics steps (caller clears
+    /// manually). If `false`, they are zeroed after each step (one-shot impulse).
+    pub persistent: bool,
+}
+
 /// Gravity component (overrides global gravity for this entity).
 #[derive(Clone, Copy, Debug)]
 pub struct Gravity(pub Vec3);
