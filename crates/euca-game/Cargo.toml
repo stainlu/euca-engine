@@ -9,6 +9,7 @@ categories = ["game-development"]
 [features]
 default = []
 metal-native = ["euca-render/metal-native"]
+gpu-terrain = ["euca-terrain/gpu-terrain"]
 
 [dependencies]
 euca-ecs = { path = "../euca-ecs" }
@@ -64,6 +65,11 @@ path = "../../examples/tiled_level.rs"
 [[example]]
 name = "gpu_benchmark"
 path = "../../examples/gpu_benchmark.rs"
+
+[[example]]
+name = "gpu_terrain_demo"
+path = "../../examples/gpu_terrain_demo.rs"
+required-features = ["gpu-terrain"]
 
 [[example]]
 name = "particle_demo"

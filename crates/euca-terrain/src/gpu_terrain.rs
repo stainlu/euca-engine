@@ -285,6 +285,70 @@ impl<D: RenderDevice> GpuTerrainGenerator<D> {
         let quads = (grid_cols.saturating_sub(1) as u64) * (grid_rows.saturating_sub(1) as u64);
         quads * (INDICES_PER_QUAD as u64) * std::mem::size_of::<u32>() as u64
     }
+
+    /// Generate terrain mesh for a chunk, returning GPU buffers ready for rendering.
+    ///
+    /// This is a higher-level wrapper around [`generate`](Self::generate) that
+    /// allocates output buffers with the correct usage flags
+    /// (`STORAGE | VERTEX` / `STORAGE | INDEX`) so they can serve as both
+    /// compute shader output and render pipeline input, then dispatches the
+    /// compute kernels.
+    ///
+    /// The returned [`GpuTerrainChunkOutput`] contains the buffer handles and
+    /// index count needed to register the mesh with the renderer via
+    /// `Renderer::register_gpu_mesh`.
+    pub fn generate_chunk(
+        &self,
+        device: &D,
+        encoder: &mut D::CommandEncoder,
+        params: &TerrainGenParams,
+    ) -> GpuTerrainChunkOutput<D> {
+        let vb_size = Self::vertex_buffer_size(params.grid_cols, params.grid_rows);
+        let ib_size = Self::index_buffer_size(params.grid_cols, params.grid_rows);
+
+        let vertex_buffer = device.create_buffer(&BufferDesc {
+            label: Some("Terrain Chunk Vertices"),
+            size: vb_size,
+            usage: BufferUsages::STORAGE | BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+
+        let index_buffer = device.create_buffer(&BufferDesc {
+            label: Some("Terrain Chunk Indices"),
+            size: ib_size,
+            usage: BufferUsages::STORAGE | BufferUsages::INDEX,
+            mapped_at_creation: false,
+        });
+
+        self.generate(device, encoder, params, &vertex_buffer, &index_buffer);
+
+        let index_count = (params.grid_cols.saturating_sub(1))
+            * (params.grid_rows.saturating_sub(1))
+            * INDICES_PER_QUAD;
+
+        GpuTerrainChunkOutput {
+            vertex_buffer,
+            vertex_buffer_size: vb_size,
+            index_buffer,
+            index_buffer_size: ib_size,
+            index_count,
+        }
+    }
+}
+
+/// Output from [`GpuTerrainGenerator::generate_chunk`]: GPU buffers containing
+/// the generated terrain mesh, ready to be registered with the renderer.
+pub struct GpuTerrainChunkOutput<D: RenderDevice> {
+    /// Vertex buffer (layout matches `euca_render::Vertex`: 44 bytes per vertex).
+    pub vertex_buffer: D::Buffer,
+    /// Size of the vertex buffer in bytes.
+    pub vertex_buffer_size: u64,
+    /// Index buffer (`u32` triangle indices).
+    pub index_buffer: D::Buffer,
+    /// Size of the index buffer in bytes.
+    pub index_buffer_size: u64,
+    /// Number of indices in the index buffer.
+    pub index_count: u32,
 }
 
 #[cfg(test)]

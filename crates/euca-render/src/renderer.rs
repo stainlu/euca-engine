@@ -1443,6 +1443,49 @@ impl<D: RenderDevice> Renderer<D> {
         });
         handle
     }
+
+    /// Register pre-built GPU buffers as a renderable mesh.
+    ///
+    /// Unlike [`upload_mesh`](Self::upload_mesh), which copies CPU-side vertex
+    /// and index data to the GPU, this method adopts buffers that already exist
+    /// on the GPU — for example, output buffers from a compute shader such as
+    /// the GPU terrain generator.
+    ///
+    /// The caller is responsible for ensuring the vertex buffer contains data
+    /// in the engine's standard [`Vertex`] layout (44 bytes: pos.xyz +
+    /// normal.xyz + tangent.xyz + uv.xy) and that the index buffer contains
+    /// `u32` indices.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertex_buffer` — GPU buffer containing interleaved vertex data.
+    /// * `vertex_buffer_size` — Size of the vertex buffer in bytes.
+    /// * `index_buffer` — GPU buffer containing `u32` triangle indices.
+    /// * `index_buffer_size` — Size of the index buffer in bytes.
+    /// * `index_count` — Number of indices (not bytes) in the index buffer.
+    pub fn register_gpu_mesh(
+        &mut self,
+        vertex_buffer: D::Buffer,
+        vertex_buffer_size: u64,
+        index_buffer: D::Buffer,
+        index_buffer_size: u64,
+        index_count: u32,
+    ) -> MeshHandle {
+        let handle = MeshHandle(self.meshes.len() as u32);
+        self.meshes.push(GpuMesh {
+            vertex_buffer,
+            vertex_buffer_size,
+            index_buffer,
+            index_buffer_size,
+            index_count,
+            // GPU-generated meshes bypass the geometry pool and meshlet paths;
+            // they are rendered via standard indexed draw calls.
+            pool_alloc: None,
+            meshlet_data: None,
+        });
+        handle
+    }
+
     /// Upload raw RGBA8 pixel data as a GPU texture with auto-generated mipmaps.
     pub fn upload_texture(
         &mut self,
