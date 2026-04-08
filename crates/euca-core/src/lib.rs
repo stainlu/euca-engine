@@ -12,7 +12,7 @@ mod time;
 pub use app::App;
 pub use platform::performance_core_count;
 pub use plugin::Plugin;
-pub use profiler::{ProfileSection, Profiler, profiler_begin, profiler_end};
+pub use profiler::{ProfileSection, ProfileSectionKind, Profiler, profiler_begin, profiler_end};
 pub use time::Time;
 
 /// Re-export `winit` for downstream crates that need window types.

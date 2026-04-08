@@ -414,6 +414,9 @@ impl From<BufferUsages> for wgpu::BufferUsages {
         if u.contains(BufferUsages::INDIRECT) {
             out |= Self::INDIRECT;
         }
+        if u.contains(BufferUsages::QUERY_RESOLVE) {
+            out |= Self::QUERY_RESOLVE;
+        }
         out
     }
 }
@@ -646,6 +649,7 @@ impl RenderDevice for WgpuDevice {
     type RenderPass<'a> = wgpu::RenderPass<'a>;
     type ComputePass<'a> = wgpu::ComputePass<'a>;
     type SurfaceTexture = wgpu::SurfaceTexture;
+    type QuerySet = wgpu::QuerySet;
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
@@ -925,11 +929,20 @@ impl RenderDevice for WgpuDevice {
             }
         });
 
+        let ts_writes = desc
+            .timestamp_writes
+            .as_ref()
+            .map(|tw| wgpu::RenderPassTimestampWrites {
+                query_set: tw.query_set,
+                beginning_of_pass_write_index: tw.beginning_of_pass_write_index,
+                end_of_pass_write_index: tw.end_of_pass_write_index,
+            });
+
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: desc.label,
             color_attachments: &color_attachments,
             depth_stencil_attachment: depth_stencil,
-            timestamp_writes: None,
+            timestamp_writes: ts_writes,
             occlusion_query_set: None,
         })
     }
@@ -953,6 +966,18 @@ impl RenderDevice for WgpuDevice {
         size: Option<u64>,
     ) {
         encoder.clear_buffer(buffer, offset, size);
+    }
+
+    fn copy_buffer_to_buffer(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::Buffer,
+        src_offset: u64,
+        dst: &wgpu::Buffer,
+        dst_offset: u64,
+        size: u64,
+    ) {
+        encoder.copy_buffer_to_buffer(src, src_offset, dst, dst_offset, size);
     }
 
     fn copy_texture_to_texture(
@@ -1031,6 +1056,68 @@ impl RenderDevice for WgpuDevice {
 
     fn surface_size(&self) -> (u32, u32) {
         (self.surface_config.width, self.surface_config.height)
+    }
+
+    fn create_query_set(&self, count: u32) -> Option<wgpu::QuerySet> {
+        if !self.capabilities.timestamp_query {
+            return None;
+        }
+        Some(self.device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("GPU Timestamp Queries"),
+            ty: wgpu::QueryType::Timestamp,
+            count,
+        }))
+    }
+
+    fn resolve_query_set(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        query_set: &wgpu::QuerySet,
+        range: std::ops::Range<u32>,
+        dest: &wgpu::Buffer,
+    ) {
+        encoder.resolve_query_set(query_set, range, dest, 0);
+    }
+
+    fn timestamp_period_ns(&self) -> f32 {
+        self.queue.get_timestamp_period()
+    }
+
+    fn read_timestamp_buffer(&self, buffer: &wgpu::Buffer, count: u32) -> Vec<u64> {
+        if count == 0 {
+            return Vec::new();
+        }
+        let byte_len = (count as u64) * std::mem::size_of::<u64>() as u64;
+        let slice = buffer.slice(..byte_len);
+
+        // Request mapping and synchronously wait for the GPU to finish.
+        // This blocks briefly but is acceptable for profiling code paths.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        // Poll until the GPU work (including the buffer copy) completes.
+        loop {
+            match self.device.poll(wgpu::PollType::Poll) {
+                Ok(status) if status.is_queue_empty() => break,
+                Err(_) => return Vec::new(),
+                _ => std::thread::yield_now(),
+            }
+        }
+
+        match receiver.recv() {
+            Ok(Ok(())) => {
+                let data = slice.get_mapped_range();
+                let timestamps: Vec<u64> = data
+                    .chunks_exact(8)
+                    .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect();
+                drop(data);
+                buffer.unmap();
+                timestamps
+            }
+            _ => Vec::new(),
+        }
     }
 }
 

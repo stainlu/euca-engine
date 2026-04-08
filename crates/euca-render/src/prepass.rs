@@ -335,6 +335,7 @@ impl<D: euca_rhi::RenderDevice> PrepassPipeline<D> {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: None,
             },
         );
         pass.set_pipeline(&self.pipeline);

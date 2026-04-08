@@ -279,6 +279,7 @@ impl<D: euca_rhi::RenderDevice> SsrPass<D> {
                     },
                 })],
                 depth_stencil_attachment: None,
+                timestamp_writes: None,
             },
         );
         pass.set_pipeline(&self.pipeline);

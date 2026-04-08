@@ -215,6 +215,16 @@ impl HardwareSurvey {
         self.selected().vendor == GpuVendor::Apple
     }
 
+    /// Whether the selected adapter supports GPU timestamp queries.
+    ///
+    /// Timestamp queries enable per-pass GPU timing that is reported alongside
+    /// CPU profiler sections for a complete frame profile.
+    pub fn supports_timestamp_queries(&self) -> bool {
+        self.selected()
+            .features
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+    }
+
     /// Get the selected adapter info.
     pub fn selected(&self) -> &AdapterInfo {
         &self.adapters[self.selected_adapter]

@@ -844,6 +844,7 @@ impl RenderDevice for MetalDevice {
     type RenderPass<'a> = MetalRenderPass<'a>;
     type ComputePass<'a> = MetalComputePass<'a>;
     type SurfaceTexture = MetalSurfaceTexture;
+    type QuerySet = ();
 
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
@@ -1418,6 +1419,31 @@ impl RenderDevice for MetalDevice {
                 length: len as usize,
             };
             blit.fillBuffer_range_value(&buffer.0.0, range, 0);
+            blit.endEncoding();
+        }
+    }
+
+    fn copy_buffer_to_buffer(
+        &self,
+        encoder: &mut MetalCommandEncoder,
+        src: &MetalBuffer,
+        src_offset: u64,
+        dst: &MetalBuffer,
+        dst_offset: u64,
+        size: u64,
+    ) {
+        unsafe {
+            let blit = encoder
+                .command_buffer
+                .blitCommandEncoder()
+                .expect("Failed to create Metal blit encoder for buffer copy");
+            blit.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
+                &src.0,
+                src_offset as usize,
+                &dst.0,
+                dst_offset as usize,
+                size as usize,
+            );
             blit.endEncoding();
         }
     }

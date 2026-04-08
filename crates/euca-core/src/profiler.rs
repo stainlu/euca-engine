@@ -4,12 +4,23 @@ use std::time::Instant;
 /// Maximum number of frame times retained for averaging.
 const MAX_FRAME_HISTORY: usize = 60;
 
+/// Whether a profile section was measured on the CPU or GPU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileSectionKind {
+    /// Timed on the CPU via `std::time::Instant`.
+    Cpu,
+    /// Timed on the GPU via timestamp queries.
+    Gpu,
+}
+
 /// A recorded profile section within a single frame.
 pub struct ProfileSection {
     /// Human-readable section label.
     pub name: &'static str,
     /// Wall-clock duration of this section in microseconds.
     pub duration_us: f64,
+    /// Whether this section was timed on the CPU or GPU.
+    pub kind: ProfileSectionKind,
 }
 
 /// Built-in frame profiler that tracks per-section timings and rolling frame statistics.
@@ -34,12 +45,24 @@ impl Profiler {
         }
     }
 
-    /// Return section names and durations (in microseconds) for the current frame.
-    pub fn frame_summary(&self) -> Vec<(&str, f64)> {
+    /// Return section names, durations (microseconds), and kind for the current frame.
+    pub fn frame_summary(&self) -> Vec<(&str, f64, ProfileSectionKind)> {
         self.sections
             .iter()
-            .map(|s| (s.name, s.duration_us))
+            .map(|s| (s.name, s.duration_us, s.kind))
             .collect()
+    }
+
+    /// Record a GPU-timed section (called after timestamp readback).
+    ///
+    /// GPU sections are distinguished from CPU sections in the summary so
+    /// callers can display them separately or side-by-side.
+    pub fn record_gpu_section(&mut self, name: &'static str, duration_us: f64) {
+        self.sections.push(ProfileSection {
+            name,
+            duration_us,
+            kind: ProfileSectionKind::Gpu,
+        });
     }
 
     /// Average frame time in milliseconds over the last [`MAX_FRAME_HISTORY`] frames.
@@ -64,10 +87,18 @@ impl Profiler {
         1000.0 / avg
     }
 
-    /// Finish the current frame: record total frame time from all sections and reset
-    /// the section list for the next frame.
+    /// Finish the current frame: record total CPU frame time and reset the
+    /// section list for the next frame.
+    ///
+    /// Only CPU sections contribute to the rolling frame-time average. GPU
+    /// sections run in parallel with CPU work and are reported separately.
     pub fn end_frame(&mut self) {
-        let total_us: f64 = self.sections.iter().map(|s| s.duration_us).sum();
+        let total_us: f64 = self
+            .sections
+            .iter()
+            .filter(|s| s.kind == ProfileSectionKind::Cpu)
+            .map(|s| s.duration_us)
+            .sum();
         let total_ms = total_us / 1000.0;
 
         if self.frame_times.len() == MAX_FRAME_HISTORY {
@@ -103,6 +134,7 @@ pub fn profiler_end(profiler: &mut Profiler) {
     profiler.sections.push(ProfileSection {
         name,
         duration_us: elapsed.as_secs_f64() * 1_000_000.0,
+        kind: ProfileSectionKind::Cpu,
     });
 }
 
@@ -228,5 +260,44 @@ mod tests {
         assert_eq!(summary[1].0, "outer");
         // Outer should be >= inner since it wraps it.
         assert!(summary[1].1 >= summary[0].1);
+    }
+
+    #[test]
+    fn cpu_sections_tagged_as_cpu() {
+        let mut profiler = Profiler::new();
+        profiler_begin(&mut profiler, "cpu_work");
+        profiler_end(&mut profiler);
+
+        let summary = profiler.frame_summary();
+        assert_eq!(summary[0].2, ProfileSectionKind::Cpu);
+    }
+
+    #[test]
+    fn gpu_section_recorded_and_tagged() {
+        let mut profiler = Profiler::new();
+        profiler.record_gpu_section("shadow_pass", 123.4);
+
+        let summary = profiler.frame_summary();
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].0, "shadow_pass");
+        assert!((summary[0].1 - 123.4).abs() < f64::EPSILON);
+        assert_eq!(summary[0].2, ProfileSectionKind::Gpu);
+    }
+
+    #[test]
+    fn gpu_sections_excluded_from_frame_time() {
+        let mut profiler = Profiler::new();
+
+        // Add a CPU section and a GPU section.
+        profiler_begin(&mut profiler, "cpu");
+        thread::sleep(Duration::from_millis(1));
+        profiler_end(&mut profiler);
+        profiler.record_gpu_section("gpu_pass", 5000.0); // 5ms in us
+
+        profiler.end_frame();
+
+        // Frame time should only include the ~1ms CPU section, not the 5ms GPU section.
+        let avg = profiler.avg_frame_time_ms();
+        assert!(avg < 50.0, "avg should not include GPU section: {avg}");
     }
 }
