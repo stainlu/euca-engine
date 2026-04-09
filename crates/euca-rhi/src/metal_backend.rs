@@ -239,6 +239,7 @@ impl MetalDevice {
             apple_silicon: is_apple_silicon,
             max_buffer_length: max_buffer_len,
             memoryless_render_targets: supports_memoryless,
+            timestamp_query: false,
         }
     }
 
@@ -398,6 +399,7 @@ impl MetalDevice {
     /// throughput on Apple Silicon.
     ///
     /// This is Metal-specific and not part of the `RenderDevice` trait.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_mesh_render_pipeline(
         &self,
         shader: &MetalShaderModule,
@@ -1408,19 +1410,17 @@ impl RenderDevice for MetalDevice {
         offset: u64,
         size: Option<u64>,
     ) {
-        unsafe {
-            let blit = encoder
-                .command_buffer
-                .blitCommandEncoder()
-                .expect("Failed to create Metal blit encoder");
-            let len = size.unwrap_or(buffer.0.0.length() as u64 - offset);
-            let range = objc2_foundation::NSRange {
-                location: offset as usize,
-                length: len as usize,
-            };
-            blit.fillBuffer_range_value(&buffer.0.0, range, 0);
-            blit.endEncoding();
-        }
+        let blit = encoder
+            .command_buffer
+            .blitCommandEncoder()
+            .expect("Failed to create Metal blit encoder");
+        let len = size.unwrap_or(buffer.0.0.length() as u64 - offset);
+        let range = objc2_foundation::NSRange {
+            location: offset as usize,
+            length: len as usize,
+        };
+        blit.fillBuffer_range_value(&buffer.0.0, range, 0);
+        blit.endEncoding();
     }
 
     fn copy_buffer_to_buffer(
@@ -1489,6 +1489,7 @@ impl RenderDevice for MetalDevice {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn submit(&self, encoder: MetalCommandEncoder) {
         // Present any pending drawable BEFORE committing (Metal best practice)
         if let Some(ref drawable) = encoder.pending_drawable {
@@ -1514,6 +1515,7 @@ impl RenderDevice for MetalDevice {
         encoder.command_buffer.commit();
     }
 
+    #[allow(clippy::type_complexity)]
     fn submit_multiple(&self, encoders: Vec<MetalCommandEncoder>) {
         let count = encoders.len();
         for (i, encoder) in encoders.into_iter().enumerate() {
@@ -1614,7 +1616,9 @@ impl RenderDevice for MetalDevice {
                 encoder, color, depth, motion, output, jitter_x, jitter_y, reset,
             );
         } else {
-            log::warn!("encode_metalfx_upscale: upscaler is not a MetalFXUpscaler — skipping");
+            eprintln!(
+                "encode_metalfx_upscale: upscaler is not a MetalFXUpscaler — skipping"
+            );
         }
     }
 }
@@ -1978,6 +1982,7 @@ impl MetalDevice {
     /// - `color_format`: pixel format of the rendered color texture
     /// - `depth_format`: pixel format of the depth texture
     /// - `motion_format`: pixel format of the motion vector texture (typically RG16Float)
+    #[allow(clippy::too_many_arguments)]
     pub fn create_temporal_upscaler(
         &self,
         input_width: u32,
@@ -2032,6 +2037,7 @@ impl MetalFXUpscaler {
     /// - `output`: full-resolution output texture
     /// - `jitter_x/y`: sub-pixel jitter offset used during rendering (for TAA convergence)
     /// - `reset`: true on first frame or after camera cut (resets temporal history)
+    #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &self,
         encoder: &MetalCommandEncoder,
