@@ -322,6 +322,7 @@ pub struct ClientReplicationState {
 /// Tracks per-client replication state and provides the authoritative
 /// source of truth. Clients never modify game state directly --- they
 /// send RPCs, and the server validates and applies them.
+#[derive(Clone, Debug)]
 pub struct ReplicationManager {
     /// Per-client tracking, keyed by client ID.
     pub clients: HashMap<u32, ClientReplicationState>,
@@ -437,12 +438,17 @@ impl Default for ReplicationManager {
 // ── Component registry ──
 
 /// Type-erased serialization function for a registered replicated component type.
-type SerializeFn = Box<dyn Fn(&World, Entity) -> Option<Vec<u8>> + Send + Sync>;
+type SerializeFn = std::sync::Arc<dyn Fn(&World, Entity) -> Option<Vec<u8>> + Send + Sync>;
 
 /// Type-erased change detection function for a registered replicated component type.
-type ChangeDetectFn = Box<dyn Fn(&World, Entity, u32) -> bool + Send + Sync>;
+type ChangeDetectFn = std::sync::Arc<dyn Fn(&World, Entity, u32) -> bool + Send + Sync>;
 
 /// Registration entry for a replicated component type.
+///
+/// Uses `Arc` for the function pointers so that the containing
+/// [`ComponentReplicationRegistry`] can be cheaply deep-cloned for
+/// [`World::clone`] forks.
+#[derive(Clone)]
 struct ReplicatedComponentEntry {
     type_name: String,
     field_id: FieldId,
@@ -460,6 +466,7 @@ struct ReplicatedComponentEntry {
 /// Integrates with [`FieldRegistry`] to assign each component type a dense
 /// [`FieldId`] at registration time (the "prepare" phase). The hot path then
 /// uses these integer IDs for O(1) array-indexed field comparison.
+#[derive(Clone)]
 pub struct ComponentReplicationRegistry {
     entries: Vec<ReplicatedComponentEntry>,
     /// Field registry that maps type names to dense integer IDs.
@@ -484,11 +491,11 @@ impl ComponentReplicationRegistry {
     /// [`FieldRegistry`] — this is the "prepare" phase.
     pub fn register<T: ReplicatedComponent + euca_ecs::Component>(&mut self, type_name: &str) {
         let field_id = self.field_registry.register(type_name);
-        let serialize_fn: SerializeFn = Box::new(|world: &World, entity: Entity| {
+        let serialize_fn: SerializeFn = std::sync::Arc::new(|world: &World, entity: Entity| {
             world.get::<T>(entity).map(|c| c.net_serialize())
         });
         let change_fn: ChangeDetectFn =
-            Box::new(|world: &World, entity: Entity, since_tick: u32| {
+            std::sync::Arc::new(|world: &World, entity: Entity, since_tick: u32| {
                 world
                     .get_change_tick::<T>(entity)
                     .is_some_and(|tick| tick > since_tick)
@@ -890,15 +897,17 @@ pub fn replication_receive_system(world: &mut World) {
 }
 
 /// Type-erased deserialization function.
-type DeserializeFn = Box<dyn Fn(&mut World, Entity, &[u8]) + Send + Sync>;
+type DeserializeFn = std::sync::Arc<dyn Fn(&mut World, Entity, &[u8]) + Send + Sync>;
 
 /// Registration entry for deserializing a replicated component.
+#[derive(Clone)]
 struct DeserializationEntry {
     type_name: String,
     deserialize_fn: DeserializeFn,
 }
 
 /// Client-side registry for deserializing incoming component data.
+#[derive(Clone)]
 pub struct ComponentDeserializationRegistry {
     entries: Vec<DeserializationEntry>,
 }
@@ -917,7 +926,7 @@ impl ComponentDeserializationRegistry {
     ) {
         let name = type_name.to_string();
         let deserialize_fn: DeserializeFn =
-            Box::new(move |world: &mut World, entity: Entity, data: &[u8]| {
+            std::sync::Arc::new(move |world: &mut World, entity: Entity, data: &[u8]| {
                 if let Some(component) = world.get_mut::<T>(entity) {
                     component.net_deserialize(data);
                 }

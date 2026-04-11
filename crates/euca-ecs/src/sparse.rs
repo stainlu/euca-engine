@@ -220,6 +220,64 @@ impl SparseSet {
             self.capacity = new_capacity;
         }
     }
+
+    /// Deep-clone this sparse set using the component's type-erased clone
+    /// function. Produces a new `SparseSet` with the same entity mapping
+    /// and cloned component data, owning its memory independently.
+    ///
+    /// `new.len` is incremented after each successful clone so that a
+    /// panic inside `clone_fn` leaves the new sparse set in a consistent
+    /// state for its Drop impl.
+    ///
+    /// # Safety
+    /// `clone_fn` must match the component type this sparse set stores.
+    pub(crate) unsafe fn clone_with(
+        &self,
+        clone_fn: unsafe fn(*const u8, *mut u8),
+    ) -> SparseSet {
+        let mut new = SparseSet {
+            entity_to_slot: self.entity_to_slot.clone(),
+            entities: self.entities.clone(),
+            data: ptr::null_mut(),
+            item_layout: self.item_layout,
+            len: 0,
+            capacity: 0,
+            drop_fn: self.drop_fn,
+            change_ticks: Vec::with_capacity(self.len),
+        };
+        let size = self.item_layout.size();
+        if self.capacity > 0 && size > 0 {
+            let layout = Layout::from_size_align(size * self.capacity, self.item_layout.align())
+                .expect("sparse set clone layout invalid");
+            // SAFETY: layout has valid size and alignment.
+            let new_data = unsafe { alloc::alloc(layout) };
+            if new_data.is_null() {
+                alloc::handle_alloc_error(layout);
+            }
+            new.data = new_data;
+            new.capacity = self.capacity;
+        } else if size == 0 {
+            new.capacity = self.capacity;
+        }
+        for i in 0..self.len {
+            if size > 0 {
+                // SAFETY: i < self.len <= self.capacity, data pointers valid.
+                unsafe {
+                    let src = self.data.add(i * size);
+                    let dst = new.data.add(i * size);
+                    clone_fn(src, dst);
+                }
+            } else {
+                let dangling = ptr::NonNull::<u8>::dangling().as_ptr();
+                unsafe {
+                    clone_fn(dangling as *const u8, dangling);
+                }
+            }
+            new.change_ticks.push(self.change_ticks[i]);
+            new.len += 1;
+        }
+        new
+    }
 }
 
 impl Drop for SparseSet {

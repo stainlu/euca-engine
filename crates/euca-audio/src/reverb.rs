@@ -10,6 +10,7 @@ use euca_scene::GlobalTransform;
 ///
 /// When an [`AudioListener`] overlaps this sphere, all active sounds have
 /// weighted reverb applied (based on distance to the zone center).
+#[derive(Clone, Debug)]
 pub struct ReverbZone {
     /// Radius of the reverb sphere.
     pub radius: f32,

@@ -87,6 +87,7 @@ struct VfxAssets {
 
 /// Bundles all DotA-specific gameplay subsystems that are pure data + logic
 /// (not ECS systems). Stored as a single World resource and driven each tick.
+#[derive(Clone)]
 struct DotaMobaState {
     /// Per-team fog of war vision grids.
     vision_t1: VisionMap,
@@ -140,12 +141,14 @@ const DT: f32 = 1.0 / 60.0;
 // ── Death / respawn visual transition components ─────────────────────────────
 
 /// Drives the death animation: entity tilts forward, scales down, and fades out.
+#[derive(Clone)]
 struct DeathAnimation {
     elapsed: f32,
     duration: f32,
 }
 
 /// Drives the respawn animation: entity scales up from zero with a golden tint.
+#[derive(Clone)]
 struct RespawnAnimation {
     elapsed: f32,
     duration: f32,
@@ -277,6 +280,7 @@ impl DotaMobaState {
 // ── Floating combat text & kill feed ─────────────────────────────────────────
 
 /// A single floating text indicator (damage number, gold/XP gain).
+#[derive(Clone)]
 struct FloatingText {
     /// Screen position (pixels) at spawn time.
     screen_x: f32,
@@ -292,6 +296,7 @@ struct FloatingText {
 }
 
 /// World resource: all active floating text indicators.
+#[derive(Clone)]
 struct FloatingTexts {
     entries: Vec<FloatingText>,
 }
@@ -305,6 +310,7 @@ impl FloatingTexts {
 }
 
 /// A single kill feed entry (top-right corner).
+#[derive(Clone)]
 struct KillFeedEntry {
     /// Bar widths representing killer and victim (sized by role importance).
     killer_color: [f32; 4],
@@ -316,6 +322,7 @@ struct KillFeedEntry {
 }
 
 /// World resource: kill feed displayed in the top-right corner.
+#[derive(Clone)]
 struct KillFeed {
     entries: Vec<KillFeedEntry>,
 }
@@ -329,6 +336,7 @@ impl KillFeed {
 }
 
 /// Tracks previous frame gold/XP values to detect gains for popup display.
+#[derive(Clone)]
 struct GoldXpTracker {
     prev_gold: i32,
     prev_xp: u32,
@@ -1163,7 +1171,7 @@ impl DotaClientApp {
         // Audio engine: spatial audio, bus mixing, reverb zones.
         match euca_audio::AudioEngine::new() {
             Ok(engine) => {
-                world.insert_resource(engine);
+                world.insert_resource(euca_audio::shared_engine(engine));
                 world.insert_resource(euca_audio::AudioBusSettings::default());
                 world.insert_resource(euca_audio::AudioSettings::default());
                 log::info!("Audio engine initialized");
@@ -1183,7 +1191,7 @@ impl DotaClientApp {
         // Lua scripting: ECS bridge, hot reload, sandboxed VM.
         match euca_script::ScriptEngine::new(100_000) {
             Ok(engine) => {
-                world.insert_resource(engine);
+                world.insert_resource(euca_script::shared_engine(engine));
                 log::info!("Lua scripting engine initialized");
             }
             Err(e) => {

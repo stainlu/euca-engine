@@ -15,6 +15,7 @@
 //! - **[`streaming_update_system`]** — the system that drives load / unload.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use euca_ecs::{Entity, Query, World};
 use euca_math::Vec3;
@@ -255,7 +256,7 @@ pub fn streaming_update_system(world: &mut World) {
     //    `catch_unwind` ensures the loader is always re-inserted even if a
     //    load callback panics, preventing the resource from being lost.
     let loader_data: Vec<((i32, i32), Option<ChunkData>)> =
-        if let Some(loader) = world.remove_resource::<Box<dyn ChunkLoader>>() {
+        if let Some(loader) = world.remove_resource::<Arc<dyn ChunkLoader>>() {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 to_load.iter().map(|&id| (id, loader.load(id))).collect()
             }));
@@ -446,7 +447,7 @@ mod tests {
             load_radius: 0,
             unload_radius: 2,
         });
-        world.insert_resource(Box::new(TestLoader) as Box<dyn ChunkLoader>);
+        world.insert_resource(Arc::new(TestLoader) as Arc<dyn ChunkLoader>);
         set_camera(&mut world, Vec3::ZERO);
 
         streaming_update_system(&mut world);
@@ -484,7 +485,7 @@ mod tests {
             load_radius: 0,
             unload_radius: 1,
         });
-        world.insert_resource(Box::new(OneEntityLoader) as Box<dyn ChunkLoader>);
+        world.insert_resource(Arc::new(OneEntityLoader) as Arc<dyn ChunkLoader>);
 
         set_camera(&mut world, Vec3::ZERO);
         streaming_update_system(&mut world);

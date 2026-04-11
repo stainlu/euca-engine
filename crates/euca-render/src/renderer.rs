@@ -197,6 +197,7 @@ struct MaterialUniforms {
 /// ECS marker component for water surface entities.
 ///
 /// Entities with this component use the water shader pipeline instead of PBR.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct WaterChunk;
 
 /// A single draw request submitted each frame.

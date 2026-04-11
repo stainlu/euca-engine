@@ -41,7 +41,7 @@ pub struct BoneTransforms {
 }
 
 /// World resource: stores all loaded animation clips.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct AnimationLibrary {
     pub clips: Vec<AnimationClipData>,
     pub skeletons: Vec<Skeleton>,

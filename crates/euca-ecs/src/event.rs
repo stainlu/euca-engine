@@ -1,6 +1,20 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
+/// Type-erased boxed clone function for events. Populated at the first
+/// `send` call for a given type and used by [`Events::clone`] to deep-copy
+/// the event buffers into a forked world.
+type EventCloneFn = fn(&(dyn Any + Send + Sync)) -> Box<dyn Any + Send + Sync>;
+
+fn clone_event<T: Any + Clone + Send + Sync>(
+    value: &(dyn Any + Send + Sync),
+) -> Box<dyn Any + Send + Sync> {
+    let concrete = value
+        .downcast_ref::<T>()
+        .expect("event clone_fn called on wrong concrete type");
+    Box::new(concrete.clone())
+}
+
 /// Double-buffered event storage for a single event type.
 ///
 /// Events live for 2 frames: current + previous. This allows systems
@@ -10,13 +24,16 @@ struct EventBuffer {
     current: Vec<Box<dyn Any + Send + Sync>>,
     /// Events from last frame (cleared on next swap).
     previous: Vec<Box<dyn Any + Send + Sync>>,
+    /// Type-erased clone fn for this buffer's event type.
+    clone_fn: EventCloneFn,
 }
 
 impl EventBuffer {
-    fn new() -> Self {
+    fn new(clone_fn: EventCloneFn) -> Self {
         Self {
             current: Vec::new(),
             previous: Vec::new(),
+            clone_fn,
         }
     }
 
@@ -25,9 +42,32 @@ impl EventBuffer {
         std::mem::swap(&mut self.current, &mut self.previous);
         self.current.clear();
     }
+
+    /// Deep-clone all events in both buffers using the stored clone_fn.
+    fn clone_deep(&self) -> Self {
+        let current = self
+            .current
+            .iter()
+            .map(|e| (self.clone_fn)(e.as_ref()))
+            .collect();
+        let previous = self
+            .previous
+            .iter()
+            .map(|e| (self.clone_fn)(e.as_ref()))
+            .collect();
+        Self {
+            current,
+            previous,
+            clone_fn: self.clone_fn,
+        }
+    }
 }
 
 /// Manages all event types in the world.
+///
+/// Events require `Clone` so that a forked world receives an independent
+/// copy of pending events — draining events on the fork does not affect
+/// the parent.
 pub struct Events {
     buffers: HashMap<TypeId, EventBuffer>,
 }
@@ -40,11 +80,12 @@ impl Events {
         }
     }
 
-    /// Send an event.
-    pub fn send<T: Send + Sync + 'static>(&mut self, event: T) {
+    /// Send an event. `T` must implement `Clone` so events can be carried
+    /// into [`World::clone`] forks.
+    pub fn send<T: Send + Sync + Clone + 'static>(&mut self, event: T) {
         self.buffers
             .entry(TypeId::of::<T>())
-            .or_insert_with(EventBuffer::new)
+            .or_insert_with(|| EventBuffer::new(clone_event::<T>))
             .current
             .push(Box::new(event));
     }
@@ -81,6 +122,17 @@ impl Events {
     }
 }
 
+impl Clone for Events {
+    fn clone(&self) -> Self {
+        let buffers = self
+            .buffers
+            .iter()
+            .map(|(k, v)| (*k, v.clone_deep()))
+            .collect();
+        Self { buffers }
+    }
+}
+
 impl Default for Events {
     fn default() -> Self {
         Self::new()
@@ -91,13 +143,13 @@ impl Default for Events {
 mod tests {
     use super::*;
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq)]
     struct Collision {
         a: u32,
         b: u32,
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq)]
     struct Damage(f32);
 
     #[test]
@@ -153,5 +205,15 @@ mod tests {
     fn read_empty() {
         let events = Events::new();
         assert_eq!(events.read::<Damage>().count(), 0);
+    }
+
+    #[test]
+    fn clone_produces_independent_copy() {
+        let mut events = Events::new();
+        events.send(Damage(10.0));
+        let mut cloned = events.clone();
+        cloned.send(Damage(20.0));
+        assert_eq!(events.read::<Damage>().count(), 1);
+        assert_eq!(cloned.read::<Damage>().count(), 2);
     }
 }

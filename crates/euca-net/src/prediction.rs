@@ -21,6 +21,7 @@ pub struct PredictedState {
 /// Stores recent predicted states. When server state arrives, compares
 /// against the prediction at that tick. If diverged beyond threshold,
 /// snaps to server state and replays subsequent inputs.
+#[derive(Clone, Debug)]
 pub struct ClientPrediction {
     /// Ring buffer of recent predictions, ordered by tick.
     predictions: VecDeque<PredictedState>,

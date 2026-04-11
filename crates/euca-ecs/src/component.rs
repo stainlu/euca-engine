@@ -4,11 +4,16 @@ use std::collections::HashMap;
 
 /// Marker trait for types that can be used as ECS components.
 ///
-/// Components must be `'static + Send + Sync` for safe parallel system execution.
-pub trait Component: 'static + Send + Sync {}
+/// Components must be `'static + Send + Sync + Clone` for safe parallel
+/// system execution and world forking. The `Clone` bound enables
+/// [`World::clone`](crate::World::clone) to deep-copy every component
+/// without silent data loss. If a type cannot logically be cloned
+/// (e.g. a unique GPU resource), wrap it in `Arc<T>` so the shared
+/// handle satisfies `Clone`.
+pub trait Component: 'static + Send + Sync + Clone {}
 
-// Blanket impl: any 'static + Send + Sync type is a Component.
-impl<T: 'static + Send + Sync> Component for T {}
+// Blanket impl: any 'static + Send + Sync + Clone type is a Component.
+impl<T: 'static + Send + Sync + Clone> Component for T {}
 
 /// Unique identifier for a component type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -44,6 +49,10 @@ pub struct ComponentInfo {
     pub type_id: TypeId,
     /// Function pointer to drop a component value in place.
     pub(crate) drop_fn: Option<unsafe fn(*mut u8)>,
+    /// Function pointer to deep-clone a component value from `src` into `dst`.
+    /// `dst` is uninitialized memory of `layout` size; after the call it
+    /// owns an initialized value of the component type.
+    pub(crate) clone_fn: unsafe fn(*const u8, *mut u8),
     /// If `true`, this component is stored in a [`SparseSet`](crate::sparse::SparseSet)
     /// instead of archetype columns, avoiding archetype explosion for
     /// rarely-attached components.
@@ -55,11 +64,22 @@ unsafe fn drop_in_place<T>(ptr: *mut u8) {
     unsafe { std::ptr::drop_in_place(ptr as *mut T) };
 }
 
+/// Type-erased function to clone a component from `src` into uninitialized
+/// memory at `dst`.
+unsafe fn clone_into<T: Clone>(src: *const u8, dst: *mut u8) {
+    // SAFETY: Caller guarantees src points to a valid T and dst has room for T.
+    unsafe {
+        let src_ref = &*(src as *const T);
+        let cloned: T = src_ref.clone();
+        std::ptr::write(dst as *mut T, cloned);
+    }
+}
+
 /// Registry mapping Rust types to [`ComponentId`]s and their metadata.
 ///
 /// Manages component registration and provides O(1) lookup from `TypeId`
 /// to `ComponentId`. Shared by all archetypes in a [`World`](crate::World).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ComponentStorage {
     /// Map from TypeId to ComponentId for fast lookup.
     type_to_id: HashMap<TypeId, ComponentId>,
@@ -94,6 +114,7 @@ impl ComponentStorage {
             } else {
                 None
             },
+            clone_fn: clone_into::<T> as unsafe fn(*const u8, *mut u8),
             sparse: false,
         });
         self.type_to_id.insert(type_id, id);
@@ -132,10 +153,12 @@ impl ComponentStorage {
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
     struct Position {
         _x: f32,
         _y: f32,
     }
+    #[derive(Clone)]
     struct Velocity {
         _dx: f32,
         _dy: f32,

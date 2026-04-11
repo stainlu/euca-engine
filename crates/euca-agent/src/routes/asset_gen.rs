@@ -13,11 +13,17 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use euca_asset::GenerationService;
 use euca_asset::ai_gen::{GenerationRequest, GenerationStatus, Quality};
 
 use crate::state::SharedWorld;
+
+/// Shared handle to [`GenerationService`]. Stored as a world resource so
+/// that it satisfies the `Clone` bound on resources; a [`World::clone`]
+/// fork shares the same provider configuration and task registry.
+type SharedService = Arc<Mutex<GenerationService>>;
 
 // ── Request / Response types ──
 
@@ -85,14 +91,18 @@ fn status_string(status: &GenerationStatus) -> &'static str {
     }
 }
 
-/// Ensure a `GenerationService` resource exists in the World.
+/// Ensure a `SharedService` resource exists in the World.
 ///
 /// Must be called from a non-tokio thread (e.g. inside `spawn_blocking`)
 /// because provider constructors create `reqwest::blocking::Client`.
-fn ensure_service(w: &mut euca_ecs::World) {
-    if w.resource::<GenerationService>().is_none() {
-        w.insert_resource(GenerationService::new(PathBuf::from("assets/generated")));
+fn ensure_service(w: &mut euca_ecs::World) -> SharedService {
+    if let Some(existing) = w.resource::<SharedService>() {
+        return existing.clone();
     }
+    let service = GenerationService::new(PathBuf::from("assets/generated"));
+    let shared: SharedService = Arc::new(Mutex::new(service));
+    w.insert_resource(shared.clone());
+    shared
 }
 
 // ── Handlers ──
@@ -106,24 +116,22 @@ pub async fn asset_generate(
     Json(req): Json<AssetGenerateRequest>,
 ) -> Json<serde_json::Value> {
     let result = tokio::task::spawn_blocking(move || {
-        shared.with(|w, _| {
-            ensure_service(w);
-            let service = w
-                .resource_mut::<GenerationService>()
-                .expect("service just ensured");
+        let service_handle = shared.with(|w, _| ensure_service(w));
+        let mut service = service_handle
+            .lock()
+            .expect("GenerationService mutex poisoned");
 
-            let provider_name = req.provider.to_lowercase();
-            let quality = parse_quality(req.quality.as_deref());
-            let gen_request = GenerationRequest {
-                prompt: Some(req.prompt.clone()),
-                quality,
-                ..Default::default()
-            };
+        let provider_name = req.provider.to_lowercase();
+        let quality = parse_quality(req.quality.as_deref());
+        let gen_request = GenerationRequest {
+            prompt: Some(req.prompt.clone()),
+            quality,
+            ..Default::default()
+        };
 
-            service
-                .start(&provider_name, &gen_request)
-                .map_err(|e| e.to_string())
-        })
+        service
+            .start(&provider_name, &gen_request)
+            .map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|e| Err(format!("task join error: {e}")));
@@ -149,36 +157,34 @@ pub async fn asset_status(
     Path(task_id): Path<String>,
 ) -> Json<serde_json::Value> {
     let result = tokio::task::spawn_blocking(move || {
-        shared.with(|w, _| {
-            ensure_service(w);
-            let service = w
-                .resource_mut::<GenerationService>()
-                .expect("service just ensured");
+        let service_handle = shared.with(|w, _| ensure_service(w));
+        let mut service = service_handle
+            .lock()
+            .expect("GenerationService mutex poisoned");
 
-            let status = match service.update(&task_id) {
-                Ok(s) => s.clone(),
-                Err(e) => return Err(e.to_string()),
-            };
+        let status = match service.update(&task_id) {
+            Ok(s) => s.clone(),
+            Err(e) => return Err(e.to_string()),
+        };
 
-            let file_path = service
-                .file_path(&task_id)
-                .map(|p| p.to_string_lossy().into_owned());
+        let file_path = service
+            .file_path(&task_id)
+            .map(|p| p.to_string_lossy().into_owned());
 
-            let resp = AssetStatusResponse {
-                task_id: task_id.clone(),
-                status: status_string(&status).to_string(),
-                progress: match &status {
-                    GenerationStatus::Pending { progress } => Some(*progress),
-                    _ => None,
-                },
-                file_path,
-                error: match &status {
-                    GenerationStatus::Failed { error } => Some(error.clone()),
-                    _ => None,
-                },
-            };
-            Ok(resp)
-        })
+        let resp = AssetStatusResponse {
+            task_id: task_id.clone(),
+            status: status_string(&status).to_string(),
+            progress: match &status {
+                GenerationStatus::Pending { progress } => Some(*progress),
+                _ => None,
+            },
+            file_path,
+            error: match &status {
+                GenerationStatus::Failed { error } => Some(error.clone()),
+                _ => None,
+            },
+        };
+        Ok(resp)
     })
     .await
     .unwrap_or_else(|e| Err(format!("task join error: {e}")));
@@ -198,32 +204,30 @@ pub async fn asset_status(
 /// Still uses spawn_blocking for ensure_service consistency.
 pub async fn asset_generated(State(shared): State<SharedWorld>) -> Json<serde_json::Value> {
     let entries = tokio::task::spawn_blocking(move || {
-        shared.with(|w, _| {
-            ensure_service(w);
-            let service = w
-                .resource::<GenerationService>()
-                .expect("service just ensured");
+        let service_handle = shared.with(|w, _| ensure_service(w));
+        let service = service_handle
+            .lock()
+            .expect("GenerationService mutex poisoned");
 
-            let mut entries: Vec<AssetListEntry> = service
-                .list_tasks()
-                .into_iter()
-                .map(|(task_id, prompt, status)| {
-                    let file_path = service
-                        .file_path(task_id)
-                        .map(|p| p.to_string_lossy().into_owned());
-                    AssetListEntry {
-                        task_id: task_id.to_string(),
-                        prompt: prompt.to_string(),
-                        provider: String::new(),
-                        status: status_string(status).to_string(),
-                        file_path,
-                    }
-                })
-                .collect();
+        let mut entries: Vec<AssetListEntry> = service
+            .list_tasks()
+            .into_iter()
+            .map(|(task_id, prompt, status)| {
+                let file_path = service
+                    .file_path(task_id)
+                    .map(|p| p.to_string_lossy().into_owned());
+                AssetListEntry {
+                    task_id: task_id.to_string(),
+                    prompt: prompt.to_string(),
+                    provider: String::new(),
+                    status: status_string(status).to_string(),
+                    file_path,
+                }
+            })
+            .collect();
 
-            entries.sort_by(|a, b| a.task_id.cmp(&b.task_id));
-            entries
-        })
+        entries.sort_by(|a, b| a.task_id.cmp(&b.task_id));
+        entries
     })
     .await
     .unwrap_or_default();
@@ -234,25 +238,23 @@ pub async fn asset_generated(State(shared): State<SharedWorld>) -> Json<serde_js
 /// GET /asset/providers -- list available AI generation providers.
 pub async fn asset_providers(State(shared): State<SharedWorld>) -> Json<serde_json::Value> {
     let resp = tokio::task::spawn_blocking(move || {
-        shared.with(|w, _| {
-            ensure_service(w);
-            let service = w
-                .resource::<GenerationService>()
-                .expect("service just ensured");
+        let service_handle = shared.with(|w, _| ensure_service(w));
+        let service = service_handle
+            .lock()
+            .expect("GenerationService mutex poisoned");
 
-            let all_providers = ["tripo", "meshy", "rodin", "hunyuan"];
-            let available = service.available_providers();
+        let all_providers = ["tripo", "meshy", "rodin", "hunyuan"];
+        let available = service.available_providers();
 
-            let providers: Vec<ProviderInfo> = all_providers
-                .iter()
-                .map(|name| ProviderInfo {
-                    name: name.to_string(),
-                    available: available.contains(name),
-                })
-                .collect();
+        let providers: Vec<ProviderInfo> = all_providers
+            .iter()
+            .map(|name| ProviderInfo {
+                name: name.to_string(),
+                available: available.contains(name),
+            })
+            .collect();
 
-            ProvidersResponse { providers }
-        })
+        ProvidersResponse { providers }
     })
     .await
     .unwrap_or_else(|_| ProvidersResponse {

@@ -21,6 +21,7 @@ use crate::GlobalTransform;
 /// cell coordinate. Smaller cells give more precise culling but use more memory
 /// when entities are spread across a large area. A good default is roughly
 /// 2x the typical query radius.
+#[derive(Clone, Debug)]
 pub struct SpatialIndex {
     /// Side length of each cubic grid cell.
     cell_size: f32,

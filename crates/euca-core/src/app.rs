@@ -43,7 +43,7 @@ impl App {
     }
 
     /// Insert a resource into the world.
-    pub fn insert_resource<T: Send + Sync + 'static>(&mut self, value: T) -> &mut Self {
+    pub fn insert_resource<T: Send + Sync + Clone + 'static>(&mut self, value: T) -> &mut Self {
         self.world.insert_resource(value);
         self
     }
@@ -174,7 +174,7 @@ impl Default for App {
 mod tests {
     use super::*;
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq)]
     struct Counter(u32);
 
     #[test]

@@ -10,7 +10,7 @@ use std::alloc::{self, Layout};
 use std::collections::HashMap;
 use std::ptr;
 
-use crate::component::{ComponentId, ComponentInfo};
+use crate::component::{ComponentId, ComponentInfo, ComponentStorage};
 use crate::entity::Entity;
 
 /// Unique identifier for an archetype within a [`World`](crate::World).
@@ -197,6 +197,56 @@ impl Column {
                 ptr::copy_nonoverlapping(src, dst, size);
             }
         }
+    }
+
+    /// Deep-clone this column using the component's type-erased clone function.
+    ///
+    /// Produces a new column with the same length and capacity, where each
+    /// element has been individually cloned via `clone_fn`. The new column
+    /// owns its memory independently — dropping either column is safe.
+    ///
+    /// Incrementally tracks `new.len` during cloning so that a panic inside
+    /// `clone_fn` leaves the new column in a consistent state (its `Drop`
+    /// impl will only clean up the elements successfully cloned so far).
+    ///
+    /// # Safety
+    /// `clone_fn` must match the component type this column stores. It is
+    /// called once per element with `src` pointing to a valid value of that
+    /// type and `dst` pointing to uninitialized storage.
+    unsafe fn clone_with(&self, clone_fn: unsafe fn(*const u8, *mut u8)) -> Column {
+        let mut new = Column {
+            data: ptr::null_mut(),
+            item_layout: self.item_layout,
+            len: 0,
+            capacity: 0,
+            drop_fn: self.drop_fn,
+            change_ticks: Vec::with_capacity(self.len),
+        };
+        let size = self.item_layout.size();
+        if self.capacity > 0 && size > 0 {
+            new.realloc(self.capacity);
+        } else if size == 0 {
+            new.capacity = self.capacity;
+        }
+        for i in 0..self.len {
+            if size > 0 {
+                unsafe {
+                    let src = self.data.add(i * size);
+                    let dst = new.data.add(i * size);
+                    clone_fn(src, dst);
+                }
+            } else {
+                let dangling = std::ptr::NonNull::<u8>::dangling().as_ptr();
+                unsafe {
+                    clone_fn(dangling as *const u8, dangling);
+                }
+            }
+            new.change_ticks.push(self.change_ticks[i]);
+            // len is incremented AFTER write so Drop sees consistent state if
+            // a later clone_fn call panics.
+            new.len += 1;
+        }
+        new
     }
 }
 
@@ -409,6 +459,31 @@ impl Archetype {
             .get(&component_id)
             .expect("component column missing from archetype");
         unsafe { column.set_change_tick_unchecked(row, tick) };
+    }
+
+    /// Deep-clone this archetype by cloning each column via the registry's
+    /// per-type clone function.
+    ///
+    /// Used by [`World::clone`](crate::World::clone) to produce an
+    /// independent archetype whose columns do not share heap memory with
+    /// the original.
+    ///
+    /// # Safety
+    /// `storage` must be the [`ComponentStorage`] this archetype was created
+    /// with (so that `ComponentInfo::clone_fn` matches each column's data).
+    pub(crate) unsafe fn clone_via_storage(&self, storage: &ComponentStorage) -> Archetype {
+        let mut columns: HashMap<ComponentId, Column> = HashMap::with_capacity(self.columns.len());
+        for (&cid, col) in &self.columns {
+            let clone_fn = storage.info(cid).clone_fn;
+            let new_col = unsafe { col.clone_with(clone_fn) };
+            columns.insert(cid, new_col);
+        }
+        Archetype {
+            id: self.id,
+            component_ids: self.component_ids.clone(),
+            entities: self.entities.clone(),
+            columns,
+        }
     }
 }
 

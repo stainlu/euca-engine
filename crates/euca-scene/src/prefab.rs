@@ -132,6 +132,7 @@ impl Prefab {
 ///     .spawn("soldier", &mut world)
 ///     .unwrap();
 /// ```
+#[derive(Clone, Debug)]
 pub struct PrefabRegistry {
     prefabs: HashMap<String, Prefab>,
 }

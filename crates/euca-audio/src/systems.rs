@@ -1,6 +1,7 @@
 //! Audio update system — bus synchronization, concurrency, spatial attenuation,
 //! fading, occlusion, and reverb processing.
 
+use crate::Shared;
 use crate::engine::{AudioClipHandle, AudioEngine};
 use crate::reverb::{collect_reverb_zones, compute_reverb_params, listener_position};
 use crate::source::{AudioBus, AudioBusSettings, AudioOcclusion, AudioSettings, AudioSource};
@@ -10,6 +11,14 @@ use euca_scene::GlobalTransform;
 use kira::Tween;
 use kira::sound::PlaybackState;
 use std::time::Duration;
+
+/// Obtain a cheap handle to the audio engine without borrowing `world`.
+/// The returned `Shared<AudioEngine>` can be locked at each call site
+/// without holding any world borrow, so it composes with `&mut world`
+/// access in the same function.
+fn audio_engine_handle(world: &World) -> Option<Shared<AudioEngine>> {
+    world.resource::<Shared<AudioEngine>>().cloned()
+}
 
 /// Snapshot of an audio source gathered during the read phase of the system.
 struct SourceSnapshot {
@@ -52,7 +61,9 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
         let voice = bus_settings.volume(AudioBus::Voice);
         let ui = bus_settings.volume(AudioBus::Ui);
 
-        if let Some(engine) = world.resource_mut::<AudioEngine>() {
+        if let Some(engine_arc) = audio_engine_handle(world)
+            && let Ok(mut engine) = engine_arc.lock()
+        {
             engine
                 .manager
                 .main_track()
@@ -175,7 +186,8 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
             });
             // Return handle to pool (separate borrow scope).
             if let Some((clip, handle)) = taken
-                && let Some(engine) = world.resource_mut::<AudioEngine>()
+                && let Some(engine_arc) = audio_engine_handle(world)
+                && let Ok(mut engine) = engine_arc.lock()
             {
                 engine.return_to_pool(clip, handle);
             }
@@ -184,9 +196,8 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
 
         // --- Start ---
         if s.playing && !s.has_handle {
-            let handle = world
-                .resource_mut::<AudioEngine>()
-                .and_then(|eng| eng.play(s.clip, 0.0, s.looping, s.bus).ok());
+            let handle = audio_engine_handle(world)
+                .and_then(|arc| arc.lock().ok().and_then(|mut eng| eng.play(s.clip, 0.0, s.looping, s.bus).ok()));
             if let Some(mut handle) = handle {
                 // Apply initial fade-in: start at volume 0, then the volume update below
                 // will ramp it up over subsequent frames.
@@ -263,7 +274,8 @@ pub fn audio_update_system_mut(world: &mut World, dt: f32) {
             handle
         });
         if let Some(handle) = taken
-            && let Some(engine) = world.resource_mut::<AudioEngine>()
+            && let Some(engine_arc) = audio_engine_handle(world)
+            && let Ok(mut engine) = engine_arc.lock()
         {
             engine.return_to_pool(clip, handle);
         }

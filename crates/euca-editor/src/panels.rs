@@ -8,7 +8,7 @@ use crate::EditorState;
 
 /// Display a component using the Reflect trait — generic, no hardcoding.
 /// Shows the component name as a collapsible header with field names + values.
-fn reflect_component<T: 'static + Send + Sync + Reflect>(
+fn reflect_component<T: 'static + Send + Sync + Clone + Reflect>(
     ui: &mut egui::Ui,
     world: &World,
     entity: Entity,

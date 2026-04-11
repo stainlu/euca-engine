@@ -52,6 +52,7 @@ impl std::fmt::Display for Entity {
 }
 
 /// Allocates and recycles entity IDs with generational safety.
+#[derive(Clone, Debug)]
 pub(crate) struct EntityAllocator {
     /// For each slot: the current generation.
     generations: Vec<u32>,

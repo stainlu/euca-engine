@@ -39,6 +39,7 @@ impl AudioBus {
 /// Per-bus volume levels (world resource).
 ///
 /// Final volume = `source.volume * distance_attenuation * bus_volume * master_volume`.
+#[derive(Clone, Debug)]
 pub struct AudioBusSettings {
     volumes: HashMap<AudioBus, f32>,
 }
@@ -70,6 +71,7 @@ impl AudioBusSettings {
 // ── Audio Settings ──
 
 /// Global audio configuration (world resource).
+#[derive(Clone, Debug)]
 pub struct AudioSettings {
     /// Maximum number of sounds playing simultaneously.
     pub max_concurrent_sounds: usize,
@@ -93,6 +95,14 @@ impl Default for AudioSettings {
 pub struct AudioListener;
 
 /// An active sound source attached to an entity.
+///
+/// `Clone` is implemented manually because `StaticSoundHandle` is a live
+/// kira playback handle that cannot be duplicated. A cloned `AudioSource`
+/// carries the configuration (clip, bus, volume, spatial, etc.) but resets
+/// runtime state (handle, fade_elapsed) so that the cloned copy is treated
+/// as "not yet started." This is the correct semantics for forking a
+/// world: the fork describes the same audio intent, but any playback is
+/// re-initialized independently.
 pub struct AudioSource {
     /// Which clip to play.
     pub clip: AudioClipHandle,
@@ -119,6 +129,25 @@ pub struct AudioSource {
     pub(crate) handle: Option<StaticSoundHandle>,
     /// Internal: elapsed time since playback started (for fade-in).
     pub(crate) fade_elapsed: f32,
+}
+
+impl Clone for AudioSource {
+    fn clone(&self) -> Self {
+        Self {
+            clip: self.clip,
+            bus: self.bus,
+            volume: self.volume,
+            looping: self.looping,
+            spatial: self.spatial,
+            max_distance: self.max_distance,
+            playing: self.playing,
+            priority: self.priority,
+            fade_in: self.fade_in,
+            fade_out: self.fade_out,
+            handle: None,
+            fade_elapsed: 0.0,
+        }
+    }
 }
 
 impl AudioSource {

@@ -66,7 +66,7 @@ fn setup_default_resources(world: &mut World) {
     });
     // AudioEngine init may fail on headless systems — log and continue
     match euca_audio::AudioEngine::new() {
-        Ok(engine) => world.insert_resource(engine),
+        Ok(engine) => world.insert_resource(euca_audio::shared_engine(engine)),
         Err(e) => log::warn!("Audio init failed (non-fatal): {e}"),
     }
 }

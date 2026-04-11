@@ -43,8 +43,8 @@ pub struct ReflectComponentFns {
 ///
 /// ```
 /// # use euca_ecs::World;
-/// # #[derive(Debug, PartialEq)] struct Position { x: f32, y: f32 }
-/// # #[derive(Debug, PartialEq)] struct Velocity { dx: f32, dy: f32 }
+/// # #[derive(Clone, Debug, PartialEq)] struct Position { x: f32, y: f32 }
+/// # #[derive(Clone, Debug, PartialEq)] struct Velocity { dx: f32, dy: f32 }
 /// let mut world = World::new();
 ///
 /// // Spawn entities with components
@@ -446,7 +446,13 @@ impl World {
     // ── Resources ──
 
     /// Insert a singleton resource into the world. Overwrites if already present.
-    pub fn insert_resource<T: Send + Sync + 'static>(&mut self, value: T) {
+    ///
+    /// `T` must implement `Clone` so that the resource can be carried into
+    /// [`World::clone`] forks. Resources representing shared infrastructure
+    /// (GPU handles, network servers) should be wrapped in `Arc<T>` at the
+    /// call site so the cheap `Arc::clone` shares the handle instead of
+    /// duplicating the underlying object.
+    pub fn insert_resource<T: Send + Sync + Clone + 'static>(&mut self, value: T) {
         self.resources.insert(value);
     }
 
@@ -468,7 +474,9 @@ impl World {
     // ── Events ──
 
     /// Send an event into the world's double-buffered event system.
-    pub fn send_event<T: Send + Sync + 'static>(&mut self, event: T) {
+    /// Events require `Clone` so that [`World::clone`] forks receive an
+    /// independent copy of pending events.
+    pub fn send_event<T: Send + Sync + Clone + 'static>(&mut self, event: T) {
         self.events.send(event);
     }
 
@@ -699,6 +707,70 @@ impl Default for World {
     }
 }
 
+impl Clone for World {
+    /// Deep-clone the entire world state so that the cloned world can
+    /// evolve independently from the original — the foundation of the
+    /// fork primitive for agent-driven counterfactual reasoning.
+    ///
+    /// What is duplicated:
+    /// - Entity allocator (same ids, same generations, same free list)
+    /// - Component type registry
+    /// - All archetypes, with every component in every column cloned via
+    ///   the per-type `clone_fn` stored in `ComponentInfo`
+    /// - Sparse-set storage for each registered sparse component type
+    /// - Entity locations, archetype index, tick, archetype generation
+    /// - Resources (every resource satisfies `Clone` by construction)
+    /// - Events (deep-cloned via `Events::clone`)
+    /// - Reflection bridge (cheap: function pointers only)
+    ///
+    /// What is NOT duplicated:
+    /// - The query cache, which is rebuilt lazily on first query against
+    ///   the cloned world. This avoids tying the cloned world's generation
+    ///   counter to cached entries that reference the parent's archetypes.
+    ///
+    /// After cloning, mutations on one world do not affect the other.
+    fn clone(&self) -> Self {
+        let archetypes: Vec<Archetype> = self
+            .archetypes
+            .iter()
+            // SAFETY: `self.components` is the storage that every archetype
+            // was created against, so its clone_fns match the archetype
+            // columns by construction.
+            .map(|arch| unsafe { arch.clone_via_storage(&self.components) })
+            .collect();
+
+        let sparse_storage: HashMap<ComponentId, crate::sparse::SparseSet> = self
+            .sparse_storage
+            .iter()
+            .map(|(cid, set)| {
+                let clone_fn = self.components.info(*cid).clone_fn;
+                // SAFETY: clone_fn was registered against the component type
+                // this sparse set stores.
+                let cloned = unsafe { set.clone_with(clone_fn) };
+                (*cid, cloned)
+            })
+            .collect();
+
+        Self {
+            entities: self.entities.clone(),
+            components: self.components.clone(),
+            archetypes,
+            archetype_index: self.archetype_index.clone(),
+            entity_locations: self.entity_locations.clone(),
+            tick: self.tick,
+            archetype_generation: self.archetype_generation,
+            sparse_storage,
+            resources: self.resources.clone(),
+            events: self.events.clone(),
+            // Fresh query cache — rebuilt lazily on first query against the
+            // cloned world. Cached entries from `self.query_cache` would
+            // reference archetype ids whose pointer identity has changed.
+            query_cache: crate::query::new_query_cache_lock(),
+            reflect_components: self.reflect_components.clone(),
+        }
+    }
+}
+
 // ── UnsafeWorldCell: split-borrow of World for system parameter extraction ──
 
 use std::marker::PhantomData;
@@ -858,7 +930,7 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static DROP_COUNT: AtomicU32 = AtomicU32::new(0);
 
-        #[derive(Debug)]
+        #[derive(Clone, Debug)]
         struct DropTracker;
         impl Drop for DropTracker {
             fn drop(&mut self) {
@@ -971,4 +1043,50 @@ mod tests {
             "Query should return empty results after despawning the last entity"
         );
     }
+
+    #[test]
+    fn clone_world_is_independent() {
+        use crate::Query;
+
+        let mut world = World::new();
+        let a = world.spawn(Position { x: 1.0, y: 2.0 });
+        world.insert(a, Velocity { dx: 0.5, dy: 0.5 });
+        let b = world.spawn(Name("hero".to_string()));
+        world.insert_resource(Score(10));
+
+        // Fork the world.
+        let mut forked = world.clone();
+
+        // Mutate the fork.
+        forked.get_mut::<Position>(a).unwrap().x = 999.0;
+        forked.get_mut::<Name>(b).unwrap().0 = "villain".to_string();
+        forked.get_mut::<Velocity>(a).unwrap().dx = -1.0;
+        *forked.resource_mut::<Score>().unwrap() = Score(500);
+        forked.spawn(Position { x: 42.0, y: 42.0 });
+
+        // Original world is unchanged.
+        assert_eq!(world.get::<Position>(a).unwrap().x, 1.0);
+        assert_eq!(world.get::<Name>(b).unwrap().0, "hero");
+        assert_eq!(world.get::<Velocity>(a).unwrap().dx, 0.5);
+        assert_eq!(world.resource::<Score>().unwrap().0, 10);
+        assert_eq!(world.entity_count(), 2);
+
+        // Fork reflects its own mutations.
+        assert_eq!(forked.get::<Position>(a).unwrap().x, 999.0);
+        assert_eq!(forked.get::<Name>(b).unwrap().0, "villain");
+        assert_eq!(forked.resource::<Score>().unwrap().0, 500);
+        assert_eq!(forked.entity_count(), 3);
+
+        // Query cache works independently on the fork.
+        let fork_positions: Vec<f32> = {
+            let q = Query::<&Position>::new(&forked);
+            q.iter().map(|p| p.x).collect()
+        };
+        assert_eq!(fork_positions.len(), 2);
+        assert!(fork_positions.contains(&999.0));
+        assert!(fork_positions.contains(&42.0));
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct Score(i32);
 }

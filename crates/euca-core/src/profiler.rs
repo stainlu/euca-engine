@@ -14,6 +14,7 @@ pub enum ProfileSectionKind {
 }
 
 /// A recorded profile section within a single frame.
+#[derive(Clone, Debug)]
 pub struct ProfileSection {
     /// Human-readable section label.
     pub name: &'static str,
@@ -28,6 +29,7 @@ pub struct ProfileSection {
 /// Usage: call [`profiler_begin`] at the start of a section and [`profiler_end`] to
 /// finish it. At the end of each frame, read the summary via [`Profiler::frame_summary`]
 /// and then call [`Profiler::end_frame`] to archive the total frame time.
+#[derive(Clone, Debug)]
 pub struct Profiler {
     sections: Vec<ProfileSection>,
     frame_times: VecDeque<f64>,

@@ -36,14 +36,18 @@ pub struct PropagationState {
 /// [`transform_propagation_system`]. Stored as a world resource so that
 /// `Vec` / `VecDeque` capacity survives across frames — each frame only
 /// calls `.clear()`, which resets the length without freeing memory.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TransformPropagationCache {
     roots: Vec<(Entity, euca_math::Transform)>,
     queue: VecDeque<(Entity, euca_math::Transform, bool)>,
 }
 
 /// Returns true if component `T` on `entity` was modified since `since_tick`.
-fn changed_since<T: 'static + Send + Sync>(world: &World, entity: Entity, since_tick: u32) -> bool {
+fn changed_since<T: 'static + Send + Sync + Clone>(
+    world: &World,
+    entity: Entity,
+    since_tick: u32,
+) -> bool {
     world
         .get_change_tick::<T>(entity)
         .is_some_and(|tick| tick >= since_tick)

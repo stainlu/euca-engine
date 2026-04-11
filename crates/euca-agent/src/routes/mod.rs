@@ -254,12 +254,13 @@ pub struct GltfLoadCacheEntry {
 /// render loop drains them (on the main thread where GPU access is available).
 /// In headless mode this queue is never drained — entities simply have no
 /// `MeshRenderer`, which is harmless.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct PendingMeshUpload {
     pub queue: Vec<PendingMeshEntry>,
 }
 
 /// A single mesh waiting for GPU upload, with optional material/textures from GLB.
+#[derive(Clone)]
 pub struct PendingMeshEntry {
     /// The entity that should receive a `MeshRenderer` after upload.
     pub entity: Entity,

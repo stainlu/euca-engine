@@ -4,6 +4,7 @@ use std::time::Instant;
 use web_time::Instant;
 
 /// Tracks time progression across frames.
+#[derive(Clone, Debug)]
 pub struct Time {
     /// Time since the last frame (seconds).
     pub delta: f32,

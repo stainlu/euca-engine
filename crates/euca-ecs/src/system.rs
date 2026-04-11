@@ -143,7 +143,7 @@ impl<S: System> LabeledSystem<S> {
 mod tests {
     use super::*;
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq)]
     struct Counter(u32);
 
     #[test]
