@@ -233,6 +233,12 @@ enum Commands {
         command: NetCommands,
     },
 
+    /// Fork: counterfactual simulation — clone main world, step/probe, delete
+    Fork {
+        #[command(subcommand)]
+        command: ForkCommands,
+    },
+
     /// Discover available commands (for AI agents and humans, works offline)
     Discover {
         /// Output as machine-readable JSON
@@ -307,6 +313,58 @@ enum SimCommands {
     },
     /// Reset to initial scene
     Reset,
+}
+
+/// Subcommands for the `fork` top-level group.
+///
+/// Forks are independent deep copies of the main world. Agents use them
+/// to answer "what if?" questions: create a fork, intervene, step it
+/// forward, observe the result, then delete the fork without touching
+/// the main world.
+#[derive(Subcommand)]
+enum ForkCommands {
+    /// Create a new fork by cloning the main world.
+    Create {
+        /// Agent-chosen identifier for the fork (must be unique).
+        id: String,
+    },
+    /// List all active forks.
+    List,
+    /// Delete a fork.
+    Delete {
+        /// Fork id to delete.
+        id: String,
+    },
+    /// Advance a fork by N ticks (runs the shared schedule on the fork only).
+    Step {
+        /// Fork id.
+        id: String,
+        /// Number of ticks to advance.
+        #[arg(short, long, default_value = "1")]
+        ticks: u64,
+    },
+    /// Advance a fork and evaluate assertions in one atomic call.
+    Probe {
+        /// Fork id.
+        id: String,
+        /// Number of ticks to advance before evaluating.
+        #[arg(short, long, default_value = "0")]
+        ticks: u64,
+        /// Optional comma-separated list of assertion names to filter by.
+        #[arg(short, long)]
+        assertions: Option<String>,
+        /// Capture a snapshot of the fork before advancing.
+        #[arg(long)]
+        snapshot_before: bool,
+        /// Capture a snapshot of the fork after advancing.
+        #[arg(long)]
+        snapshot_after: bool,
+    },
+    /// Read the fork's entities and current tick.
+    Observe {
+        /// Fork id.
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1249,6 +1307,59 @@ fn main() {
                 handle_response(resp)
             }
             SimCommands::Reset => post_empty(&client, server, "/reset"),
+        },
+
+        // ── Fork: counterfactual simulation ──
+        Commands::Fork { command } => match command {
+            ForkCommands::Create { id } => {
+                let resp = client
+                    .post(format!("{server}/fork"))
+                    .json(&serde_json::json!({ "fork_id": id }))
+                    .send();
+                handle_response(resp)
+            }
+            ForkCommands::List => {
+                let resp = client.get(format!("{server}/fork/list")).send();
+                handle_response(resp)
+            }
+            ForkCommands::Delete { id } => {
+                let resp = client.delete(format!("{server}/fork/{id}")).send();
+                handle_response(resp)
+            }
+            ForkCommands::Step { id, ticks } => {
+                let resp = client
+                    .post(format!("{server}/fork/{id}/step"))
+                    .json(&serde_json::json!({ "ticks": ticks }))
+                    .send();
+                handle_response(resp)
+            }
+            ForkCommands::Probe {
+                id,
+                ticks,
+                assertions,
+                snapshot_before,
+                snapshot_after,
+            } => {
+                let mut body = serde_json::json!({
+                    "ticks": ticks,
+                    "snapshot_before": snapshot_before,
+                    "snapshot_after": snapshot_after,
+                });
+                if let Some(list) = assertions {
+                    let names: Vec<&str> =
+                        list.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                    body["assertions"] = serde_json::json!(names);
+                }
+                let resp = client
+                    .post(format!("{server}/fork/{id}/probe"))
+                    .json(&body)
+                    .send();
+                handle_response(resp)
+            }
+            ForkCommands::Observe { id } => {
+                let resp = client.get(format!("{server}/fork/{id}/observe")).send();
+                handle_response(resp)
+            }
         },
 
         // ── Scene ──
