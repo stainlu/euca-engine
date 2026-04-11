@@ -155,6 +155,13 @@ impl AgentServer {
             .route("/manifest", post(routes::manifest_set))
             .route("/manifest", get(routes::manifest_get))
             .route("/manifest/feature", post(routes::manifest_feature_update))
+            // Fork — counterfactual simulation (create, list, delete, step, probe, observe)
+            .route("/fork", post(routes::create_fork))
+            .route("/fork/list", get(routes::list_forks))
+            .route("/fork/{id}", axum::routing::delete(routes::delete_fork))
+            .route("/fork/{id}/step", post(routes::fork_step))
+            .route("/fork/{id}/probe", post(routes::fork_probe))
+            .route("/fork/{id}/observe", get(routes::fork_observe))
             .route("/engine/gpu", get(routes::engine_gpu))
             .with_state(self.shared.clone())
     }

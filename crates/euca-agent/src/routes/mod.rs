@@ -7,6 +7,7 @@ mod debug;
 mod entity;
 mod fog;
 mod foliage;
+mod fork;
 mod gameplay;
 mod gpu;
 mod hero;
@@ -47,6 +48,7 @@ pub use entity::{
 };
 pub use fog::{fog_get, fog_set};
 pub use foliage::{foliage_list, foliage_scatter};
+pub use fork::{create_fork, delete_fork, fork_observe, fork_probe, fork_step, list_forks};
 pub use gameplay::{
     ability_list, ability_use, ai_set, game_create, game_state, projectile_spawn, rule_create,
     rule_list, trigger_create,

@@ -30,7 +30,7 @@ pub use query::{
 };
 pub use resource::Resources;
 pub use schedule::{ParallelSchedule, ParallelSystemAccess, Schedule, SystemBatch, SystemHandle};
-pub use shared::SharedWorld;
+pub use shared::{ForkError, SharedWorld};
 pub use snapshot::{EntitySnapshot, WorldSnapshot};
 pub use system::{AccessSystem, IntoSystem, LabeledSystem, System};
 pub use system_param::{Res, ResMut, SystemAccess};
