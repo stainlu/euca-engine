@@ -132,10 +132,11 @@ pub async fn fork_step(
 ) -> Json<serde_json::Value> {
     let ticks = req.ticks.min(10_000);
     let result = shared.with_fork(&fork_id, |w, schedule| {
+        // `Schedule::run` already advances `world.tick()` at the end of each
+        // call, so a second `w.tick()` here would double-count.
         let start_tick = w.current_tick();
         for _ in 0..ticks {
             schedule.run(w);
-            w.tick();
         }
         let end_tick = w.current_tick();
         serde_json::json!({
@@ -178,8 +179,8 @@ pub async fn fork_probe(
 
         let start_tick = w.current_tick();
         for _ in 0..ticks {
+            // `Schedule::run` advances world.tick() internally.
             schedule.run(w);
-            w.tick();
         }
         let end_tick = w.current_tick();
 

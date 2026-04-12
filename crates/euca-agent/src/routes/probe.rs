@@ -50,11 +50,11 @@ pub async fn probe(
             None
         };
 
-        // Advance simulation
+        // Advance simulation. `Schedule::run` already advances world.tick()
+        // at the end of each call, so a second w.tick() here would double.
         let start_tick = w.current_tick();
         for _ in 0..ticks {
             schedule.run(w);
-            w.tick();
         }
         let end_tick = w.current_tick();
 
