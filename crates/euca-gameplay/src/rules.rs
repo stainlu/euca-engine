@@ -733,16 +733,16 @@ pub fn parse_when(s: &str) -> Option<RuleCondition> {
         Some(RuleCondition::Death)
     } else if let Some(rest) = s.strip_prefix("timer:") {
         let interval: f32 = rest.parse().ok()?;
-        Some(RuleCondition::Timer(interval))
+        Some(RuleCondition::Timer { interval })
     } else if let Some(rest) = s.strip_prefix("health-below:") {
         let threshold: f32 = rest.parse().ok()?;
-        Some(RuleCondition::HealthBelow(threshold))
+        Some(RuleCondition::HealthBelow { threshold })
     } else if let Some(rest) = s.strip_prefix("score:") {
         let threshold: i32 = rest.parse().ok()?;
-        Some(RuleCondition::Score(threshold))
+        Some(RuleCondition::Score { threshold })
     } else {
         s.strip_prefix("phase:")
-            .map(|rest| RuleCondition::Phase(rest.to_string()))
+            .map(|rest| RuleCondition::Phase { phase: rest.to_string() })
     }
 }
 
@@ -762,18 +762,24 @@ pub fn parse_filter(s: &str) -> Option<RuleFilter> {
 }
 
 /// Parsed condition type (used by HTTP/CLI to create rule entities).
-#[derive(Clone, Debug)]
+///
+/// Serializes as `{ "kind": "<variant>", ... }` for use inside scenario
+/// JSON documents. The `kind` discriminator and variant payloads are
+/// `snake_case` so that scenario authors and agents can write
+/// `{ "kind": "health_below", "threshold": 50.0 }`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuleCondition {
     /// Trigger when a matching entity dies.
     Death,
     /// Trigger every N seconds.
-    Timer(f32),
+    Timer { interval: f32 },
     /// Trigger when health drops below the threshold.
-    HealthBelow(f32),
+    HealthBelow { threshold: f32 },
     /// Trigger when any player reaches the score value.
-    Score(i32),
+    Score { threshold: i32 },
     /// Trigger when the game enters the named phase.
-    Phase(String),
+    Phase { phase: String },
 }
 
 #[cfg(test)]
@@ -836,7 +842,7 @@ mod tests {
     fn parse_when_timer() {
         let c = parse_when("timer:10").unwrap();
         match c {
-            RuleCondition::Timer(t) => assert_eq!(t, 10.0),
+            RuleCondition::Timer { interval } => assert_eq!(interval, 10.0),
             _ => panic!("Expected Timer"),
         }
     }

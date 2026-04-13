@@ -239,6 +239,12 @@ enum Commands {
         command: ForkCommands,
     },
 
+    /// Scenario: declarative game setup — load, save, apply to main or fork
+    Scenario {
+        #[command(subcommand)]
+        command: ScenarioCommands,
+    },
+
     /// Discover available commands (for AI agents and humans, works offline)
     Discover {
         /// Output as machine-readable JSON
@@ -364,6 +370,36 @@ enum ForkCommands {
     Observe {
         /// Fork id.
         id: String,
+    },
+}
+
+/// Subcommands for the `scenario` top-level group.
+///
+/// A scenario is a single declarative JSON document that describes a
+/// complete game setup: templates, entities, rules, and assertions.
+/// Replaces the imperative 28-command MOBA setup pipeline.
+#[derive(Subcommand)]
+enum ScenarioCommands {
+    /// Load a scenario JSON file and apply it to the main world.
+    /// Wipes the current main world before loading.
+    Load {
+        /// Path to a scenario JSON file.
+        path: String,
+    },
+    /// Export the current main world as a scenario JSON to stdout
+    /// (or to a file if --out is given).
+    Save {
+        /// Optional output file path. If omitted, prints to stdout.
+        #[arg(short, long)]
+        out: Option<String>,
+    },
+    /// Apply a scenario JSON file to a fork. Wipes the fork before
+    /// loading; main world is untouched.
+    ApplyToFork {
+        /// Fork id (must already exist; create with `euca fork create`).
+        fork_id: String,
+        /// Path to a scenario JSON file.
+        path: String,
     },
 }
 
@@ -1360,6 +1396,55 @@ fn main() {
                 let resp = client.get(format!("{server}/fork/{id}/observe")).send();
                 handle_response(resp)
             }
+        },
+
+        // ── Scenario: declarative game setup ──
+        Commands::Scenario { command } => match command {
+            ScenarioCommands::Load { path } => (|| -> Result<(), String> {
+                let body = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("Cannot read {path}: {e}"))?;
+                let json: Value = serde_json::from_str(&body)
+                    .map_err(|e| format!("Invalid JSON in {path}: {e}"))?;
+                let resp = client
+                    .post(format!("{server}/scenario"))
+                    .json(&json)
+                    .send();
+                handle_response(resp)
+            })(),
+            ScenarioCommands::Save { out } => (|| -> Result<(), String> {
+                let resp = client
+                    .get(format!("{server}/scenario"))
+                    .send()
+                    .map_err(|e| e.to_string())?;
+                let status = resp.status();
+                let text = resp.text().map_err(|e| e.to_string())?;
+                let pretty = match serde_json::from_str::<Value>(&text) {
+                    Ok(json) => serde_json::to_string_pretty(&json).unwrap_or(text),
+                    Err(_) => text,
+                };
+                if let Some(path) = out {
+                    std::fs::write(&path, &pretty)
+                        .map_err(|e| format!("Cannot write {path}: {e}"))?;
+                    println!("Scenario written to {path}");
+                } else {
+                    println!("{pretty}");
+                }
+                if !status.is_success() {
+                    return Err(format!("HTTP {status}"));
+                }
+                Ok(())
+            })(),
+            ScenarioCommands::ApplyToFork { fork_id, path } => (|| -> Result<(), String> {
+                let body = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("Cannot read {path}: {e}"))?;
+                let json: Value = serde_json::from_str(&body)
+                    .map_err(|e| format!("Invalid JSON in {path}: {e}"))?;
+                let resp = client
+                    .post(format!("{server}/fork/{fork_id}/scenario"))
+                    .json(&json)
+                    .send();
+                handle_response(resp)
+            })(),
         },
 
         // ── Scene ──

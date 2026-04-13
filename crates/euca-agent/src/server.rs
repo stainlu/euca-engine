@@ -162,6 +162,10 @@ impl AgentServer {
             .route("/fork/{id}/step", post(routes::fork_step))
             .route("/fork/{id}/probe", post(routes::fork_probe))
             .route("/fork/{id}/observe", get(routes::fork_observe))
+            // Scenario — declarative game setup (apply, export, apply-to-fork)
+            .route("/scenario", post(routes::scenario_apply_main))
+            .route("/scenario", get(routes::scenario_export_main))
+            .route("/fork/{id}/scenario", post(routes::scenario_apply_fork))
             .route("/engine/gpu", get(routes::engine_gpu))
             .with_state(self.shared.clone())
     }

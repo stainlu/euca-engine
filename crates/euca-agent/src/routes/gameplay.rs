@@ -315,7 +315,7 @@ pub async fn rule_create(
             let entity = w.spawn(euca_gameplay::OnDeathRule { filter, actions });
             entity.index()
         }
-        euca_gameplay::RuleCondition::Timer(interval) => {
+        euca_gameplay::RuleCondition::Timer { interval } => {
             let entity = w.spawn(euca_gameplay::TimerRule {
                 interval,
                 elapsed: 0.0,
@@ -324,7 +324,7 @@ pub async fn rule_create(
             });
             entity.index()
         }
-        euca_gameplay::RuleCondition::HealthBelow(threshold) => {
+        euca_gameplay::RuleCondition::HealthBelow { threshold } => {
             let entity = w.spawn(euca_gameplay::HealthBelowRule {
                 filter,
                 threshold,
@@ -333,7 +333,7 @@ pub async fn rule_create(
             });
             entity.index()
         }
-        euca_gameplay::RuleCondition::Score(threshold) => {
+        euca_gameplay::RuleCondition::Score { threshold } => {
             let entity = w.spawn(euca_gameplay::OnScoreRule {
                 score_threshold: threshold,
                 triggered: false,
@@ -341,7 +341,7 @@ pub async fn rule_create(
             });
             entity.index()
         }
-        euca_gameplay::RuleCondition::Phase(phase) => {
+        euca_gameplay::RuleCondition::Phase { phase } => {
             let entity = w.spawn(euca_gameplay::OnPhaseRule {
                 phase,
                 triggered: false,

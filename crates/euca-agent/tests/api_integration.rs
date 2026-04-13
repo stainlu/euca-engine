@@ -431,6 +431,245 @@ fn test_fork_with_main_carries_resources() {
     assert_eq!(main_phase, Some(true));
 }
 
+// ── Scenario tests: declarative game setup ─────────────────────────────────
+
+fn make_test_scenario() -> euca_agent::routes::ScenarioSpec {
+    use euca_agent::routes::{ScenarioEntity, ScenarioGame, ScenarioRule, ScenarioSpec};
+    use euca_gameplay::{ActionTarget, AssertCondition, EntityFilter, GameAction, RuleCondition, Severity};
+    use std::collections::HashMap;
+
+    let mut templates = HashMap::new();
+    templates.insert(
+        "hero".to_string(),
+        euca_agent::routes::SpawnRequest {
+            mesh: Some("cube".into()),
+            health: Some(500.0),
+            team: Some(1),
+            combat: Some(true),
+            ..Default::default()
+        },
+    );
+    templates.insert(
+        "minion".to_string(),
+        euca_agent::routes::SpawnRequest {
+            mesh: Some("cube".into()),
+            health: Some(80.0),
+            team: Some(2),
+            ..Default::default()
+        },
+    );
+
+    ScenarioSpec {
+        version: 2,
+        name: Some("test-scenario".into()),
+        camera: None,
+        game: Some(ScenarioGame {
+            mode: Some("deathmatch".into()),
+            score_limit: Some(5),
+            time_limit: Some(60.0),
+            respawn_delay: Some(2.0),
+            auto_start: Some(true),
+        }),
+        templates,
+        entities: vec![
+            ScenarioEntity::Template {
+                template: "hero".into(),
+                position: Some([0.0, 1.0, 0.0]),
+                overrides: None,
+            },
+            ScenarioEntity::Template {
+                template: "minion".into(),
+                position: Some([5.0, 1.0, 0.0]),
+                overrides: None,
+            },
+            ScenarioEntity::Template {
+                template: "minion".into(),
+                position: Some([-5.0, 1.0, 0.0]),
+                overrides: None,
+            },
+        ],
+        rules: vec![ScenarioRule {
+            when: RuleCondition::Death,
+            filter: "team:2".into(),
+            actions: vec![GameAction::Score {
+                target: ActionTarget::Source,
+                points: 1,
+            }],
+        }],
+        assertions: vec![euca_agent::routes::AssertionSpec {
+            name: "team1_alive".into(),
+            condition: AssertCondition::EntityCount {
+                filter: EntityFilter::Team { team: 1 },
+                min: Some(1),
+                max: None,
+            },
+            severity: Severity::Error,
+        }],
+    }
+}
+
+#[test]
+fn test_scenario_apply_to_main() {
+    let shared = test_world();
+
+    let scenario = make_test_scenario();
+    let count = shared.with(|w, _| euca_agent::routes::scenario::apply_scenario(w, &scenario));
+    assert_eq!(count, 3, "scenario should spawn 3 entities");
+
+    // GameState should be set up.
+    let phase = shared.with_world(|w| {
+        w.resource::<euca_gameplay::GameState>()
+            .map(|s| matches!(s.phase, euca_gameplay::GamePhase::Playing))
+    });
+    assert_eq!(phase, Some(true));
+
+    // Templates should be registered.
+    let templates_count = shared.with_world(|w| {
+        w.resource::<euca_agent::routes::TemplateRegistry>()
+            .map(|r| r.templates.len())
+    });
+    assert_eq!(templates_count, Some(2));
+
+    // Rules should exist (1 OnDeathRule).
+    let rule_count = shared.with_world(|w| {
+        let q = euca_ecs::Query::<&euca_gameplay::OnDeathRule>::new(w);
+        q.iter().count()
+    });
+    assert_eq!(rule_count, 1);
+
+    // Assertions should exist (1 entity with Assertion component).
+    let assert_count = shared.with_world(|w| {
+        let q = euca_ecs::Query::<&euca_gameplay::Assertion>::new(w);
+        q.iter().count()
+    });
+    assert_eq!(assert_count, 1);
+}
+
+#[test]
+fn test_scenario_round_trip_serializes_and_loads() {
+    let shared = test_world();
+    let scenario = make_test_scenario();
+    shared.with(|w, _| euca_agent::routes::scenario::apply_scenario(w, &scenario));
+
+    // Export the world back to a scenario.
+    let exported = shared.with(|w, _| euca_agent::routes::scenario::extract_scenario(w));
+
+    // Templates round-trip.
+    assert_eq!(exported.templates.len(), 2);
+    assert!(exported.templates.contains_key("hero"));
+    assert!(exported.templates.contains_key("minion"));
+
+    // Rules round-trip.
+    assert_eq!(exported.rules.len(), 1);
+    assert!(matches!(
+        exported.rules[0].when,
+        euca_gameplay::RuleCondition::Death
+    ));
+
+    // Assertions round-trip.
+    assert_eq!(exported.assertions.len(), 1);
+    assert_eq!(exported.assertions[0].name, "team1_alive");
+
+    // Serialize and deserialize the JSON to confirm wire-format works.
+    let json = serde_json::to_string(&exported).expect("serialize scenario");
+    let _back: euca_agent::routes::ScenarioSpec =
+        serde_json::from_str(&json).expect("deserialize scenario");
+}
+
+#[test]
+fn test_scenario_apply_to_fork_does_not_affect_main() {
+    let shared = test_world();
+
+    // Set up main with a single hero (not via scenario).
+    shared.with(|w, _| {
+        w.spawn(euca_gameplay::Health::new(100.0));
+    });
+    let main_count_before = shared.with_world(|w| w.entity_count());
+    assert_eq!(main_count_before, 1);
+
+    // Fork main, then apply a scenario to the fork.
+    shared.fork("scenario-fork").unwrap();
+    let scenario = make_test_scenario();
+    let fork_spawn_count = shared
+        .with_fork("scenario-fork", |w, _| {
+            euca_agent::routes::scenario::apply_scenario(w, &scenario)
+        })
+        .unwrap();
+    assert_eq!(fork_spawn_count, 3);
+
+    // Main is untouched.
+    assert_eq!(shared.with_world(|w| w.entity_count()), main_count_before);
+
+    // Fork has the 3 game entities + 1 rule entity + 1 assertion entity = 5.
+    // (Rules and assertions are ECS entities too.) The original hero
+    // from main was wiped by apply_scenario's despawn loop.
+    let fork_count = shared
+        .with_fork_ref("scenario-fork", |w| w.entity_count())
+        .unwrap();
+    assert_eq!(fork_count, 5);
+
+    // Game entities specifically (those with Health) are the 3 scenario
+    // entities — none of the original main entities survived.
+    let fork_health_count = shared
+        .with_fork_ref("scenario-fork", |w| {
+            let q = euca_ecs::Query::<&euca_gameplay::Health>::new(w);
+            q.iter().count()
+        })
+        .unwrap();
+    assert_eq!(fork_health_count, 3);
+}
+
+#[test]
+fn test_scenario_template_overrides_merge() {
+    use euca_agent::routes::{ScenarioEntity, ScenarioSpec, SpawnRequest};
+    use std::collections::HashMap;
+
+    let shared = test_world();
+
+    let mut templates = HashMap::new();
+    templates.insert(
+        "base".to_string(),
+        SpawnRequest {
+            mesh: Some("cube".into()),
+            health: Some(100.0),
+            team: Some(1),
+            ..Default::default()
+        },
+    );
+
+    let scenario = ScenarioSpec {
+        version: 2,
+        templates,
+        entities: vec![ScenarioEntity::Template {
+            template: "base".into(),
+            position: Some([10.0, 0.0, 0.0]),
+            // Override health while keeping team and mesh from template.
+            overrides: Some(SpawnRequest {
+                health: Some(999.0),
+                ..Default::default()
+            }),
+        }],
+        ..Default::default()
+    };
+
+    shared.with(|w, _| euca_agent::routes::scenario::apply_scenario(w, &scenario));
+
+    // The spawned entity should have the overridden health (999), not
+    // the template's 100.
+    let max_hp = shared.with_world(|w| {
+        let q = euca_ecs::Query::<(euca_ecs::Entity, &euca_gameplay::Health)>::new(w);
+        q.iter().next().map(|(_, h)| h.max)
+    });
+    assert_eq!(max_hp, Some(999.0));
+
+    // Team should still be 1 (from template).
+    let team = shared.with_world(|w| {
+        let q = euca_ecs::Query::<(euca_ecs::Entity, &euca_gameplay::Team)>::new(w);
+        q.iter().next().map(|(_, t)| t.0)
+    });
+    assert_eq!(team, Some(1));
+}
+
 #[test]
 fn test_fork_damage_event_stays_in_fork() {
     let shared = test_world();

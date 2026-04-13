@@ -8,6 +8,7 @@ mod entity;
 mod fog;
 mod foliage;
 mod fork;
+pub mod scenario;
 mod gameplay;
 mod gpu;
 mod hero;
@@ -49,6 +50,10 @@ pub use entity::{
 pub use fog::{fog_get, fog_set};
 pub use foliage::{foliage_list, foliage_scatter};
 pub use fork::{create_fork, delete_fork, fork_observe, fork_probe, fork_step, list_forks};
+pub use scenario::{
+    AssertionSpec, ScenarioCamera, ScenarioEntity, ScenarioGame, ScenarioRule, ScenarioSpec,
+    scenario_apply_fork, scenario_apply_main, scenario_export_main,
+};
 pub use gameplay::{
     ability_list, ability_use, ai_set, game_create, game_state, projectile_spawn, rule_create,
     rule_list, trigger_create,
@@ -903,7 +908,7 @@ pub struct StepResponse {
     pub entity_count: u32,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SpawnRequest {
     #[serde(default)]
     pub agent_id: Option<u32>,

@@ -501,7 +501,7 @@ fn create_rule_from_value(w: &mut euca_ecs::World, rule: &serde_json::Value) {
         euca_gameplay::RuleCondition::Death => {
             w.spawn(euca_gameplay::OnDeathRule { filter, actions });
         }
-        euca_gameplay::RuleCondition::Timer(interval) => {
+        euca_gameplay::RuleCondition::Timer { interval } => {
             w.spawn(euca_gameplay::TimerRule {
                 interval,
                 elapsed: 0.0,
@@ -509,7 +509,7 @@ fn create_rule_from_value(w: &mut euca_ecs::World, rule: &serde_json::Value) {
                 actions,
             });
         }
-        euca_gameplay::RuleCondition::HealthBelow(threshold) => {
+        euca_gameplay::RuleCondition::HealthBelow { threshold } => {
             w.spawn(euca_gameplay::HealthBelowRule {
                 filter,
                 threshold,
@@ -517,14 +517,14 @@ fn create_rule_from_value(w: &mut euca_ecs::World, rule: &serde_json::Value) {
                 actions,
             });
         }
-        euca_gameplay::RuleCondition::Score(threshold) => {
+        euca_gameplay::RuleCondition::Score { threshold } => {
             w.spawn(euca_gameplay::OnScoreRule {
                 score_threshold: threshold,
                 triggered: false,
                 actions,
             });
         }
-        euca_gameplay::RuleCondition::Phase(phase) => {
+        euca_gameplay::RuleCondition::Phase { phase } => {
             w.spawn(euca_gameplay::OnPhaseRule {
                 phase,
                 triggered: false,
