@@ -1,7 +1,79 @@
 use crate::Cli;
 
 /// Commands that work offline (no engine running).
-const OFFLINE_COMMANDS: &[&str] = &["package", "asset", "discover"];
+const OFFLINE_COMMANDS: &[&str] = &["package", "asset", "discover", "explain"];
+
+/// Classification of a CLI group by the agent-facing scope it belongs
+/// to. Used by `euca discover --scope <scope>` to filter the output
+/// so agents building a puzzle game never see Roshan.
+///
+/// This is a first pass — the long-term fix is the Genre de-leakage
+/// refactor (plan Priority 2), which moves genre-bound modules into
+/// separate crates. For now, a simple name-based lookup table is
+/// enough to let agents request a scoped view.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Generic engine primitives — no genre vocabulary.
+    Core,
+    /// Genre-neutral gameplay building blocks (combat, rules, etc.).
+    Gameplay,
+    /// Rendering / audio / animation / particle / material / etc.
+    Media,
+    /// MOBA-specific vocabulary (hero, shop, inventory, ...).
+    Moba,
+    /// Infrastructure and tools (offline commands, diagnostics, auth).
+    Tools,
+}
+
+impl Scope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Scope::Core => "core",
+            Scope::Gameplay => "gameplay",
+            Scope::Media => "media",
+            Scope::Moba => "moba",
+            Scope::Tools => "tools",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Scope> {
+        match s.to_ascii_lowercase().as_str() {
+            "core" => Some(Scope::Core),
+            "gameplay" => Some(Scope::Gameplay),
+            "media" => Some(Scope::Media),
+            "moba" => Some(Scope::Moba),
+            "tools" => Some(Scope::Tools),
+            _ => None,
+        }
+    }
+}
+
+/// Look up the scope for a given top-level group name.
+fn scope_of(group: &str) -> Scope {
+    match group {
+        // Core engine primitives — no genre vocabulary.
+        "entity" | "sim" | "scene" | "camera" | "screenshot" | "observe" | "schema"
+        | "status" | "trigger" | "projectile" | "fork" | "scenario" | "prefab" => Scope::Core,
+
+        // Genre-neutral gameplay building blocks.
+        "game" | "ai" | "rule" | "template" | "ability" | "effect" | "assert" | "manifest"
+        | "nav" | "vfx" | "ui" | "input" => Scope::Gameplay,
+
+        // Rendering / audio / animation / visuals.
+        "animation" | "audio" | "material" | "postprocess" | "fog" | "terrain" | "foliage"
+        | "particle" => Scope::Media,
+
+        // MOBA-specific vocabulary.
+        "hero" | "item" | "shop" => Scope::Moba,
+
+        // Tools / infrastructure.
+        "package" | "asset" | "discover" | "explain" | "script" | "net" | "auth"
+        | "profile" | "diagnose" | "events" | "engine" | "hud" => Scope::Tools,
+
+        // Unknown groups default to Gameplay (visible in gameplay/all views).
+        _ => Scope::Gameplay,
+    }
+}
 
 #[derive(serde::Serialize)]
 struct CommandManifest {
@@ -14,6 +86,7 @@ struct GroupEntry {
     name: String,
     description: String,
     requires_engine: bool,
+    scope: String,
     commands: Vec<CommandEntry>,
 }
 
@@ -35,10 +108,29 @@ struct ArgEntry {
     description: String,
 }
 
-pub(crate) fn run_discover(json: bool, group_filter: Option<&str>) {
+pub(crate) fn run_discover(
+    json: bool,
+    group_filter: Option<&str>,
+    scope_filter: Option<&str>,
+) {
     use clap::CommandFactory;
     let cmd = Cli::command();
     let version = cmd.get_version().unwrap_or("0.4.0");
+
+    // Parse the scope filter up-front. An unknown scope string is a
+    // no-op (prints everything) with a warning to stderr.
+    let scope_parsed: Option<Scope> = match scope_filter {
+        Some(s) if !s.is_empty() && s != "all" => match Scope::parse(s) {
+            Some(sc) => Some(sc),
+            None => {
+                eprintln!(
+                    "warning: unknown scope '{s}' — valid scopes: core, gameplay, media, moba, tools, all"
+                );
+                None
+            }
+        },
+        _ => None,
+    };
 
     let mut groups: Vec<GroupEntry> = Vec::new();
 
@@ -53,6 +145,15 @@ pub(crate) fn run_discover(json: bool, group_filter: Option<&str>) {
         // Apply group filter
         if let Some(filter) = group_filter
             && !name.contains(filter)
+        {
+            continue;
+        }
+
+        let group_scope = scope_of(&name);
+
+        // Apply scope filter (if any).
+        if let Some(target) = scope_parsed
+            && group_scope != target
         {
             continue;
         }
@@ -86,6 +187,7 @@ pub(crate) fn run_discover(json: bool, group_filter: Option<&str>) {
             name,
             description,
             requires_engine,
+            scope: group_scope.as_str().to_string(),
             commands,
         });
     }

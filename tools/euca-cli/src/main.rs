@@ -250,8 +250,22 @@ enum Commands {
         /// Output as machine-readable JSON
         #[arg(long)]
         json: bool,
+        /// Filter by scope: core, gameplay, media, moba, tools, all.
+        /// Lets agents get a genre-appropriate view of the CLI surface
+        /// (e.g. `--scope core` hides all MOBA vocabulary).
+        #[arg(long)]
+        scope: Option<String>,
         /// Filter by group name (e.g., "entity", "asset")
         group: Option<String>,
+    },
+
+    /// Progressive-disclosure docs: `euca explain <topic>` prints a
+    /// focused worked example. Available topics: quickstart, entity,
+    /// combat, rule, assert, fork, scenario. With no topic, lists
+    /// the full topic index.
+    Explain {
+        /// Topic name (see `euca explain` for the full list).
+        topic: Option<String>,
     },
 
     // ── Hidden aliases for backward compatibility ──
@@ -2379,10 +2393,12 @@ fn main() {
             Ok(())
         }
 
-        Commands::Discover { json, group } => {
-            commands::discover::run_discover(json, group.as_deref());
+        Commands::Discover { json, scope, group } => {
+            commands::discover::run_discover(json, group.as_deref(), scope.as_deref());
             Ok(())
         }
+
+        Commands::Explain { topic } => commands::explain::run_explain(topic.as_deref()),
 
         Commands::Asset { command } => commands::asset::run_asset(command, &client, server),
 
