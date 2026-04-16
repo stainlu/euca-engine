@@ -1252,6 +1252,7 @@ dependencies = [
  "euca-gameplay",
  "euca-input",
  "euca-math",
+ "euca-moba",
  "euca-nav",
  "euca-net",
  "euca-particle",
@@ -1426,6 +1427,7 @@ dependencies = [
  "euca-gameplay",
  "euca-input",
  "euca-math",
+ "euca-moba",
  "euca-nav",
  "euca-net",
  "euca-particle",
@@ -1510,6 +1512,21 @@ dependencies = [
  "euca-reflect",
  "log",
  "serde",
+]
+
+[[package]]
+name = "euca-moba"
+version = "1.1.0"
+dependencies = [
+ "euca-ecs",
+ "euca-gameplay",
+ "euca-math",
+ "euca-physics",
+ "euca-render",
+ "euca-scene",
+ "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

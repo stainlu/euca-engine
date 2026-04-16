@@ -7,10 +7,9 @@ const OFFLINE_COMMANDS: &[&str] = &["package", "asset", "discover", "explain"];
 /// to. Used by `euca discover --scope <scope>` to filter the output
 /// so agents building a puzzle game never see Roshan.
 ///
-/// This is a first pass — the long-term fix is the Genre de-leakage
-/// refactor (plan Priority 2), which moves genre-bound modules into
-/// separate crates. For now, a simple name-based lookup table is
-/// enough to let agents request a scoped view.
+/// The Genre de-leakage refactor (v2.0) moved genre-bound modules into
+/// the `euca-moba` crate. This scope lookup aligns with the code split:
+/// MOBA-scope groups map to `euca-moba`, others to `euca-gameplay`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
     /// Generic engine primitives — no genre vocabulary.

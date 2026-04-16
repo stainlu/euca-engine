@@ -1,22 +1,18 @@
 [package]
-name = "euca-gameplay"
+name = "euca-moba"
 version.workspace = true
 edition.workspace = true
-description = "Genre-neutral gameplay: health, combat, economy, abilities, rules, AI, inventory"
-keywords = ["gamedev", "game-engine", "gameplay", "combat", "abilities"]
+description = "MOBA genre kit — heroes, buildings, creeps, shops, Roshan"
+keywords = ["gamedev", "game-engine", "moba", "dota"]
 categories = ["game-development"]
 
 [dependencies]
-euca-core = { path = "../euca-core" }
+euca-gameplay = { path = "../euca-gameplay" }
 euca-ecs = { path = "../euca-ecs" }
-euca-input = { path = "../euca-input" }
 euca-math = { path = "../euca-math" }
 euca-physics = { path = "../euca-physics" }
-euca-reflect = { path = "../euca-reflect" }
 euca-render = { path = "../euca-render" }
 euca-scene = { path = "../euca-scene" }
-euca-ai = { path = "../euca-ai" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-bincode = "1"
 log = "0.4"

@@ -56,7 +56,8 @@ External AI Agents (Claude Code, OpenClaw, etc.)
 | `euca-editor` | egui: viewport, hierarchy, inspector, play/pause/stop/reset, gizmos, undo/redo, level loading | 13 |
 | `euca-input` | InputState, ActionMap, gamepad, input contexts, MOBA keybindings | 8 |
 | `euca-net` | UDP transport, reliable layer, property replication, delta compression, RPCs, interest culling | 39 |
-| `euca-gameplay` | Health, combat (role-aware targeting, SpatialIndex), economy, abilities, rules, player control, MOBA camera, corpse cleanup | 95 |
+| `euca-gameplay` | Genre-neutral: health, combat, economy, abilities, rules, player control, inventory, status effects | 29 |
+| `euca-moba` | MOBA genre kit: heroes, buildings, creeps, Roshan, shop, attributes, fog of war, tower aggro | 11 |
 | `euca-audio` | Spatial audio (kira): bus mixing, reverb zones, occlusion, priority | 19 |
 | `euca-particle` | CPU particle emitters, billboard render data, texture atlas, blend modes | 14 |
 | `euca-nav` | Grid navmesh, A* pathfinding, steering behaviors | 10 |

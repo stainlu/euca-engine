@@ -13,9 +13,9 @@ use crate::building::{
     backdoor_damage_modifier, is_building_invulnerable, tick_fortification,
     update_backdoor_protection, update_tower_aggro,
 };
-use crate::combat::EntityRole;
-use crate::health::{Dead, DeathEvent, Health};
-use crate::teams::Team;
+use euca_gameplay::combat::EntityRole;
+use euca_gameplay::health::{Dead, DeathEvent, Health};
+use euca_gameplay::teams::Team;
 
 // ---------------------------------------------------------------------------
 // Team fortification resource
@@ -245,7 +245,7 @@ pub fn building_tower_aggro_system(world: &mut World) {
 
     // Check for heroes attacking allied heroes (for priority targeting).
     let attacked_allies: Vec<(u8, Entity)> = {
-        let query = Query::<(Entity, &Team, &EntityRole, &crate::health::LastAttacker)>::new(world);
+        let query = Query::<(Entity, &Team, &EntityRole, &euca_gameplay::health::LastAttacker)>::new(world);
         query
             .iter()
             .filter(|(e, _, role, _)| **role == EntityRole::Hero && world.get::<Dead>(*e).is_none())

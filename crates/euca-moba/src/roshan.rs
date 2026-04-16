@@ -339,8 +339,8 @@ pub fn roshan_slam_tick(slam: &mut RoshanSlam, dt: f32) -> bool {
 
 use euca_ecs::{Entity, Events, Query, World};
 
-use crate::combat::EntityRole;
-use crate::health::{Dead, DeathEvent, Health};
+use euca_gameplay::combat::EntityRole;
+use euca_gameplay::health::{Dead, DeathEvent, Health};
 
 /// Roshan pit spawn position (matches levels/dota.json).
 const ROSHAN_PIT_POSITION: [f32; 3] = [0.0, 0.5, 15.0];
@@ -405,7 +405,7 @@ pub struct AegisResurrectTimer {
 pub fn roshan_system(world: &mut World, dt: f32) {
     // Read game time from GameState if available.
     let game_time = world
-        .resource::<crate::game_state::GameState>()
+        .resource::<euca_gameplay::game_state::GameState>()
         .map(|gs| gs.elapsed / 60.0)
         .unwrap_or(0.0);
 
@@ -440,19 +440,19 @@ pub fn roshan_system(world: &mut World, dt: f32) {
                         .find(|de| de.entity == rosh_entity)
                         .and_then(|de| de.killer)
                 })
-                .and_then(|killer| world.get::<crate::teams::Team>(killer).map(|t| t.0));
+                .and_then(|killer| world.get::<euca_gameplay::teams::Team>(killer).map(|t| t.0));
 
             if let Some(team) = killer_team {
                 let gold_per_hero = drops.gold_bounty as i32;
                 let heroes: Vec<Entity> = {
-                    let q = Query::<(Entity, &crate::teams::Team, &EntityRole)>::new(world);
+                    let q = Query::<(Entity, &euca_gameplay::teams::Team, &EntityRole)>::new(world);
                     q.iter()
                         .filter(|(_, t, r)| t.0 == team && **r == EntityRole::Hero)
                         .map(|(e, _, _)| e)
                         .collect()
                 };
                 for hero in heroes {
-                    if let Some(gold) = world.get_mut::<crate::economy::Gold>(hero) {
+                    if let Some(gold) = world.get_mut::<euca_gameplay::economy::Gold>(hero) {
                         gold.0 += gold_per_hero;
                     }
                 }
@@ -587,14 +587,14 @@ pub fn aegis_system(world: &mut World, dt: f32) {
                 health.current = health.max;
             }
             // Restore full mana.
-            if let Some(mana) = world.get_mut::<crate::abilities::Mana>(entity) {
+            if let Some(mana) = world.get_mut::<euca_gameplay::abilities::Mana>(entity) {
                 mana.current = mana.max;
             }
             // Remove Dead marker and resurrection timer.
             world.remove::<Dead>(entity);
             world.remove::<AegisResurrectTimer>(entity);
             // Also remove any pending RespawnTimer so normal respawn doesn't conflict.
-            world.remove::<crate::teams::RespawnTimer>(entity);
+            world.remove::<euca_gameplay::teams::RespawnTimer>(entity);
 
             log::info!("Entity {} resurrected by Aegis", entity);
         }
@@ -616,7 +616,7 @@ fn spawn_roshan_entity(world: &mut World, roshan: &Roshan) -> Entity {
     let entity = world.spawn(euca_scene::LocalTransform(transform));
     world.insert(entity, euca_scene::GlobalTransform::default());
     world.insert(entity, Health::new(roshan.max_hp));
-    world.insert(entity, crate::teams::Team(0)); // Neutral team
+    world.insert(entity, euca_gameplay::teams::Team(0)); // Neutral team
     world.insert(entity, EntityRole::Structure); // Use structure role (stationary boss)
     world.insert(
         entity,
@@ -625,16 +625,16 @@ fn spawn_roshan_entity(world: &mut World, roshan: &Roshan) -> Entity {
         },
     );
 
-    let mut combat = crate::combat::AutoCombat::new();
+    let mut combat = euca_gameplay::combat::AutoCombat::new();
     combat.damage = roshan.damage;
     combat.range = 3.0;
     combat.cooldown = 1.5;
-    combat.attack_style = crate::combat::AttackStyle::Stationary;
+    combat.attack_style = euca_gameplay::combat::AttackStyle::Stationary;
     combat.speed = 0.0;
     world.insert(entity, combat);
 
-    world.insert(entity, crate::economy::GoldBounty(200));
-    world.insert(entity, crate::leveling::XpBounty(400));
+    world.insert(entity, euca_gameplay::economy::GoldBounty(200));
+    world.insert(entity, euca_gameplay::leveling::XpBounty(400));
 
     entity
 }
@@ -697,7 +697,7 @@ fn collect_roshan_pickups(world: &mut World, mgr: &mut RoshanManager) {
                         if let Some(health) = world.get_mut::<Health>(*hero_entity) {
                             health.current = (health.current + hp_heal).min(health.max);
                         }
-                        if let Some(mana) = world.get_mut::<crate::abilities::Mana>(*hero_entity) {
+                        if let Some(mana) = world.get_mut::<euca_gameplay::abilities::Mana>(*hero_entity) {
                             mana.current = (mana.current + mana_heal).min(mana.max);
                         }
                         to_despawn.push(*pickup_entity);

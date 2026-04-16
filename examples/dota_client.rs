@@ -12,12 +12,13 @@ use euca_core::Time;
 use euca_ecs::{Entity, Events, Query, World};
 use euca_gameplay::camera::{MobaCamera, ScreenSize};
 use euca_gameplay::combat_math::DamageType;
-use euca_gameplay::creep_wave::{Lane, LaneConfig, LaneWaypoints, WaveSpawner};
 use euca_gameplay::player_input::ViewportSize;
-use euca_gameplay::{
-    AbilityDef, AbilityEffect, AbilitySlot, AttrGrowth, BaseAttributes, DayNightCycle,
-    Fortification, GameState, HeroDef, HeroName, HeroRegistry, HeroTimings, ItemDef, ItemRegistry,
-    ItemState, PrimaryAttribute, Roshan, VisionMap, VisionSource, WardStock,
+use euca_gameplay::{AbilityEffect, AbilitySlot, GameState, ItemDef, ItemRegistry};
+use euca_moba::creep_wave::{Lane, LaneConfig, LaneWaypoints, WaveSpawner};
+use euca_moba::{
+    AbilityDef, AttrGrowth, BaseAttributes, DayNightCycle, Fortification, HeroDef, HeroName,
+    HeroRegistry, HeroTimings, ItemState, PrimaryAttribute, Roshan, VisionMap, VisionSource,
+    WardStock,
 };
 use euca_math::{Mat4, Quat, Transform, Vec3};
 use euca_physics::PhysicsConfig;
@@ -98,11 +99,11 @@ struct DotaMobaState {
     ward_stock_t1: WardStock,
     ward_stock_t2: WardStock,
     /// Placed wards on the map.
-    wards: Vec<euca_gameplay::Ward>,
+    wards: Vec<euca_moba::Ward>,
     /// Roshan boss state.
     roshan: Roshan,
     /// Aegis (if dropped and not yet consumed/expired).
-    aegis: Option<euca_gameplay::Aegis>,
+    aegis: Option<euca_moba::Aegis>,
     /// Per-team fortification (glyph).
     fort_t1: Fortification,
     fort_t2: Fortification,
@@ -267,7 +268,7 @@ impl DotaMobaState {
             ward_stock_t1: WardStock::new(),
             ward_stock_t2: WardStock::new(),
             wards: Vec::new(),
-            roshan: euca_gameplay::spawn_roshan(0.0),
+            roshan: euca_moba::spawn_roshan(0.0),
             aegis: None,
             fort_t1: Fortification::default(),
             fort_t2: Fortification::default(),
@@ -728,7 +729,7 @@ fn apply_hero_template(world: &mut World, entity: Entity, hero_name: &str) {
     ) {
         world.insert(
             entity,
-            euca_gameplay::HeroAttributes {
+            euca_moba::HeroAttributes {
                 primary,
                 base,
                 growth,
@@ -1266,7 +1267,7 @@ impl DotaClientApp {
         // Initialize Roshan manager — find the Roshan entity loaded from the level
         // (team 0 structure with combat, at the pit location).
         {
-            let mut mgr = euca_gameplay::RoshanManager::new(0.0);
+            let mut mgr = euca_moba::RoshanManager::new(0.0);
             let roshan_entity = {
                 let q = Query::<(
                     Entity,
@@ -1352,19 +1353,19 @@ impl DotaClientApp {
         // Initialize building system resources (fortification + barracks tracking).
         if self
             .world
-            .resource::<euca_gameplay::TeamFortifications>()
+            .resource::<euca_moba::TeamFortifications>()
             .is_none()
         {
             self.world
-                .insert_resource(euca_gameplay::TeamFortifications::default());
+                .insert_resource(euca_moba::TeamFortifications::default());
         }
         if self
             .world
-            .resource::<euca_gameplay::DestroyedBarracks>()
+            .resource::<euca_moba::DestroyedBarracks>()
             .is_none()
         {
             self.world
-                .insert_resource(euca_gameplay::DestroyedBarracks::default());
+                .insert_resource(euca_moba::DestroyedBarracks::default());
         }
 
         // Build navmesh for pathfinding
@@ -1602,16 +1603,16 @@ impl DotaClientApp {
         euca_gameplay::zone_dynamic_system(&mut self.world, dt);
         euca_gameplay::status_effect_tick_system(&mut self.world, dt);
         euca_gameplay::stat_resolution_system(&mut self.world);
-        euca_gameplay::attribute_update_system(&mut self.world);
+        euca_moba::attribute_update_system(&mut self.world);
 
         // Building systems (before damage so protection state is current)
-        euca_gameplay::backdoor_protection_system(&mut self.world, dt);
-        euca_gameplay::fortification_tick_system(&mut self.world, dt);
+        euca_moba::backdoor_protection_system(&mut self.world, dt);
+        euca_moba::fortification_tick_system(&mut self.world, dt);
 
         // Core gameplay
         euca_gameplay::apply_damage_system(&mut self.world);
         euca_gameplay::death_check_system(&mut self.world);
-        euca_gameplay::barracks_death_system(&mut self.world);
+        euca_moba::barracks_death_system(&mut self.world);
         euca_gameplay::projectile_system(&mut self.world, dt);
         euca_gameplay::trigger_system(&mut self.world);
         euca_gameplay::ai_system(&mut self.world, dt);
@@ -1619,10 +1620,10 @@ impl DotaClientApp {
         euca_gameplay::bt_perception_system(&mut self.world);
         euca_ai::behavior_tree_system(&mut self.world, dt);
         euca_gameplay::bt_moveto_system(&mut self.world);
-        euca_gameplay::tower_aggro_system(&mut self.world);
-        euca_gameplay::building_tower_aggro_system(&mut self.world);
+        euca_moba::tower_aggro_system(&mut self.world);
+        euca_moba::building_tower_aggro_system(&mut self.world);
         euca_gameplay::auto_combat_system(&mut self.world, dt);
-        euca_gameplay::neutral_camp_system(&mut self.world, dt);
+        euca_moba::neutral_camp_system(&mut self.world, dt);
 
         // Game state & scoring
         euca_gameplay::game_state_system(&mut self.world, dt);
@@ -1651,8 +1652,8 @@ impl DotaClientApp {
         self.previously_dead = collect_dead_entities(&self.world);
 
         // Roshan lifecycle + Aegis resurrection
-        euca_gameplay::roshan_system(&mut self.world, dt);
-        euca_gameplay::aegis_system(&mut self.world, dt);
+        euca_moba::roshan_system(&mut self.world, dt);
+        euca_moba::aegis_system(&mut self.world, dt);
 
         // Attach visuals to rule-spawned entities (minion waves etc.)
         let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = self
@@ -2049,19 +2050,19 @@ fn moba_subsystems_tick(world: &mut World, dt: f32) {
             }
         }
 
-        euca_gameplay::update_vision(&mut moba.vision_t1, &sources_t1);
-        euca_gameplay::update_vision(&mut moba.vision_t2, &sources_t2);
+        euca_moba::update_vision(&mut moba.vision_t1, &sources_t1);
+        euca_moba::update_vision(&mut moba.vision_t2, &sources_t2);
     }
 
     // ── 4. Ward tick — count down durations, remove expired ──────────
-    euca_gameplay::tick_wards(&mut moba.wards, dt);
-    euca_gameplay::tick_ward_stock(&mut moba.ward_stock_t1, dt);
-    euca_gameplay::tick_ward_stock(&mut moba.ward_stock_t2, dt);
+    euca_moba::tick_wards(&mut moba.wards, dt);
+    euca_moba::tick_ward_stock(&mut moba.ward_stock_t1, dt);
+    euca_moba::tick_ward_stock(&mut moba.ward_stock_t2, dt);
 
     // ── 5. Item active cooldowns and charges — tick per hero ─────────
     for item_state in moba.item_states.values_mut() {
-        euca_gameplay::tick_cooldowns(item_state, dt);
-        euca_gameplay::tick_charges(item_state, dt);
+        euca_moba::tick_cooldowns(item_state, dt);
+        euca_moba::tick_charges(item_state, dt);
     }
 
     // ── 6. Roshan tick — respawn timer ───────────────────────────────
@@ -2069,22 +2070,22 @@ fn moba_subsystems_tick(world: &mut World, dt: f32) {
         .resource::<GameState>()
         .map(|gs| gs.elapsed)
         .unwrap_or(0.0);
-    if euca_gameplay::tick_roshan(&mut moba.roshan, dt) {
-        euca_gameplay::respawn_roshan(&mut moba.roshan, game_elapsed / 60.0);
+    if euca_moba::tick_roshan(&mut moba.roshan, dt) {
+        euca_moba::respawn_roshan(&mut moba.roshan, game_elapsed / 60.0);
         log::info!("Roshan has respawned!");
     }
 
     // ── 7. Aegis tick — expire if 5 minutes elapsed ─────────────────
     if let Some(aegis) = &mut moba.aegis {
-        if euca_gameplay::tick_aegis(aegis, dt) {
+        if euca_moba::tick_aegis(aegis, dt) {
             log::info!("Aegis has expired");
             moba.aegis = None;
         }
     }
 
     // ── 8. Fortification tick ────────────────────────────────────────
-    euca_gameplay::tick_fortification(&mut moba.fort_t1, dt);
-    euca_gameplay::tick_fortification(&mut moba.fort_t2, dt);
+    euca_moba::tick_fortification(&mut moba.fort_t1, dt);
+    euca_moba::tick_fortification(&mut moba.fort_t2, dt);
 
     // ── 9. Creep wave spawner — spawn entities from wave events ──────
     let game_time_minutes = world
@@ -2111,7 +2112,7 @@ fn moba_subsystems_tick(world: &mut World, dt: f32) {
         let z_offset_base = -z_spacing * (event.composition.len() as f32 - 1.0) / 2.0;
 
         for (i, &creep_type) in event.composition.iter().enumerate() {
-            let stats = euca_gameplay::creep_stats(creep_type);
+            let stats = euca_moba::creep_stats(creep_type);
             let bounty = euca_gameplay::creep_bounty(creep_type, game_time_minutes);
             let z_offset = z_offset_base + z_spacing * i as f32;
 

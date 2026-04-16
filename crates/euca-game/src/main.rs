@@ -82,8 +82,8 @@ impl GameApp {
         });
         world.insert_resource(PostProcessSettings::default());
         world.insert_resource(euca_core::Profiler::default());
-        world.insert_resource(euca_gameplay::TeamFortifications::default());
-        world.insert_resource(euca_gameplay::DestroyedBarracks::default());
+        world.insert_resource(euca_moba::TeamFortifications::default());
+        world.insert_resource(euca_moba::DestroyedBarracks::default());
 
         let attrs = WindowAttributes::default()
             .with_title(&project.window.title)
@@ -254,12 +254,12 @@ impl GameApp {
         // Run core systems inline (simplified — no parallel schedule for standalone)
         physics_step_system(&mut self.world);
         euca_physics::character_controller_system(&mut self.world, dt);
-        euca_gameplay::attribute_update_system(&mut self.world);
-        euca_gameplay::backdoor_protection_system(&mut self.world, dt);
-        euca_gameplay::fortification_tick_system(&mut self.world, dt);
+        euca_moba::attribute_update_system(&mut self.world);
+        euca_moba::backdoor_protection_system(&mut self.world, dt);
+        euca_moba::fortification_tick_system(&mut self.world, dt);
         euca_gameplay::apply_damage_system(&mut self.world);
         euca_gameplay::death_check_system(&mut self.world);
-        euca_gameplay::barracks_death_system(&mut self.world);
+        euca_moba::barracks_death_system(&mut self.world);
         euca_gameplay::projectile_system(&mut self.world, dt);
         euca_gameplay::trigger_system(&mut self.world);
         euca_gameplay::ai_system(&mut self.world, dt);
@@ -284,8 +284,8 @@ impl GameApp {
         euca_gameplay::corpse_cleanup_system(&mut self.world, dt);
 
         // Roshan lifecycle + Aegis resurrection
-        euca_gameplay::roshan_system(&mut self.world, dt);
-        euca_gameplay::aegis_system(&mut self.world, dt);
+        euca_moba::roshan_system(&mut self.world, dt);
+        euca_moba::aegis_system(&mut self.world, dt);
 
         // Attach visuals to rule-spawned entities
         let spawn_events: Vec<euca_gameplay::RuleSpawnEvent> = self
@@ -316,7 +316,7 @@ impl GameApp {
         euca_gameplay::economy_death_system(&mut self.world);
         euca_gameplay::passive_income_system(&mut self.world, dt);
         euca_gameplay::buyback_cooldown_system(&mut self.world, dt);
-        euca_gameplay::wave_spawn_system(&mut self.world, dt);
+        euca_moba::wave_spawn_system(&mut self.world, dt);
         euca_gameplay::xp_on_kill_system(&mut self.world);
         euca_gameplay::ability_tick_system(&mut self.world, dt);
         euca_gameplay::use_ability_system(&mut self.world);

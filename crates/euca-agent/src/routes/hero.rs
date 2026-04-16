@@ -93,7 +93,7 @@ pub async fn hero_define(
 ) -> Json<MessageResponse> {
     let name = req.name.clone();
     world.with(|w, _| {
-        let def = euca_gameplay::HeroDef {
+        let def = euca_moba::HeroDef {
             name: req.name,
             base_stats: req.base_stats,
             growth: req.stat_growth,
@@ -105,7 +105,7 @@ pub async fn hero_define(
             abilities: req
                 .abilities
                 .into_iter()
-                .map(|a| euca_gameplay::AbilityDef {
+                .map(|a| euca_moba::AbilityDef {
                     slot: a.slot,
                     name: a.name,
                     cooldown: a.cooldown,
@@ -119,10 +119,10 @@ pub async fn hero_define(
             hero_timings: None,
         };
 
-        if let Some(registry) = w.resource_mut::<euca_gameplay::HeroRegistry>() {
+        if let Some(registry) = w.resource_mut::<euca_moba::HeroRegistry>() {
             registry.register(def);
         } else {
-            let mut registry = euca_gameplay::HeroRegistry::new();
+            let mut registry = euca_moba::HeroRegistry::new();
             registry.register(def);
             w.insert_resource(registry);
         }
@@ -166,7 +166,7 @@ pub async fn hero_select(
         };
 
         let def = {
-            let registry = match w.resource::<euca_gameplay::HeroRegistry>() {
+            let registry = match w.resource::<euca_moba::HeroRegistry>() {
                 Some(r) => r.clone(),
                 None => return Err("No HeroRegistry resource".to_string()),
             };
@@ -177,7 +177,7 @@ pub async fn hero_select(
         };
 
         // Apply hero template components to the existing entity.
-        w.insert(entity, euca_gameplay::HeroName(hero_name.clone()));
+        w.insert(entity, euca_moba::HeroName(hero_name.clone()));
         w.insert(entity, euca_gameplay::Health::new(def.health));
         w.insert(entity, euca_gameplay::Mana::new(def.mana, 5.0));
         w.insert(entity, euca_gameplay::Gold::new(def.gold));
@@ -227,7 +227,7 @@ pub async fn hero_select(
 /// GET /hero/list — list all available heroes from the HeroRegistry.
 pub async fn hero_list(State(world): State<SharedWorld>) -> Json<serde_json::Value> {
     let data = world.with_world(|w| {
-        let registry = match w.resource::<euca_gameplay::HeroRegistry>() {
+        let registry = match w.resource::<euca_moba::HeroRegistry>() {
             Some(r) => r,
             None => return serde_json::json!({ "heroes": [] }),
         };

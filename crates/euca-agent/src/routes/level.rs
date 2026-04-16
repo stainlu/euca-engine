@@ -207,16 +207,16 @@ pub(crate) fn spawn_entity(w: &mut euca_ecs::World, req: &SpawnRequest) -> Spawn
     // Building components: BuildingStats, BackdoorProtection, TowerAggro.
     if let Some(ref bt_str) = req.building_type {
         let building_type = match bt_str.as_str() {
-            "tier1_tower" => Some(euca_gameplay::BuildingType::Tier1Tower),
-            "tier2_tower" => Some(euca_gameplay::BuildingType::Tier2Tower),
-            "tier3_tower" => Some(euca_gameplay::BuildingType::Tier3Tower),
-            "tier4_tower" => Some(euca_gameplay::BuildingType::Tier4Tower),
-            "melee_barracks" => Some(euca_gameplay::BuildingType::MeleeBarracks),
-            "ranged_barracks" => Some(euca_gameplay::BuildingType::RangedBarracks),
-            "ancient" => Some(euca_gameplay::BuildingType::Ancient),
-            "fountain" => Some(euca_gameplay::BuildingType::Fountain),
-            "effigy" => Some(euca_gameplay::BuildingType::Effigy),
-            "outpost" => Some(euca_gameplay::BuildingType::Outpost),
+            "tier1_tower" => Some(euca_moba::BuildingType::Tier1Tower),
+            "tier2_tower" => Some(euca_moba::BuildingType::Tier2Tower),
+            "tier3_tower" => Some(euca_moba::BuildingType::Tier3Tower),
+            "tier4_tower" => Some(euca_moba::BuildingType::Tier4Tower),
+            "melee_barracks" => Some(euca_moba::BuildingType::MeleeBarracks),
+            "ranged_barracks" => Some(euca_moba::BuildingType::RangedBarracks),
+            "ancient" => Some(euca_moba::BuildingType::Ancient),
+            "fountain" => Some(euca_moba::BuildingType::Fountain),
+            "effigy" => Some(euca_moba::BuildingType::Effigy),
+            "outpost" => Some(euca_moba::BuildingType::Outpost),
             _ => {
                 log::warn!("Unknown building_type '{bt_str}', ignoring");
                 None
@@ -224,9 +224,9 @@ pub(crate) fn spawn_entity(w: &mut euca_ecs::World, req: &SpawnRequest) -> Spawn
         };
 
         let lane = req.lane.as_deref().and_then(|l| match l {
-            "top" => Some(euca_gameplay::Lane::Top),
-            "mid" => Some(euca_gameplay::Lane::Mid),
-            "bot" => Some(euca_gameplay::Lane::Bot),
+            "top" => Some(euca_moba::Lane::Top),
+            "mid" => Some(euca_moba::Lane::Mid),
+            "bot" => Some(euca_moba::Lane::Bot),
             _ => {
                 log::warn!("Unknown lane '{l}', ignoring");
                 None
@@ -235,7 +235,7 @@ pub(crate) fn spawn_entity(w: &mut euca_ecs::World, req: &SpawnRequest) -> Spawn
 
         if let Some(bt) = building_type {
             let team_id = req.team.unwrap_or(0) as u32;
-            let bs = euca_gameplay::building_stats(bt, team_id, lane);
+            let bs = euca_moba::building_stats(bt, team_id, lane);
 
             // Override the Health component with canonical building HP.
             w.insert(entity, euca_gameplay::Health::new(bs.max_hp));
@@ -251,25 +251,25 @@ pub(crate) fn spawn_entity(w: &mut euca_ecs::World, req: &SpawnRequest) -> Spawn
 
             // All towers and barracks get backdoor protection.
             match bt {
-                euca_gameplay::BuildingType::Tier1Tower
-                | euca_gameplay::BuildingType::Tier2Tower
-                | euca_gameplay::BuildingType::Tier3Tower
-                | euca_gameplay::BuildingType::Tier4Tower
-                | euca_gameplay::BuildingType::MeleeBarracks
-                | euca_gameplay::BuildingType::RangedBarracks
-                | euca_gameplay::BuildingType::Ancient => {
-                    w.insert(entity, euca_gameplay::BackdoorProtection::default());
+                euca_moba::BuildingType::Tier1Tower
+                | euca_moba::BuildingType::Tier2Tower
+                | euca_moba::BuildingType::Tier3Tower
+                | euca_moba::BuildingType::Tier4Tower
+                | euca_moba::BuildingType::MeleeBarracks
+                | euca_moba::BuildingType::RangedBarracks
+                | euca_moba::BuildingType::Ancient => {
+                    w.insert(entity, euca_moba::BackdoorProtection::default());
                 }
                 _ => {}
             }
 
             // Towers get TowerAggro.
             match bt {
-                euca_gameplay::BuildingType::Tier1Tower
-                | euca_gameplay::BuildingType::Tier2Tower
-                | euca_gameplay::BuildingType::Tier3Tower
-                | euca_gameplay::BuildingType::Tier4Tower => {
-                    w.insert(entity, euca_gameplay::TowerAggro::default());
+                euca_moba::BuildingType::Tier1Tower
+                | euca_moba::BuildingType::Tier2Tower
+                | euca_moba::BuildingType::Tier3Tower
+                | euca_moba::BuildingType::Tier4Tower => {
+                    w.insert(entity, euca_moba::TowerAggro::default());
                 }
                 _ => {}
             }

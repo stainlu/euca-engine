@@ -8,21 +8,13 @@
 
 use euca_ecs::{Entity, Query, World};
 
-use crate::combat::{AutoCombat, EntityRole};
-use crate::health::{Dead, LastAttacker};
-use crate::teams::Team;
+use euca_gameplay::combat::{AutoCombat, EntityRole, TargetOverride};
+use euca_gameplay::health::{Dead, LastAttacker};
+use euca_gameplay::teams::Team;
 
-/// Component placed on tower entities to override their combat target.
-///
-/// When present, the auto-combat system reads `target` and forces the tower
-/// to attack that entity instead of following normal target priority.
-/// The `tower_aggro_system` writes this component when an enemy hero attacks
-/// a friendly hero under the tower.
-#[derive(Clone, Copy, Debug)]
-pub struct TowerAggroOverride {
-    /// The entity the tower should target.
-    pub target: Entity,
-}
+/// Backward-compatible alias. The concept now lives in `combat::TargetOverride`
+/// since any genre can force a target override, not just tower aggro.
+pub type TowerAggroOverride = TargetOverride;
 
 /// Check for enemy heroes attacking allied heroes near towers and set
 /// `TowerAggroOverride` on the tower so auto-combat picks up the override.
@@ -76,7 +68,7 @@ pub fn tower_aggro_system(world: &mut World) {
         }
 
         if let Some(target) = override_target {
-            world.insert(*tower_entity, TowerAggroOverride { target });
+            world.insert(*tower_entity, TargetOverride { target });
         }
     }
 }
@@ -84,7 +76,7 @@ pub fn tower_aggro_system(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::health::Health;
+    use euca_gameplay::health::Health;
 
     #[test]
     fn tower_retargets_to_hero_attacker() {

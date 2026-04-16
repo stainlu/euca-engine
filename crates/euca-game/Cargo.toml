@@ -21,6 +21,7 @@ euca-net = { path = "../euca-net" }
 euca-input = { path = "../euca-input" }
 euca-core = { path = "../euca-core" }
 euca-gameplay = { path = "../euca-gameplay" }
+euca-moba = { path = "../euca-moba" }
 euca-ai = { path = "../euca-ai" }
 euca-agent = { path = "../euca-agent" }
 euca-audio = { path = "../euca-audio" }

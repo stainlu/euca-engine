@@ -4,14 +4,22 @@
 //! Resources: `XpShareRadius`.
 //! Systems: `xp_on_kill_system`.
 
+use std::collections::HashMap;
+
 use euca_ecs::{Entity, Events, Query, World};
 use euca_math::Vec3;
 use euca_scene::LocalTransform;
 
 use crate::combat::{AutoCombat, EntityRole};
 use crate::health::{DeathEvent, Health};
-use crate::hero::StatGrowth;
 use crate::stats::BaseStats;
+
+/// Per-level stat growth values. Applied on each level-up.
+///
+/// Maps stat name (e.g. `"max_health"`, `"attack_damage"`) to the amount
+/// gained per level. Used by `apply_level_up_stats` in the leveling system.
+#[derive(Clone, Debug)]
+pub struct StatGrowth(pub HashMap<String, f64>);
 
 /// Max hero level (like LoL).
 pub const MAX_LEVEL: u32 = 18;

@@ -7,9 +7,9 @@
 use euca_ecs::{Entity, Query, World};
 use serde::{Deserialize, Serialize};
 
-use crate::combat::AutoCombat;
-use crate::health::Health;
-use crate::leveling::Level;
+use euca_gameplay::combat::AutoCombat;
+use euca_gameplay::health::Health;
+use euca_gameplay::leveling::Level;
 
 // ── Enums ──
 

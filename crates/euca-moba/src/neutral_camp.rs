@@ -12,8 +12,8 @@ use euca_math::Vec3;
 use euca_physics::Velocity;
 use euca_scene::LocalTransform;
 
-use crate::combat::AutoCombat;
-use crate::health::{Dead, Health, LastAttacker};
+use euca_gameplay::combat::AutoCombat;
+use euca_gameplay::health::{Dead, Health, LastAttacker};
 
 /// Default chase speed when the entity has no `AutoCombat` component.
 const DEFAULT_CHASE_SPEED: f32 = 3.0;

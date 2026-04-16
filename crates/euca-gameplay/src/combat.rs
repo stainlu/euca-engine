@@ -14,7 +14,17 @@ use crate::crowd_control::CcState;
 use crate::health::{DamageEvent, Dead, Health};
 use crate::player::PlayerHero;
 use crate::teams::Team;
-use crate::tower_aggro::TowerAggroOverride;
+
+/// Override component: forces an entity's auto-combat to target a specific entity.
+///
+/// Written by genre-specific systems (e.g. tower aggro in MOBA), read by
+/// `auto_combat_system`. The concept is genre-neutral — any system can write
+/// this to force a target override.
+#[derive(Clone, Copy, Debug)]
+pub struct TargetOverride {
+    /// The entity this fighter must target.
+    pub target: Entity,
+}
 
 /// Entity that moves in a direction and damages what it hits.
 #[derive(Clone, Debug)]
@@ -390,11 +400,11 @@ pub fn auto_combat_system(world: &mut World, dt: f32) {
         }
 
         // --- Step 2b: Tower aggro override ---
-        // If this entity has a TowerAggroOverride and the override target is
+        // If this entity has a TargetOverride and the override target is
         // alive, not dead, and within attack range, force it as the current
         // target. This takes priority over both the existing target and the
         // normal priority scan.
-        if let Some(ovr) = world.get::<TowerAggroOverride>(entity) {
+        if let Some(ovr) = world.get::<TargetOverride>(entity) {
             let ovr_target = ovr.target;
             let valid = fighter_map
                 .get(&ovr_target)

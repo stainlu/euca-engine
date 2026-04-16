@@ -22,7 +22,7 @@ pub async fn shop_buy(
             Some(e) => e,
             None => return Err(format!("Entity {} not found", req.entity_id)),
         };
-        euca_gameplay::buy_item(w, entity, req.item_id).map_err(|e| e.to_string())
+        euca_moba::buy_item(w, entity, req.item_id).map_err(|e| e.to_string())
     });
 
     match result {
@@ -47,7 +47,7 @@ pub async fn shop_sell(
             Some(e) => e,
             None => return Err(format!("Entity {} not found", req.entity_id)),
         };
-        euca_gameplay::sell_item(w, entity, req.item_id).map_err(|e| e.to_string())
+        euca_moba::sell_item(w, entity, req.item_id).map_err(|e| e.to_string())
     });
 
     match result {

@@ -1,6 +1,6 @@
 //! Hero definitions, per-hero stat growth, and hero registry.
 //!
-//! Components: `HeroName`, `StatGrowth`.
+//! Components: `HeroName`.
 //! Resources: `HeroRegistry`.
 //! Functions: `spawn_hero`.
 
@@ -8,29 +8,22 @@ use std::collections::HashMap;
 
 use euca_ecs::{Entity, World};
 
-use crate::abilities::{Ability, AbilityEffect, AbilitySet, AbilitySlot, Mana};
+use euca_gameplay::abilities::{Ability, AbilityEffect, AbilitySet, AbilitySlot, Mana};
 use crate::attributes::{
     AttributeGrowth, BaseAttributes, HeroAttributes, HeroTimings, PrimaryAttribute,
 };
-use crate::combat::{AutoCombat, EntityRole};
-use crate::economy::{Gold, HeroEconomy};
-use crate::health::Health;
-use crate::inventory::Inventory;
-use crate::leveling::Level;
-use crate::stats::BaseStats;
+use euca_gameplay::combat::{AutoCombat, EntityRole};
+use euca_gameplay::economy::{Gold, HeroEconomy};
+use euca_gameplay::health::Health;
+use euca_gameplay::inventory::Inventory;
+use euca_gameplay::leveling::{Level, StatGrowth};
+use euca_gameplay::stats::BaseStats;
 
 // ── Components ──
 
 /// Marker component: which hero this entity is playing.
 #[derive(Clone, Debug)]
 pub struct HeroName(pub String);
-
-/// Per-level stat growth values. Applied on each level-up.
-///
-/// Maps stat name (e.g. `"max_health"`, `"attack_damage"`) to the amount
-/// gained per level.
-#[derive(Clone, Debug)]
-pub struct StatGrowth(pub HashMap<String, f64>);
 
 // ── Data types ──
 
@@ -220,7 +213,7 @@ mod tests {
 
         // HeroEconomy
         let econ = world.get::<HeroEconomy>(entity).unwrap();
-        assert_eq!(econ.wallet.total(), crate::economy::STARTING_GOLD);
+        assert_eq!(econ.wallet.total(), euca_gameplay::economy::STARTING_GOLD);
 
         // Inventory
         let inv = world.get::<Inventory>(entity).unwrap();

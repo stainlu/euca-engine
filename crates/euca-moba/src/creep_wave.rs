@@ -4,7 +4,7 @@
 //! siege, and super creeps across three lanes, with configurable aggro
 //! priority, denial rules, and gold bounty scaling.
 //!
-//! Reuses [`crate::economy::CreepType`] for creep variants. Adds stats,
+//! Reuses [`euca_gameplay::economy::CreepType`] for creep variants. Adds stats,
 //! composition, aggro, denial, and wave spawning on top.
 //!
 //! Types: `Lane`, `WaveConfig`, `LaneWaypoints`, `CreepAggro`,
@@ -16,8 +16,8 @@
 use euca_ecs::{Events, World};
 use euca_math::Vec3;
 
-use crate::economy::CreepType;
-use crate::rules::RuleSpawnEvent;
+use euca_gameplay::economy::CreepType;
+use euca_gameplay::rules::RuleSpawnEvent;
 
 /// Map a `CreepType` to the string tag used in procedural mesh names.
 fn creep_type_tag(ct: CreepType) -> &'static str {
@@ -337,7 +337,7 @@ pub fn wave_spawn_system(world: &mut World, dt: f32) {
     };
 
     let game_time_minutes = world
-        .resource::<crate::game_state::GameState>()
+        .resource::<euca_gameplay::game_state::GameState>()
         .map(|gs| gs.elapsed / 60.0)
         .unwrap_or(0.0);
 
@@ -365,7 +365,7 @@ pub fn wave_spawn_system(world: &mut World, dt: f32) {
 
         for (i, &creep_type) in event.composition.iter().enumerate() {
             let stats = creep_stats(creep_type);
-            let bounty = crate::economy::creep_bounty(creep_type, game_time_minutes);
+            let bounty = euca_gameplay::economy::creep_bounty(creep_type, game_time_minutes);
             let z_offset = z_offset_base + z_spacing * i as f32;
 
             let mut transform = euca_math::Transform::from_translation(Vec3::new(
@@ -377,12 +377,12 @@ pub fn wave_spawn_system(world: &mut World, dt: f32) {
 
             let entity = world.spawn(euca_scene::LocalTransform(transform));
             world.insert(entity, euca_scene::GlobalTransform::default());
-            world.insert(entity, crate::health::Health::new(stats.hp));
-            world.insert(entity, crate::teams::Team(event.team));
-            world.insert(entity, crate::combat::EntityRole::Minion);
-            world.insert(entity, crate::economy::GoldBounty(bounty as i32));
+            world.insert(entity, euca_gameplay::health::Health::new(stats.hp));
+            world.insert(entity, euca_gameplay::teams::Team(event.team));
+            world.insert(entity, euca_gameplay::combat::EntityRole::Minion);
+            world.insert(entity, euca_gameplay::economy::GoldBounty(bounty as i32));
 
-            let mut combat = crate::combat::AutoCombat::new();
+            let mut combat = euca_gameplay::combat::AutoCombat::new();
             combat.damage = stats.damage;
             combat.speed = 3.0;
             world.insert(entity, combat);
@@ -394,7 +394,7 @@ pub fn wave_spawn_system(world: &mut World, dt: f32) {
                     body_type: euca_physics::RigidBodyType::Kinematic,
                 },
             );
-            world.insert(entity, crate::combat::MarchDirection(march_dir));
+            world.insert(entity, euca_gameplay::combat::MarchDirection(march_dir));
 
             // Emit RuleSpawnEvent with a per-creep-type procedural mesh name.
             let mesh_name = euca_render::creep_mesh_name(creep_type_tag(creep_type), event.team);

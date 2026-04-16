@@ -10,9 +10,9 @@ use std::collections::HashMap;
 
 use euca_ecs::{Entity, World};
 
-use crate::economy::Gold;
-use crate::health::Dead;
-use crate::inventory::{self, Inventory, ItemRegistry};
+use euca_gameplay::economy::Gold;
+use euca_gameplay::health::Dead;
+use euca_gameplay::inventory::{self, Inventory, ItemRegistry};
 
 // ── Error ──
 
@@ -218,7 +218,7 @@ pub fn sell_item(world: &mut World, entity: Entity, item_id: u32) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::ItemDef;
+    use euca_gameplay::inventory::ItemDef;
 
     fn setup_world() -> (World, Entity) {
         let mut world = World::new();
